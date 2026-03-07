@@ -1,5 +1,6 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { z } from "zod";
 import { requireDevAuth } from "./auth";
@@ -15,7 +16,17 @@ const execAsync = promisify(exec);
 
 const config = getConfig();
 const db = new AppDb(config.DB_PATH);
-const app = Fastify({ logger: true });
+const app = Fastify({ logger: { level: config.LOG_LEVEL } });
+
+// CORS — disabled when CORS_ORIGIN is empty
+if (config.CORS_ORIGIN) {
+  app.register(cors, {
+    origin: config.CORS_ORIGIN === "*" ? true : config.CORS_ORIGIN.split(",").map((s) => s.trim()),
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    exposedHeaders: ["X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"],
+  });
+}
 const authPreHandler = requireDevAuth(db);
 const rateLimitHandler = requireRateLimit(db, {
   maxPrompts: config.RATE_LIMIT_MAX_PROMPTS,

@@ -120,6 +120,7 @@
     "format:check": "prettier --check server/ clients/ tests/"
   },
   "dependencies": {
+    "@fastify/cors": "^11.2.0",
     "better-sqlite3": "^12.6.2",
     "dotenv": "^17.3.1",
     "fastify": "^5.7.4",
