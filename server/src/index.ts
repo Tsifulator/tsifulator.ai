@@ -386,6 +386,28 @@ app.get("/sessions/:id/messages", { preHandler: authPreHandler }, async (request
   };
 });
 
-app.listen({ port: config.PORT, host: "0.0.0.0" }).then(() => {
+app.listen({ port: config.PORT, host: config.HOST }).then(() => {
   app.log.info(`Server running on http://localhost:${config.PORT}`);
 });
+
+// Graceful shutdown — flush SQLite WAL, close connections, finish in-flight requests
+function shutdown(signal: string) {
+  app.log.info(`Received ${signal}, shutting down gracefully…`);
+  app.close().then(() => {
+    db.close();
+    app.log.info("Server closed");
+    process.exit(0);
+  }).catch((err) => {
+    app.log.error(err, "Error during shutdown");
+    process.exit(1);
+  });
+
+  // Force exit after 10s if graceful shutdown stalls
+  setTimeout(() => {
+    app.log.error("Graceful shutdown timed out, forcing exit");
+    process.exit(1);
+  }, 10_000).unref();
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

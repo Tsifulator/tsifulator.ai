@@ -106,6 +106,10 @@ export class AppDb {
     this.migrate();
   }
 
+  close(): void {
+    this.db.close();
+  }
+
   private migrate(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS users (
