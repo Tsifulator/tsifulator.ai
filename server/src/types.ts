@@ -4,6 +4,7 @@ export interface ChatRequest {
   message: string;
   cwd?: string;
   lastOutput?: string;
+  adapter?: string;
 }
 
 export interface ChatResponse {

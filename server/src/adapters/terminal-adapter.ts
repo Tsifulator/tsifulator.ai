@@ -1,4 +1,5 @@
 import { classifyRisk } from "../risk";
+import { SharedMemory } from "../shared-memory";
 import { AdapterContext, AdapterSuggestion } from "../types";
 import { AppAdapter } from "./contract";
 
@@ -61,5 +62,12 @@ export const terminalAdapter: AppAdapter = {
         }
       }
     ];
+  },
+  saveToMemory(context: AdapterContext, memory: SharedMemory) {
+    if (context.cwd) {
+      memory.set(context.userId, "terminal", "last_cwd", context.cwd, context.sessionId);
+    }
+    // Save the user's last prompt so other adapters have context
+    memory.set(context.userId, "terminal", "last_prompt", context.message.slice(0, 500), context.sessionId);
   }
 };

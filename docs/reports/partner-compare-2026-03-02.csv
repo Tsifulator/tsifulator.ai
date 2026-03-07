@@ -1,0 +1,3 @@
+﻿"email","prompts24h","proposed","confirmed","blocked","streamRequests","streamCompletions","streamRatio","medianChatLatencyMs","medianStreamFirstTokenLatencyMs"
+"partner.a@company.com","16","15","10","1","1","1","1/1","2","2"
+"partner.b@company.com","4","3","2","1","1","1","1/1","1","2"

@@ -1,0 +1,16 @@
+# Run from repository root (PowerShell)
+
+# 1) Optional: verify OpenClaw is available
+openclaw --version
+
+# 2) Start with the master prompt (copy file contents into OpenClaw)
+Get-Content .\docs\openclaw-master-prompt.md
+
+# 2b) Preferred: use the merged production prompt
+Get-Content .\docs\openclaw-production-prompt.md
+
+# 3) Then run the concrete first task
+Get-Content .\docs\openclaw-first-task.md
+
+# If OpenClaw supports file input, use equivalent command for your install,
+# e.g. openclaw run --prompt-file .\docs\openclaw-master-prompt.md

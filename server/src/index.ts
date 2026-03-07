@@ -1,6 +1,8 @@
 import { exec } from "node:child_process";
+import path from "node:path";
 import { promisify } from "node:util";
 import cors from "@fastify/cors";
+import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
 import { z } from "zod";
 import { requireDevAuth } from "./auth";
@@ -10,12 +12,14 @@ import { getConfig } from "./config";
 import { AppDb } from "./db";
 import { requireRateLimit } from "./rate-limit";
 import { boundOutput, classifyRisk, redactSecrets } from "./risk";
+import { SharedMemory } from "./shared-memory";
 import { AuthUser } from "./types";
 
 const execAsync = promisify(exec);
 
 const config = getConfig();
 const db = new AppDb(config.DB_PATH);
+const memory = new SharedMemory(db);
 const app = Fastify({ logger: { level: config.LOG_LEVEL } });
 
 // CORS — disabled when CORS_ORIGIN is empty
@@ -27,6 +31,14 @@ if (config.CORS_ORIGIN) {
     exposedHeaders: ["X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"],
   });
 }
+
+// Serve web UI from server/public
+app.register(fastifyStatic, {
+  root: path.join(__dirname, "..", "public"),
+  prefix: "/",
+  decorateReply: false,
+});
+
 const authPreHandler = requireDevAuth(db);
 const rateLimitHandler = requireRateLimit(db, {
   maxPrompts: config.RATE_LIMIT_MAX_PROMPTS,
@@ -45,6 +57,7 @@ const chatSchema = z.object({
   message: z.string().min(1),
   cwd: z.string().optional(),
   lastOutput: z.string().optional(),
+  adapter: z.string().optional(),
 });
 
 const approveSchema = z.object({
@@ -82,6 +95,80 @@ app.get("/api/health", async () => {
   };
 });
 
+// --- Onboarding ---
+
+app.get("/getting-started", async () => {
+  return {
+    welcome: "Welcome to tsifulator.ai — your unified AI sidecar.",
+    quickStart: [
+      {
+        step: 1,
+        title: "Get a token",
+        method: "POST",
+        endpoint: "/auth/dev-login",
+        body: { email: "you@example.com" },
+        note: "Returns a bearer token for all authenticated requests.",
+      },
+      {
+        step: 2,
+        title: "Send a chat message",
+        method: "POST",
+        endpoint: "/chat",
+        headers: { Authorization: "Bearer <your-token>" },
+        body: { message: "hello" },
+        note: "Returns an AI response. Prefix with 'cmd:' to get a command proposal.",
+      },
+      {
+        step: 3,
+        title: "Try a command proposal",
+        method: "POST",
+        endpoint: "/chat",
+        headers: { Authorization: "Bearer <your-token>" },
+        body: { message: "cmd: echo hello world" },
+        note: "Returns a proposal with risk level. Approve it via /actions/approve.",
+      },
+      {
+        step: 4,
+        title: "Approve the command",
+        method: "POST",
+        endpoint: "/actions/approve",
+        headers: { Authorization: "Bearer <your-token>" },
+        body: { proposalId: "<from-step-3>", approved: true, cwd: "." },
+        note: "Executes the command and returns output. Set approved:false to reject.",
+      },
+      {
+        step: 5,
+        title: "Stream a response (SSE)",
+        method: "GET",
+        endpoint: "/chat/stream?message=hello",
+        headers: { Authorization: "Bearer <your-token>" },
+        note: "Returns Server-Sent Events: chunk → optional proposal → done.",
+      },
+    ],
+    apiKeys: {
+      title: "Create an API key for CLI/integrations",
+      create: { method: "POST", endpoint: "/auth/api-keys", body: { name: "my-key" } },
+      list: { method: "GET", endpoint: "/auth/api-keys" },
+      revoke: { method: "POST", endpoint: "/auth/api-keys/revoke", body: { keyId: "<id>" } },
+    },
+    adapters: {
+      available: listAdapters(),
+      usage: "Pass 'adapter' field in /chat or /chat/stream to use a specific adapter (default: terminal).",
+    },
+    docs: {
+      devRunbook: "/docs/dev-runbook.md",
+      authAndSessions: "/docs/auth-and-sessions.md",
+      adapterInterfaces: "/docs/adapter-interfaces.md",
+      deployTarget: "/docs/deploy-target.md",
+    },
+    terminal: {
+      title: "Terminal CLI",
+      command: "npm run cli",
+      kpiMode: "npm run cli -- --kpi",
+    },
+  };
+});
+
 app.post("/auth/dev-login", async (request, reply) => {
   const schema = z.object({ email: z.string().email().default("founder@tsifulator.ai") });
   const parsed = schema.safeParse(request.body ?? {});
@@ -95,6 +182,49 @@ app.post("/auth/dev-login", async (request, reply) => {
     token: `dev-${user.id}`,
     user,
   };
+});
+
+// --- API Key Management ---
+
+app.post("/auth/api-keys", { preHandler: authPreHandler }, async (request, reply) => {
+  const schema = z.object({ name: z.string().min(1).max(100) });
+  const parsed = schema.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: "Provide a name for the API key" });
+  }
+
+  const authUser = getAuthUser(request);
+  const result = db.createApiKey(authUser.id, parsed.data.name);
+
+  return {
+    id: result.id,
+    key: result.key,
+    keyPrefix: result.keyPrefix,
+    name: parsed.data.name,
+    warning: "Save this key now — it cannot be retrieved again.",
+  };
+});
+
+app.get("/auth/api-keys", { preHandler: authPreHandler }, async (request) => {
+  const authUser = getAuthUser(request);
+  return { keys: db.listApiKeys(authUser.id) };
+});
+
+app.post("/auth/api-keys/revoke", { preHandler: authPreHandler }, async (request, reply) => {
+  const schema = z.object({ keyId: z.string().min(1) });
+  const parsed = schema.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: "Provide keyId to revoke" });
+  }
+
+  const authUser = getAuthUser(request);
+  const revoked = db.revokeApiKey(authUser.id, parsed.data.keyId);
+
+  if (!revoked) {
+    return reply.code(404).send({ error: "API key not found or already revoked" });
+  }
+
+  return { status: "revoked", keyId: parsed.data.keyId };
 });
 
 app.post("/chat", { preHandler: [authPreHandler, rateLimitHandler] }, async (request, reply) => {
@@ -117,6 +247,7 @@ app.post("/chat", { preHandler: [authPreHandler, rateLimitHandler] }, async (req
     message: body.message,
     cwd: body.cwd,
     lastOutput: body.lastOutput,
+    adapter: body.adapter,
   });
 
   db.logEvent(response.sessionId, "chat_non_stream_completed", {
@@ -134,6 +265,7 @@ app.get("/chat/stream", { preHandler: [authPreHandler, rateLimitHandler] }, asyn
     message: z.string().min(1),
     cwd: z.string().optional(),
     lastOutput: z.string().optional(),
+    adapter: z.string().optional(),
   });
 
   const parsed = querySchema.safeParse(request.query);
@@ -154,6 +286,7 @@ app.get("/chat/stream", { preHandler: [authPreHandler, rateLimitHandler] }, asyn
     message: body.message,
     cwd: body.cwd,
     lastOutput: body.lastOutput,
+    adapter: body.adapter,
   });
 
   db.logEvent(payload.sessionId, "chat_stream_started", {
@@ -178,6 +311,13 @@ app.get("/chat/stream", { preHandler: [authPreHandler, rateLimitHandler] }, asyn
     closed = true;
   });
 
+  // Send SSE keepalive comments every 15s to prevent proxies/LBs from dropping the connection
+  const keepaliveInterval = setInterval(() => {
+    if (!closed) {
+      reply.raw.write(`: keepalive\n\n`);
+    }
+  }, 15_000);
+
   const chunks = payload.text.match(/.{1,40}/g) ?? [payload.text];
 
   let firstChunkLatencyMs: number | null = null;
@@ -201,6 +341,7 @@ app.get("/chat/stream", { preHandler: [authPreHandler, rateLimitHandler] }, asyn
     reply.raw.write(`data: ${JSON.stringify({ type: "done", sessionId: payload.sessionId })}\n\n`);
   }
 
+  clearInterval(keepaliveInterval);
   reply.raw.end();
 
   db.logEvent(payload.sessionId, "chat_stream_completed", {
@@ -263,10 +404,25 @@ app.post("/actions/approve", { preHandler: authPreHandler }, async (request, rep
     db.logEvent(proposal.sessionId, "action_executed", { proposalId: proposal.id });
     return { status: "ok", output, proposal };
   } catch (error) {
-    const output = redactSecrets(boundOutput(String(error)));
+    const rawMessage = String(error);
+    const output = redactSecrets(boundOutput(rawMessage));
+
+    // Classify the failure for the client
+    const isTimeout = rawMessage.includes("ETIMEDOUT") || rawMessage.includes("timed out");
+    const isPermission = rawMessage.includes("EPERM") || rawMessage.includes("EACCES") || rawMessage.includes("Access is denied");
+    const isNotFound = rawMessage.includes("ENOENT") || rawMessage.includes("not recognized") || rawMessage.includes("not found");
+
+    const hint = isTimeout
+      ? "Command exceeded the 30-second timeout. Try a faster alternative or break it into smaller steps."
+      : isPermission
+        ? "Permission denied. The command may require elevated privileges or access to a restricted path."
+        : isNotFound
+          ? "Command or path not found. Check spelling and ensure the tool is installed."
+          : "Command failed during execution. Review the output for details.";
+
     db.saveExecution(proposal.id, "error", output);
     db.logEvent(proposal.sessionId, "action_failed", { proposalId: proposal.id, output });
-    return reply.code(500).send({ status: "error", output, proposal });
+    return reply.code(500).send({ status: "error", output, hint, proposal });
   }
 });
 
@@ -304,6 +460,27 @@ app.get("/telemetry/counters", { preHandler: authPreHandler }, async (request) =
   return {
     generatedAt: new Date().toISOString(),
     counters,
+  };
+});
+
+app.get("/telemetry/recent-events", { preHandler: authPreHandler }, async (request) => {
+  const query = z
+    .object({
+      limit: z.coerce.number().int().min(1).max(200).default(50),
+    })
+    .safeParse(request.query);
+
+  const limit = query.success ? query.data.limit : 50;
+  const authUser = getAuthUser(request);
+  const events = db.getRecentEventsByUser(authUser.id, limit);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    count: events.length,
+    events: events.map((e) => ({
+      ...e,
+      payload: (() => { try { return JSON.parse(e.payload); } catch { return e.payload; } })(),
+    })),
   };
 });
 
@@ -385,6 +562,64 @@ app.get("/sessions/:id/messages", { preHandler: authPreHandler }, async (request
     messages: db.getMessages(params.data.id, query.data.limit),
   };
 });
+
+// --- Shared Memory API ---
+
+const memorySetSchema = z.object({
+  namespace: z.string().min(1).max(64),
+  key: z.string().min(1).max(256),
+  value: z.string().min(1).max(10000),
+  sessionId: z.string().optional(),
+  ttlMs: z.number().int().positive().optional(),
+});
+
+app.post("/memory", { preHandler: authPreHandler }, async (request, reply) => {
+  const parsed = memorySetSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: parsed.error.flatten() });
+  }
+  const authUser = getAuthUser(request);
+  const entry = memory.set(
+    authUser.id,
+    parsed.data.namespace,
+    parsed.data.key,
+    parsed.data.value,
+    parsed.data.sessionId,
+    parsed.data.ttlMs,
+  );
+  return entry;
+});
+
+app.get("/memory", { preHandler: authPreHandler }, async (request) => {
+  const query = z.object({
+    namespace: z.string().optional(),
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+  }).safeParse(request.query);
+  const authUser = getAuthUser(request);
+  const params = query.success ? query.data : { limit: 50 };
+  return {
+    entries: memory.list(authUser.id, params.namespace, params.limit),
+  };
+});
+
+app.get("/memory/context", { preHandler: authPreHandler }, async (request) => {
+  const authUser = getAuthUser(request);
+  return { context: memory.buildContext(authUser.id) };
+});
+
+app.delete("/memory/:namespace/:key", { preHandler: authPreHandler }, async (request, reply) => {
+  const params = z.object({ namespace: z.string(), key: z.string() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: "Invalid params" });
+  const authUser = getAuthUser(request);
+  const deleted = memory.delete(authUser.id, params.data.namespace, params.data.key);
+  return { deleted };
+});
+
+// Purge expired memory entries periodically (every 30 min)
+const memoryPurgeInterval = setInterval(() => {
+  try { memory.purgeExpired(); } catch {}
+}, 30 * 60 * 1000);
+memoryPurgeInterval.unref();
 
 app.listen({ port: config.PORT, host: config.HOST }).then(() => {
   app.log.info(`Server running on http://localhost:${config.PORT}`);

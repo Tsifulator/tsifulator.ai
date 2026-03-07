@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tsifulator.ai</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #0a0a0a; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+  header { padding: 12px 20px; border-bottom: 1px solid #222; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 16px; color: #fff; }
+  header .status { font-size: 12px; color: #888; margin-left: auto; }
+  #login-bar { padding: 16px 20px; border-bottom: 1px solid #222; display: flex; gap: 8px; align-items: center; }
+  #login-bar input { background: #1a1a1a; border: 1px solid #333; color: #fff; padding: 8px 12px; border-radius: 6px; font-size: 14px; width: 260px; }
+  #login-bar button { background: #2563eb; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+  #login-bar button:hover { background: #1d4ed8; }
+  #chat { flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 720px; padding: 10px 14px; border-radius: 8px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { background: #1e3a5f; align-self: flex-end; }
+  .msg.assistant { background: #1a1a1a; border: 1px solid #282828; }
+  .msg.system { background: #1a1a0a; border: 1px solid #333300; font-size: 12px; color: #aaa; }
+  .proposal { background: #1a1a2e; border: 1px solid #334; padding: 12px; border-radius: 8px; max-width: 720px; }
+  .proposal code { display: block; background: #111; padding: 8px; border-radius: 4px; margin: 8px 0; font-family: 'Cascadia Code', 'Fira Code', monospace; color: #f0f0f0; }
+  .proposal .risk { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+  .proposal .risk.safe { background: #064e3b; color: #6ee7b7; }
+  .proposal .risk.confirm { background: #78350f; color: #fbbf24; }
+  .proposal .risk.blocked { background: #7f1d1d; color: #fca5a5; }
+  .proposal .actions { margin-top: 8px; display: flex; gap: 8px; }
+  .proposal .actions button { padding: 6px 14px; border-radius: 6px; border: none; cursor: pointer; font-size: 13px; }
+  .btn-approve { background: #059669; color: #fff; }
+  .btn-approve:hover { background: #047857; }
+  .btn-reject { background: #444; color: #ccc; }
+  .btn-reject:hover { background: #555; }
+  .btn-approve:disabled, .btn-reject:disabled { opacity: 0.4; cursor: not-allowed; }
+  .exec-result { background: #111; padding: 10px; border-radius: 6px; font-family: monospace; font-size: 13px; max-width: 720px; white-space: pre-wrap; border: 1px solid #282828; }
+  .exec-result.error { border-color: #7f1d1d; }
+  #input-bar { padding: 12px 20px; border-top: 1px solid #222; display: flex; gap: 8px; }
+  #input-bar input { flex: 1; background: #1a1a1a; border: 1px solid #333; color: #fff; padding: 10px 14px; border-radius: 8px; font-size: 14px; font-family: inherit; }
+  #input-bar input:focus { outline: none; border-color: #2563eb; }
+  #input-bar button { background: #2563eb; color: #fff; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+  #input-bar button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .hidden { display: none !important; }
+  #rate-limit { font-size: 11px; color: #666; padding: 0 20px 4px; text-align: right; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ Tsifulator.ai</h1>
+  <span class="status" id="session-id"></span>
+</header>
+
+<div id="login-bar">
+  <input type="email" id="email" placeholder="Email (e.g. you@example.com)" value="founder@tsifulator.ai">
+  <button onclick="login()">Login</button>
+</div>
+
+<div id="chat" class="hidden"></div>
+<div id="rate-limit" class="hidden"></div>
+<div id="input-bar" class="hidden">
+  <input type="text" id="prompt" placeholder="Type a message or 'cmd: your-command'…" onkeydown="if(event.key==='Enter')send()">
+  <button onclick="send()" id="send-btn">Send</button>
+</div>
+
+<script>
+const API = location.origin;
+let token = null;
+let sessionId = null;
+
+async function login() {
+  const email = document.getElementById('email').value.trim();
+  if (!email) return;
+  const res = await fetch(`${API}/auth/dev-login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email })
+  });
+  if (!res.ok) { alert('Login failed'); return; }
+  const data = await res.json();
+  token = data.token;
+  document.getElementById('login-bar').classList.add('hidden');
+  document.getElementById('chat').classList.remove('hidden');
+  document.getElementById('input-bar').classList.remove('hidden');
+  document.getElementById('rate-limit').classList.remove('hidden');
+  addMsg('system', `Logged in as ${data.user.email}`);
+  document.getElementById('prompt').focus();
+}
+
+function addMsg(role, text) {
+  const chat = document.getElementById('chat');
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  div.textContent = text;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+  return div;
+}
+
+function addProposal(proposal) {
+  const chat = document.getElementById('chat');
+  const div = document.createElement('div');
+  div.className = 'proposal';
+  div.innerHTML = `
+    <span class="risk ${proposal.risk}">${proposal.risk.toUpperCase()}</span>
+    <code>${escHtml(proposal.command)}</code>
+    <div class="actions">
+      <button class="btn-approve" onclick="approve('${proposal.id}', true, this)">✓ Approve</button>
+      <button class="btn-reject" onclick="approve('${proposal.id}', false, this)">✗ Reject</button>
+    </div>`;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function escHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+async function approve(proposalId, approved, btn) {
+  const buttons = btn.parentElement.querySelectorAll('button');
+  buttons.forEach(b => b.disabled = true);
+
+  const res = await fetch(`${API}/actions/approve`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ proposalId, approved })
+  });
+  const data = await res.json();
+
+  const chat = document.getElementById('chat');
+  if (!approved) {
+    addMsg('system', 'Action rejected');
+    return;
+  }
+
+  const div = document.createElement('div');
+  div.className = `exec-result ${data.status === 'error' ? 'error' : ''}`;
+  div.textContent = data.status === 'blocked' ? '🚫 Blocked by policy' : (data.output || `Status: ${data.status}`);
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function updateRateLimit(headers) {
+  const limit = headers.get('x-ratelimit-limit');
+  const remaining = headers.get('x-ratelimit-remaining');
+  if (limit && remaining) {
+    document.getElementById('rate-limit').textContent = `${remaining}/${limit} prompts remaining`;
+  }
+}
+
+async function send() {
+  const input = document.getElementById('prompt');
+  const message = input.value.trim();
+  if (!message || !token) return;
+
+  input.value = '';
+  document.getElementById('send-btn').disabled = true;
+  addMsg('user', message);
+
+  try {
+    const params = new URLSearchParams({ message });
+    if (sessionId) params.set('sessionId', sessionId);
+
+    const res = await fetch(`${API}/chat/stream?${params}`, {
+      headers: { authorization: `Bearer ${token}` }
+    });
+
+    updateRateLimit(res.headers);
+
+    if (res.status === 429) {
+      addMsg('system', '⚠️ Rate limit reached. Please wait before sending more prompts.');
+      return;
+    }
+
+    if (!res.ok || !res.body) {
+      addMsg('system', `Error: ${res.status}`);
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let assistantDiv = null;
+    let fullText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop() || '';
+
+      for (const part of parts) {
+        if (!part.startsWith('data: ')) continue;
+        const evt = JSON.parse(part.slice(6));
+
+        if (evt.sessionId) {
+          sessionId = evt.sessionId;
+          document.getElementById('session-id').textContent = `Session: ${sessionId.slice(0, 16)}…`;
+        }
+
+        if (evt.type === 'chunk') {
+          if (!assistantDiv) assistantDiv = addMsg('assistant', '');
+          fullText += evt.data;
+          assistantDiv.textContent = fullText;
+          document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
+        }
+
+        if (evt.type === 'proposal') {
+          addProposal(evt.data);
+        }
+      }
+    }
+  } catch (err) {
+    addMsg('system', `Error: ${err.message}`);
+  } finally {
+    document.getElementById('send-btn').disabled = false;
+    input.focus();
+  }
+}
+</script>
+</body>
+</html>

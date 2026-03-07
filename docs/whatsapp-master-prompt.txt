@@ -1,0 +1,95 @@
+Do not ask clarifying questions. Make reasonable defaults. Start coding immediately.
+
+You are my senior product engineer and architect building tsifulator.ai (Unified AI Sidecar).
+
+MISSION
+Build Phase 1 only: Terminal-First Beta with real-time streaming AI responses, structured Apply actions, and a shared backend brain.
+
+SCOPE (HARD LOCK)
+In scope:
+- Backend (Node.js + TypeScript + Fastify)
+- SQLite persistence
+- SSE streaming endpoint
+- .env support for OPENAI_API_KEY
+- Terminal client (Node CLI, minimal TUI behavior)
+- Structured action schema for shell_command only
+
+Out of scope for this phase:
+- Excel add-in implementation
+- PowerPoint/RStudio integrations
+- Billing/SSO/enterprise compliance
+- Multi-tenant architecture
+
+REQUIRED MONOREPO STRUCTURE
+- tsifulator.ai/server
+- tsifulator.ai/clients/terminal
+- tsifulator.ai/docs
+
+REQUIRED API ENDPOINTS
+- GET /health
+- POST /auth/dev-login
+- POST /chat (non-stream fallback)
+- GET /chat/stream (SSE)
+
+DATA + PERSISTENCE REQUIREMENTS
+- Store sessions in SQLite
+- Store message logs in SQLite
+- Store action proposals and user decision (approved/rejected)
+- Include created_at timestamps for ordering/auditability
+
+APPLY ACTION SAFETY POLICY (MANDATORY)
+- Classify command risk as: safe | confirm | blocked
+- Block by default: rm -rf, recursive wildcard deletes, sudo/privilege escalation, destructive chmod/chown patterns
+- Never execute blocked commands
+- Require explicit confirmation before executing safe/confirm commands
+- Capture command output with a strict max size
+- Redact obvious secrets in captured output
+
+TERMINAL CLIENT REQUIREMENTS
+- Detect current working directory and send as context
+- Capture bounded last command output and send as context
+- Stream assistant response live from SSE
+- When action is returned:
+  1) print suggested command
+  2) print risk level
+  3) ask explicit confirmation
+  4) execute only if allowed + confirmed
+- Design to work with bash and zsh
+
+ARCHITECTURE REQUIREMENTS
+- Clean modular folder structure
+- Shared types for payloads where practical
+- Centralized error handling
+- Input validation on API boundaries
+- Minimal clear logs
+
+STRICT EXECUTION ORDER
+1) Print full repo structure.
+2) Print exact VS Code terminal initialization commands.
+3) Generate complete backend scaffold file-by-file with full file contents and paths.
+4) Generate complete terminal client scaffold file-by-file with full file contents and paths.
+5) Generate README with exact run instructions (Windows-safe).
+
+PHASE EXECUTION RULES
+- Work in phases and stop after each phase summary.
+- For each phase output:
+  - file tree delta (added/updated/removed)
+  - exact commands executed
+  - full content of changed files
+  - acceptance checklist pass/fail
+- Save phase report format consistently.
+- Run quality gate before next phase (if scripts exist): lint, typecheck, test, build.
+- If any check fails, fix before moving on.
+
+PHASE 1 DEFINITION OF DONE
+- Backend starts without errors
+- /health returns 200
+- /chat returns non-stream response
+- /chat/stream streams SSE chunks end-to-end
+- SQLite contains sessions/messages/actions
+- Terminal client streams responses and supports confirmed Apply flow
+- Blocked commands are denied
+- README enables fresh Windows setup/run
+
+Start now.
+First output full repo structure, then initialization commands, then begin implementation immediately.

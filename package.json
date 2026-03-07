@@ -110,6 +110,8 @@
     "openclaw:watchdog:autostart:enable": "powershell -ExecutionPolicy Bypass -File ./scripts/openclaw-watchdog-autostart-enable.ps1",
     "openclaw:watchdog:autostart:status": "powershell -ExecutionPolicy Bypass -File ./scripts/openclaw-watchdog-autostart-status.ps1",
     "openclaw:watchdog:autostart:disable": "powershell -ExecutionPolicy Bypass -File ./scripts/openclaw-watchdog-autostart-disable.ps1",
+    "bootstrap": "node scripts/bootstrap.mjs",
+    "load-test": "node scripts/load-test.mjs",
     "start": "tsx server/src/index.ts",
     "dev": "tsx watch server/src/index.ts",
     "cli": "tsx clients/terminal/src/index.ts",
@@ -117,10 +119,13 @@
     "lint": "eslint server/ clients/",
     "lint:fix": "eslint server/ clients/ --fix",
     "format": "prettier --write server/ clients/ tests/",
-    "format:check": "prettier --check server/ clients/ tests/"
+    "format:check": "prettier --check server/ clients/ tests/",
+    "build": "tsc --noEmit",
+    "build:fix": "tsc --noEmit"
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",
+    "@fastify/static": "^9.0.0",
     "better-sqlite3": "^12.6.2",
     "dotenv": "^17.3.1",
     "fastify": "^5.7.4",

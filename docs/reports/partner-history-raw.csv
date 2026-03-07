@@ -1,0 +1,5 @@
+﻿"snapshotDate","snapshotAt","email","prompts24h","proposed","confirmed","blocked","streamRequests","streamCompletions","streamRatio","medianChatLatencyMs","medianStreamFirstTokenLatencyMs"
+"2026-03-02","2026-03-02T08:51:38.6270855+02:00","partner.a@company.com","16","15","10","1","1","1","1/1","2","2"
+"2026-03-02","2026-03-02T08:51:38.6270855+02:00","partner.b@company.com","4","3","2","1","1","1","1/1","1","2"
+"2026-03-02","2026-03-02T08:51:39.4829117+02:00","partner.a@company.com","16","15","10","1","1","1","1/1","2","2"
+"2026-03-02","2026-03-02T08:51:39.4829117+02:00","partner.b@company.com","4","3","2","1","1","1","1/1","1","2"

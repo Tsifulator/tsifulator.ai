@@ -1,0 +1,69 @@
+﻿{
+    "generatedAt":  "2026-03-02T09:22:39.2676782+02:00",
+    "date":  "2026-03-02",
+    "currentWeekRange":  "2026-02-24..2026-03-02",
+    "priorWeekRange":  "2026-02-17..2026-02-23",
+    "partnerCount":  2,
+    "currentWeekDataPoints":  2,
+    "priorWeekDataPoints":  0,
+    "partners":  [
+                     {
+                         "email":  "partner.a@company.com",
+                         "currentWeek":  {
+                                             "range":  "2026-02-24..2026-03-02",
+                                             "daysActive":  1,
+                                             "totalPrompts":  16,
+                                             "totalConfirmed":  10,
+                                             "totalBlocked":  1,
+                                             "avgChatMs":  2,
+                                             "approvalRate":  0.67
+                                         },
+                         "priorWeek":  {
+                                           "range":  "2026-02-17..2026-02-23",
+                                           "daysActive":  0,
+                                           "totalPrompts":  0,
+                                           "totalConfirmed":  0,
+                                           "totalBlocked":  0,
+                                           "avgChatMs":  0,
+                                           "approvalRate":  0
+                                       },
+                         "weekOverWeek":  {
+                                              "deltaPrompts":  16,
+                                              "deltaConfirmed":  10,
+                                              "deltaBlocked":  1,
+                                              "deltaChatMs":  2,
+                                              "deltaDaysActive":  1,
+                                              "deltaApprovalRate":  0.67
+                                          }
+                     },
+                     {
+                         "email":  "partner.b@company.com",
+                         "currentWeek":  {
+                                             "range":  "2026-02-24..2026-03-02",
+                                             "daysActive":  1,
+                                             "totalPrompts":  4,
+                                             "totalConfirmed":  2,
+                                             "totalBlocked":  1,
+                                             "avgChatMs":  1,
+                                             "approvalRate":  0.67
+                                         },
+                         "priorWeek":  {
+                                           "range":  "2026-02-17..2026-02-23",
+                                           "daysActive":  0,
+                                           "totalPrompts":  0,
+                                           "totalConfirmed":  0,
+                                           "totalBlocked":  0,
+                                           "avgChatMs":  0,
+                                           "approvalRate":  0
+                                       },
+                         "weekOverWeek":  {
+                                              "deltaPrompts":  4,
+                                              "deltaConfirmed":  2,
+                                              "deltaBlocked":  1,
+                                              "deltaChatMs":  1,
+                                              "deltaDaysActive":  1,
+                                              "deltaApprovalRate":  0.67
+                                          }
+                     }
+                 ]
+}

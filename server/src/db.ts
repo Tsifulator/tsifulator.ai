@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from "node:crypto";
 import Database from "better-sqlite3";
 
 export type Role = "user" | "assistant";
@@ -169,6 +170,34 @@ export class AppDb {
         state_json TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS api_keys (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        key_hash TEXT NOT NULL,
+        key_prefix TEXT NOT NULL,
+        name TEXT NOT NULL,
+        last_used_at TEXT,
+        created_at TEXT NOT NULL,
+        revoked_at TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS shared_memory (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        namespace TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        session_id TEXT,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_memory_user_ns_key
+        ON shared_memory(user_id, namespace, key);
+
+      CREATE INDEX IF NOT EXISTS idx_shared_memory_expires
+        ON shared_memory(expires_at);
     `);
 
     this.repairApprovalsDuplicates();
@@ -298,6 +327,62 @@ export class AppDb {
     return this.db
       .prepare("SELECT id, email FROM users WHERE id = ?")
       .get(id) as UserRecord | undefined;
+  }
+
+  // --- API Keys ---
+
+  createApiKey(userId: string, name: string): { id: string; key: string; keyPrefix: string } {
+    const id = uid("apk");
+    const rawKey = `tsk_${randomBytes(24).toString("base64url")}`;
+    const keyHash = createHash("sha256").update(rawKey).digest("hex");
+    const keyPrefix = rawKey.slice(0, 12);
+
+    this.db
+      .prepare("INSERT INTO api_keys (id, user_id, key_hash, key_prefix, name, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(id, userId, keyHash, keyPrefix, name, new Date().toISOString());
+
+    return { id, key: rawKey, keyPrefix };
+  }
+
+  validateApiKey(rawKey: string): UserRecord | undefined {
+    const keyHash = createHash("sha256").update(rawKey).digest("hex");
+    const row = this.db
+      .prepare(
+        `SELECT ak.id as keyId, ak.user_id, u.id, u.email
+         FROM api_keys ak
+         INNER JOIN users u ON u.id = ak.user_id
+         WHERE ak.key_hash = ? AND ak.revoked_at IS NULL`
+      )
+      .get(keyHash) as { keyId: string; user_id: string; id: string; email: string } | undefined;
+
+    if (!row) {
+      return undefined;
+    }
+
+    // Update last_used_at
+    this.db
+      .prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?")
+      .run(new Date().toISOString(), row.keyId);
+
+    return { id: row.id, email: row.email };
+  }
+
+  listApiKeys(userId: string): Array<{ id: string; keyPrefix: string; name: string; lastUsedAt: string | null; createdAt: string; revokedAt: string | null }> {
+    return this.db
+      .prepare(
+        `SELECT id, key_prefix as keyPrefix, name, last_used_at as lastUsedAt, created_at as createdAt, revoked_at as revokedAt
+         FROM api_keys
+         WHERE user_id = ?
+         ORDER BY created_at DESC`
+      )
+      .all(userId) as Array<{ id: string; keyPrefix: string; name: string; lastUsedAt: string | null; createdAt: string; revokedAt: string | null }>;
+  }
+
+  revokeApiKey(userId: string, keyId: string): boolean {
+    const result = this.db
+      .prepare("UPDATE api_keys SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL")
+      .run(new Date().toISOString(), keyId, userId);
+    return result.changes > 0;
   }
 
   countUserPromptsSince(userId: string, since: string): number {
@@ -463,10 +548,109 @@ export class AppDb {
       .all(sessionId) as Array<{ id: string; type: string; payload: string; createdAt: string }>;
   }
 
+  getRecentEventsByUser(userId: string, limit: number): Array<{ id: string; sessionId: string; type: string; payload: string; createdAt: string }> {
+    return this.db
+      .prepare(
+        `SELECT e.id, e.session_id as sessionId, e.event_type as type, e.payload, e.created_at as createdAt
+         FROM event_log e
+         INNER JOIN sessions s ON s.id = e.session_id
+         WHERE s.user_id = ?
+         ORDER BY e.created_at DESC
+         LIMIT ?`
+      )
+      .all(userId, limit) as Array<{ id: string; sessionId: string; type: string; payload: string; createdAt: string }>;
+  }
+
   saveAdapterState(adapter: string, stateJson: string): void {
     this.db
       .prepare("INSERT INTO adapter_states (id, adapter, state_json, created_at) VALUES (?, ?, ?, ?)")
       .run(uid("ads"), adapter, stateJson, new Date().toISOString());
+  }
+
+  // --- Shared Memory ---
+
+  setMemoryEntry(
+    userId: string,
+    namespace: string,
+    key: string,
+    value: string,
+    sessionId: string | null,
+    expiresAt: string
+  ): { id: string; userId: string; namespace: string; key: string; value: string; sessionId: string | null; createdAt: string; expiresAt: string } {
+    const id = uid("mem");
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO shared_memory (id, user_id, namespace, key, value, session_id, created_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, namespace, key) DO UPDATE SET
+           value = excluded.value,
+           session_id = excluded.session_id,
+           created_at = excluded.created_at,
+           expires_at = excluded.expires_at`
+      )
+      .run(id, userId, namespace, key, value, sessionId, now, expiresAt);
+
+    // Return the actual row (may have kept old id on conflict)
+    return this.getMemoryEntry(userId, namespace, key)!;
+  }
+
+  getMemoryEntry(
+    userId: string,
+    namespace: string,
+    key: string
+  ): { id: string; userId: string; namespace: string; key: string; value: string; sessionId: string | null; createdAt: string; expiresAt: string } | undefined {
+    const now = new Date().toISOString();
+    return this.db
+      .prepare(
+        `SELECT id, user_id as userId, namespace, key, value, session_id as sessionId, created_at as createdAt, expires_at as expiresAt
+         FROM shared_memory
+         WHERE user_id = ? AND namespace = ? AND key = ? AND expires_at > ?`
+      )
+      .get(userId, namespace, key, now) as any;
+  }
+
+  listMemoryEntries(
+    userId: string,
+    namespace?: string,
+    limit = 50
+  ): Array<{ id: string; userId: string; namespace: string; key: string; value: string; sessionId: string | null; createdAt: string; expiresAt: string }> {
+    const now = new Date().toISOString();
+    if (namespace) {
+      return this.db
+        .prepare(
+          `SELECT id, user_id as userId, namespace, key, value, session_id as sessionId, created_at as createdAt, expires_at as expiresAt
+           FROM shared_memory
+           WHERE user_id = ? AND namespace = ? AND expires_at > ?
+           ORDER BY created_at DESC
+           LIMIT ?`
+        )
+        .all(userId, namespace, now, limit) as any;
+    }
+    return this.db
+      .prepare(
+        `SELECT id, user_id as userId, namespace, key, value, session_id as sessionId, created_at as createdAt, expires_at as expiresAt
+         FROM shared_memory
+         WHERE user_id = ? AND expires_at > ?
+         ORDER BY created_at DESC
+         LIMIT ?`
+      )
+      .all(userId, now, limit) as any;
+  }
+
+  deleteMemoryEntry(userId: string, namespace: string, key: string): boolean {
+    const result = this.db
+      .prepare("DELETE FROM shared_memory WHERE user_id = ? AND namespace = ? AND key = ?")
+      .run(userId, namespace, key);
+    return result.changes > 0;
+  }
+
+  purgeExpiredMemoryEntries(): number {
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare("DELETE FROM shared_memory WHERE expires_at <= ?")
+      .run(now);
+    return result.changes;
   }
 
   getTelemetryCounters(userId: string): TelemetryCountersRecord {

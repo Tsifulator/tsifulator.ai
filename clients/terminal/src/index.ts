@@ -1473,43 +1473,70 @@ async function main() {
     sessionId = result.sessionId;
 
     if (result.proposal) {
-      output.write(`\nAction proposal: ${JSON.stringify(result.proposal, null, 2)}\n`);
-      const approve = (await rl.question("Approve action? (y/N): ")).trim().toLowerCase();
+      const proposal = result.proposal as { id: string; command: string; risk: string; description?: string };
+      const riskLabel = proposal.risk === "blocked" ? "🚫 BLOCKED" : proposal.risk === "confirm" ? "⚠️  CONFIRM" : "✅ SAFE";
 
-      if (approve === "y") {
-        const proposal = result.proposal as { id: string };
-        const execResponse = await fetch(`${baseUrl}/actions/approve`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            authorization: `Bearer ${login.token}`
-          },
-          body: JSON.stringify({
-            proposalId: proposal.id,
-            approved: true,
-            cwd: process.cwd()
-          })
-        });
+      output.write("\n┌─── Action Proposal ───────────────────────\n");
+      output.write(`│ Command:  ${proposal.command}\n`);
+      output.write(`│ Risk:     ${riskLabel}\n`);
+      if (proposal.description) {
+        output.write(`│ Info:     ${proposal.description}\n`);
+      }
+      output.write("└────────────────────────────────────────────\n");
 
-        const execution = await execResponse.json();
-        output.write(`Execution result: ${JSON.stringify(execution, null, 2)}\n`);
-        lastOutput = JSON.stringify(execution).slice(0, 1200);
+      if (proposal.risk === "blocked") {
+        output.write("This command is blocked by policy and cannot be executed.\n");
       } else {
-        const proposal = result.proposal as { id: string };
-        await fetch(`${baseUrl}/actions/approve`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            authorization: `Bearer ${login.token}`
-          },
-          body: JSON.stringify({
-            proposalId: proposal.id,
-            approved: false,
-            cwd: process.cwd()
-          })
-        });
-        output.write("Action rejected.\n");
-        lastOutput = "action rejected by user";
+        const approve = (await rl.question("Approve action? (y/N): ")).trim().toLowerCase();
+
+        if (approve === "y") {
+          const execResponse = await fetch(`${baseUrl}/actions/approve`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${login.token}`
+            },
+            body: JSON.stringify({
+              proposalId: proposal.id,
+              approved: true,
+              cwd: process.cwd()
+            })
+          });
+
+          const execution = await execResponse.json() as { status: string; output?: string; hint?: string };
+          if (execution.status === "ok") {
+            output.write(`\n✅ Command executed successfully\n`);
+            if (execution.output) {
+              output.write(`\n${execution.output}\n`);
+            }
+          } else if (execution.status === "blocked") {
+            output.write(`\n🚫 Command blocked by policy\n`);
+          } else {
+            output.write(`\n❌ Command failed (${execution.status})\n`);
+            if (execution.output) {
+              output.write(`${execution.output}\n`);
+            }
+            if (execution.hint) {
+              output.write(`💡 ${execution.hint}\n`);
+            }
+          }
+          lastOutput = JSON.stringify(execution).slice(0, 1200);
+        } else {
+          await fetch(`${baseUrl}/actions/approve`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${login.token}`
+            },
+            body: JSON.stringify({
+              proposalId: proposal.id,
+              approved: false,
+              cwd: process.cwd()
+            })
+          });
+          output.write("↩ Action rejected.\n");
+          lastOutput = "action rejected by user";
+        }
       }
     }
 

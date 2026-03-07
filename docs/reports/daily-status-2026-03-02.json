@@ -1,0 +1,36 @@
+﻿{
+    "generatedAt":  "2026-03-02T09:56:32.1164939+02:00",
+    "date":  "2026-03-02",
+    "health":  "ok",
+    "source":  {
+                   "triagePath":  "docs/daily-triage/2026-03-02.md",
+                   "historyPath":  "docs/reports/partner-compare-history.csv",
+                   "apiBaseUrl":  "http://127.0.0.1:4000",
+                   "email":  "partner.a@company.com"
+               },
+    "triage":  {
+                   "exists":  true,
+                   "kpiLineCount":  1,
+                   "comparisonLineCount":  1,
+                   "trendLineCount":  1,
+                   "dedupeHealthy":  true
+               },
+    "history":  {
+                    "exists":  true,
+                    "rowCount":  16
+                },
+    "kpi":  {
+                "newBetaUsers7d":  6,
+                "dailyActiveUsers":  5,
+                "promptsSent":  16,
+                "promptsSent24h":  16,
+                "applyActionsProposed":  15,
+                "applyActionsConfirmed":  10,
+                "blockedCommandAttempts":  1,
+                "streamRequests":  1,
+                "streamCompletions":  1,
+                "streamSuccessRate":  1,
+                "medianChatLatencyMs":  2,
+                "medianStreamFirstTokenLatencyMs":  2
+            }
+}
