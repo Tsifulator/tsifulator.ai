@@ -7,6 +7,7 @@ import { listAdapters } from "./adapters/registry";
 import { handleChat } from "./chat-engine";
 import { getConfig } from "./config";
 import { AppDb } from "./db";
+import { requireRateLimit } from "./rate-limit";
 import { boundOutput, classifyRisk, redactSecrets } from "./risk";
 import { AuthUser } from "./types";
 
@@ -16,6 +17,10 @@ const config = getConfig();
 const db = new AppDb(config.DB_PATH);
 const app = Fastify({ logger: true });
 const authPreHandler = requireDevAuth(db);
+const rateLimitHandler = requireRateLimit(db, {
+  maxPrompts: config.RATE_LIMIT_MAX_PROMPTS,
+  windowMs: config.RATE_LIMIT_WINDOW_MS,
+});
 
 function normalizeCommandForPlatform(command: string): string {
   if (process.platform === "win32") {
@@ -81,7 +86,7 @@ app.post("/auth/dev-login", async (request, reply) => {
   };
 });
 
-app.post("/chat", { preHandler: authPreHandler }, async (request, reply) => {
+app.post("/chat", { preHandler: [authPreHandler, rateLimitHandler] }, async (request, reply) => {
   const startedAtMs = Date.now();
   const parsed = chatSchema.safeParse(request.body);
   if (!parsed.success) {
@@ -111,7 +116,7 @@ app.post("/chat", { preHandler: authPreHandler }, async (request, reply) => {
   return response;
 });
 
-app.get("/chat/stream", { preHandler: authPreHandler }, async (request, reply) => {
+app.get("/chat/stream", { preHandler: [authPreHandler, rateLimitHandler] }, async (request, reply) => {
   const startedAtMs = Date.now();
   const querySchema = z.object({
     sessionId: z.string().optional(),

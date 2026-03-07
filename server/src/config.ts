@@ -13,6 +13,8 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().optional(),
   CORS_ORIGIN: z.string().default(isProd ? "" : "*"),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default(isProd ? "info" : "debug"),
+  RATE_LIMIT_MAX_PROMPTS: z.coerce.number().default(isProd ? 50 : 0),
+  RATE_LIMIT_WINDOW_MS: z.coerce.number().default(24 * 60 * 60 * 1000),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;

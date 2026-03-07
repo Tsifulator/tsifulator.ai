@@ -296,6 +296,17 @@ export class AppDb {
       .get(id) as UserRecord | undefined;
   }
 
+  countUserPromptsSince(userId: string, since: string): number {
+    return (this.db
+      .prepare(
+        `SELECT COUNT(*) as count
+         FROM messages m
+         INNER JOIN sessions s ON s.id = m.session_id
+         WHERE s.user_id = ? AND m.role = 'user' AND m.created_at >= ?`
+      )
+      .get(userId, since) as { count: number }).count;
+  }
+
   createSession(userId: string): SessionRecord {
     const id = uid("ses");
     this.db
