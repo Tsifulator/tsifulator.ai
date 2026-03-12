@@ -11,3 +11,11 @@ data/
 .openclaw/
 .clawd-control.txt
 memory/
+.current-*
+.tmp-*
+ollama-*.txt
+*.lock
+.autocode-last-failure.txt
+tsifulator_context.txt
+docs/phase-reports/autopilot-runs/watchdog-state.json
+docs/phase-reports/autopilot-runs/agent-run-slot.lock

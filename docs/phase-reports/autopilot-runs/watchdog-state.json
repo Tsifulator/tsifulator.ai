@@ -1,9 +1,0 @@
-﻿{
-    "lockStaleMinutes":  2,
-    "intervalSeconds":  180,
-    "pid":  3672,
-    "promptFile":  ".\\docs\\openclaw-cross-app-mvp-prompt.md",
-    "sessionId":  "tsif-phase1",
-    "startedAt":  "2026-03-07T00:11:59.3301177-05:00",
-    "agentId":  "main"
-}
