@@ -1,0 +1,33 @@
+Block 1: Refactor terminal execution into the canonical Tsifulator workflow.
+
+Objective:
+Make terminal the clean reference implementation for the entire system.
+
+Tasks:
+1. Centralize shared types for:
+   - Action
+   - ActionResult
+   - ApprovalState
+   - StreamEvent
+2. Remove duplicated action/result/approval shapes across:
+   - server/src/types.ts
+   - server/src/adapters/contract.ts
+   - server/src/chat-engine.ts
+   - server/src/risk.ts
+   - server/src/shared-memory.ts
+   - server/src/adapters/terminal-adapter.ts
+   - server/src/db.ts
+3. Ensure terminal requests follow one lifecycle:
+   - request received
+   - session loaded
+   - memory loaded
+   - action planned
+   - risk evaluated
+   - approval required OR execution started
+   - action completed/rejected
+   - final response persisted
+4. Standardize SSE event names and event ordering for this lifecycle.
+5. Ensure DB persistence matches the same lifecycle states.
+6. Keep Excel and RStudio untouched unless required by shared type imports.
+7. Keep changes minimal and cohesive.
+8. Do not add new product features.

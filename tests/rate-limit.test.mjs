@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-const TEST_PORT = 4500 + Math.floor(Math.random() * 500);
+const TEST_PORT = 4450 + Math.floor(Math.random() * 50);
 const BASE_URL = `http://127.0.0.1:${TEST_PORT}`;
 const TEST_DB_PATH = path.resolve(`./data/test-rl-${process.pid}-${Date.now()}.db`);
 
