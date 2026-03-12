@@ -18,4 +18,4 @@ ollama-*.txt
 .autocode-last-failure.txt
 tsifulator_context.txt
 docs/phase-reports/autopilot-runs/watchdog-state.json
-docs/phase-reports/autopilot-runs/agent-run-slot.lock
+docs/phase-reports/autopilot-runs/agent-run-slot.lockblock1-final-prompt.txt
