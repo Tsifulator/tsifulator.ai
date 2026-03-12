@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import Database from "better-sqlite3";
+import { ActionRisk } from "./shared-types";
 
 export type Role = "user" | "assistant";
 
@@ -24,7 +25,7 @@ export interface ActionProposalRecord {
   id: string;
   sessionId: string;
   command: string;
-  risk: "safe" | "confirm" | "blocked";
+  risk: ActionRisk;
 }
 
 export interface SessionSummaryRecord {
@@ -329,8 +330,6 @@ export class AppDb {
       .get(id) as UserRecord | undefined;
   }
 
-  // --- API Keys ---
-
   createApiKey(userId: string, name: string): { id: string; key: string; keyPrefix: string } {
     const id = uid("apk");
     const rawKey = `tsk_${randomBytes(24).toString("base64url")}`;
@@ -359,7 +358,6 @@ export class AppDb {
       return undefined;
     }
 
-    // Update last_used_at
     this.db
       .prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?")
       .run(new Date().toISOString(), row.keyId);
@@ -481,7 +479,7 @@ export class AppDb {
     return { id, sessionId, role, content };
   }
 
-  saveActionProposal(sessionId: string, command: string, risk: "safe" | "confirm" | "blocked"): ActionProposalRecord {
+  saveActionProposal(sessionId: string, command: string, risk: ActionRisk): ActionProposalRecord {
     const id = uid("act");
     this.db
       .prepare("INSERT INTO action_proposals (id, session_id, command, risk, created_at) VALUES (?, ?, ?, ?, ?)")
@@ -567,8 +565,6 @@ export class AppDb {
       .run(uid("ads"), adapter, stateJson, new Date().toISOString());
   }
 
-  // --- Shared Memory ---
-
   setMemoryEntry(
     userId: string,
     namespace: string,
@@ -591,7 +587,6 @@ export class AppDb {
       )
       .run(id, userId, namespace, key, value, sessionId, now, expiresAt);
 
-    // Return the actual row (may have kept old id on conflict)
     return this.getMemoryEntry(userId, namespace, key)!;
   }
 
