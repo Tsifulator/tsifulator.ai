@@ -1,3 +1,5 @@
+import { ActionRisk } from "./shared-types";
+
 const BLOCKED_PATTERNS = [
   /rm\s+-rf/i,
   /del\s+\/s\s+\/q/i,
@@ -13,7 +15,7 @@ const BLOCKED_PATTERNS = [
 
 const CONFIRM_PATTERNS = [/npm\s+install/i, /git\s+(reset|clean)/i, /docker\s+/i];
 
-export type RiskLevel = "safe" | "confirm" | "blocked";
+export type RiskLevel = ActionRisk;
 
 export function classifyRisk(command: string): RiskLevel {
   if (BLOCKED_PATTERNS.some((pattern) => pattern.test(command))) {
@@ -41,3 +43,4 @@ export function boundOutput(output: string, maxChars = 4000): string {
 
   return `${output.slice(0, maxChars)}\n...[truncated]`;
 }
+

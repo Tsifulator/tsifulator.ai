@@ -1,3 +1,5 @@
+import { ActionRisk } from "./shared-types";
+
 export interface ChatRequest {
   userId: string;
   sessionId?: string;
@@ -14,7 +16,7 @@ export interface ChatResponse {
     id: string;
     sessionId: string;
     command: string;
-    risk: "safe" | "confirm" | "blocked";
+    risk: ActionRisk;
   } | null;
 }
 
@@ -35,3 +37,4 @@ export interface AuthUser {
   id: string;
   email: string;
 }
+
