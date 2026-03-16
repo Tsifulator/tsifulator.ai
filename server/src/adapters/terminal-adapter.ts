@@ -1,4 +1,4 @@
-import { classifyRisk } from "../risk";
+﻿import { classifyRisk } from "../risk";
 import { SharedMemory } from "../shared-memory";
 import { AdapterContext, AdapterSuggestion } from "../types";
 import { AppAdapter } from "./contract";
@@ -32,42 +32,48 @@ function getTerminalSuggestion(message: string): AdapterSuggestion {
   };
 }
 
+function captureTerminalContext(context: AdapterContext): Record<string, unknown> {
+  return {
+    cwd: context.cwd,
+    lastOutput: context.lastOutput?.slice(0, 1000)
+  };
+}
+
+function emitTerminalEvents(context: AdapterContext) {
+  return [
+    {
+      type: "terminal_context_captured",
+      payload: {
+        cwd: context.cwd,
+        hasLastOutput: Boolean(context.lastOutput)
+      }
+    }
+  ];
+}
+
+function saveTerminalMemory(context: AdapterContext, memory: SharedMemory): void {
+  if (context.cwd) {
+    memory.set(context.userId, "terminal", "last_cwd", context.cwd, context.sessionId);
+  }
+  memory.set(context.userId, "terminal", "last_prompt", context.message.slice(0, 500), context.sessionId);
+}
+
 export const terminalAdapter: AppAdapter = {
   name: "terminal",
-  captureContext(context: AdapterContext) {
-    return {
-      cwd: context.cwd,
-      lastOutput: context.lastOutput?.slice(0, 1000)
-    };
-  },
+  captureContext: captureTerminalContext,
   proposeActions(context: AdapterContext) {
     return getTerminalSuggestion(context.message);
   },
-  validateAction(command: string) {
-    return classifyRisk(command);
-  },
+  validateAction: classifyRisk,
   async executeAction() {
     return {
       supported: false,
       output: "Execution handled by core policy executor"
     };
   },
-  emitEvents(context: AdapterContext) {
-    return [
-      {
-        type: "terminal_context_captured",
-        payload: {
-          cwd: context.cwd,
-          hasLastOutput: Boolean(context.lastOutput)
-        }
-      }
-    ];
-  },
-  saveToMemory(context: AdapterContext, memory: SharedMemory) {
-    if (context.cwd) {
-      memory.set(context.userId, "terminal", "last_cwd", context.cwd, context.sessionId);
-    }
-    // Save the user's last prompt so other adapters have context
-    memory.set(context.userId, "terminal", "last_prompt", context.message.slice(0, 500), context.sessionId);
-  }
+  emitEvents: emitTerminalEvents,
+  saveToMemory: saveTerminalMemory
 };
+
+
+
