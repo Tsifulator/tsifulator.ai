@@ -1,0 +1,23 @@
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:5:  [string]$ClaudeFile = ".\claude-last-answer.json",
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:7:  [string]$ClaudeModel = "claude-sonnet-4-5",
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:16:  $ClaudeModel = "claude-sonnet-4-5"
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:19:if (-not $env:ANTHROPIC_API_KEY) {
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:20:  throw "ANTHROPIC_API_KEY is not set."
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:49:    throw "Claude returned empty text."
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:68:    throw "Claude did not return a parseable JSON object."
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:92:You are preparing a very small coding task for Claude.
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:116:Write-Host "=== STEP 2: CLAUDE CODEGEN ===" -ForegroundColor Cyan
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:159:  model = $ClaudeModel
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:172:$body | Set-Content ".\claude-request-body.json" -Encoding utf8
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:178:  $response = Invoke-RestMethod `
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:180:    -Uri "https://api.anthropic.com/v1/messages" `
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:182:      "x-api-key" = $env:ANTHROPIC_API_KEY
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:183:      "anthropic-version" = "2023-06-01"
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:196:  $finalText | Set-Content ".\claude-last-answer-raw.txt" -Encoding utf8
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:199:  $jsonText | Set-Content ".\claude-last-answer-parsed.json" -Encoding utf8
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:200:  $jsonText | Set-Content $ClaudeFile -Encoding utf8
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:202:  Write-Host "Saved Claude raw text to: .\claude-last-answer-raw.txt" -ForegroundColor Yellow
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:203:  Write-Host "Saved Claude parsed JSON to: $ClaudeFile" -ForegroundColor Yellow
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:209:    Write-Host "Claude reported: NO SAFE BLOCK FOUND" -ForegroundColor Yellow
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:254:    $errorBody | Set-Content ".\claude-error.txt" -Encoding utf8
+C:\Users\ntsif\OneDrive\Tsifulator.ai\scripts\clawdbot.ps1:255:    Write-Host "Saved API error to .\claude-error.txt" -ForegroundColor Yellow

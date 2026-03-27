@@ -10,7 +10,7 @@ exit 1
 $prompt = Get-Content $PromptFile -Raw
 
 $payload = @{
-model = "qwen2.5-coder:7b"
+model = "kimi-k2.5:cloud"
 messages = @(
 @{
 role = "user"
@@ -37,5 +37,6 @@ Write-Error "Ollama request failed:"
 Write-Error $_
 exit 1
 }
+
 
 

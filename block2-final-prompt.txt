@@ -1,0 +1,72 @@
+You are editing an existing TypeScript codebase for Tsifulator.ai.
+
+Task:
+Continue refactoring terminal execution into the canonical Tsifulator workflow.
+
+This block should centralize the remaining shared shapes for terminal workflow without changing behavior.
+
+Rules:
+- Keep changes minimal and cohesive.
+- Do not add new product features.
+- Do not rewrite unrelated files.
+- Do not touch Excel or RStudio unless imports require tiny edits.
+- Preserve current runtime behavior.
+- After edits, list exactly which files changed and why.
+
+Make only these changes:
+
+1. In server/src/shared-types.ts, add shared terminal workflow types for:
+- ActionRisk
+- ActionProposal
+- ApprovalStatus
+- TerminalLifecycleEventType
+
+Use these exact definitions if they fit the codebase cleanly:
+
+export type ActionRisk = "safe" | "confirm" | "blocked";
+
+export interface ActionProposal {
+  id: string;
+  sessionId: string;
+  command: string;
+  risk: ActionRisk;
+}
+
+export type ApprovalStatus = "approved" | "rejected" | "pending";
+
+export type TerminalLifecycleEventType =
+  | "requestReceived"
+  | "sessionLoaded"
+  | "memoryLoaded"
+  | "actionPlanned"
+  | "riskEvaluated"
+  | "approvalRequired"
+  | "executionStarted"
+  | "actionCompleted"
+  | "actionRejected"
+  | "finalResponsePersisted";
+
+2. Update server/src/db.ts so ActionProposalRecord uses ActionRisk instead of repeating the literal union.
+
+3. Update any directly related files that repeat the same risk/proposal shape:
+- server/src/types.ts
+- server/src/chat-engine.ts
+- server/src/risk.ts
+Only replace duplicated types/imports where it is safe and minimal.
+
+4. Do not change event emission order yet.
+5. Do not change database schema yet.
+6. Do not change tests unless required by type imports only.
+
+Definition of done:
+- shared-types.ts contains the centralized risk/proposal/lifecycle types
+- db.ts uses ActionRisk
+- other directly related files use imported shared types where safe
+- npm run build passes
+- npm test passes
+
+At the end, output:
+1. a short summary of files changed
+2. the exact commands I should run next:
+   npm run build
+   npm test

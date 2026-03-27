@@ -1,0 +1,41 @@
+You are editing an existing TypeScript codebase for Tsifulator.ai.
+
+BLOCK 4 ONLY.
+
+Goal:
+Create one shared ActionProposal shape and use it only where the exact same proposal structure already exists.
+
+Rules:
+- Smallest safe change only.
+- No new features.
+- No behavior changes.
+- No rewrites of unrelated code.
+- Keep Excel and RStudio untouched.
+- Reuse existing ActionRisk from server/src/shared-types.ts.
+- Only centralize this exact shape:
+  id: string
+  sessionId: string
+  command: string
+  risk: ActionRisk
+- Use only the real code context below.
+- Return only:
+  1. files to change
+  2. exact final code for each changed file
+  3. exact commands to run after edits
+- If no safe change is needed in a file, say "no change".
+- Use npm, not yarn.
+- Build and tests must still pass.
+
+Code context is below.
+
+=== SHARED TYPES ===
+$(Get-Content .\server\src\shared-types.ts -Raw)
+
+=== DB TYPES ===
+$(Get-Content .\server\src\db.ts -Raw)
+
+=== APP TYPES ===
+$(Get-Content .\server\src\types.ts -Raw)
+
+=== CHAT ENGINE ===
+$(Get-Content .\server\src\chat-engine.ts -Raw)

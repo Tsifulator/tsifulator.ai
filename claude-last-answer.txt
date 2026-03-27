@@ -1,0 +1,15 @@
+I need to examine the actual code in `terminal_config.R` and `terminal_helpers.R` to identify duplication. However, these files were not provided in the CODE CONTEXT section.
+
+NO SAFE BLOCK FOUND
+
+**Reason**: The files `terminal_config.R` and `terminal_helpers.R` mentioned in the planned block were not included in the code context. Without seeing the actual code, I cannot:
+1. Identify any duplication between these files
+2. Verify they exist in the repository
+3. Propose a safe refactor that maintains current behavior
+4. Ensure tests would still pass
+
+To complete this task, I would need:
+- The content of `terminal_config.R`
+- The content of `terminal_helpers.R`
+- Any related test files
+- Information about the build system (e.g., `DESCRIPTION`, package structure)

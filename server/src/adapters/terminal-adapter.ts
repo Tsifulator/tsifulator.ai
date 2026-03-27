@@ -3,7 +3,8 @@ import { SharedMemory } from "../shared-memory";
 import { AdapterContext, AdapterSuggestion } from "../types";
 import { AppAdapter } from "./contract";
 
-function getTerminalSuggestion(message: string): AdapterSuggestion {
+function getTerminalSuggestion(context: AdapterContext): AdapterSuggestion {
+  const message = context.message;
   const lower = message.toLowerCase();
 
   if (lower.startsWith("cmd:")) {
@@ -32,7 +33,7 @@ function getTerminalSuggestion(message: string): AdapterSuggestion {
   };
 }
 
-function captureTerminalContext(context: AdapterContext): Record<string, unknown> {
+function captureTerminalContext(context: AdapterContext) {
   return {
     cwd: context.cwd,
     lastOutput: context.lastOutput?.slice(0, 1000)
@@ -51,7 +52,7 @@ function emitTerminalEvents(context: AdapterContext) {
   ];
 }
 
-function saveTerminalMemory(context: AdapterContext, memory: SharedMemory): void {
+function saveTerminalMemory(context: AdapterContext, memory: SharedMemory) {
   if (context.cwd) {
     memory.set(context.userId, "terminal", "last_cwd", context.cwd, context.sessionId);
   }
@@ -61,9 +62,7 @@ function saveTerminalMemory(context: AdapterContext, memory: SharedMemory): void
 export const terminalAdapter: AppAdapter = {
   name: "terminal",
   captureContext: captureTerminalContext,
-  proposeActions(context: AdapterContext) {
-    return getTerminalSuggestion(context.message);
-  },
+  proposeActions: getTerminalSuggestion,
   validateAction: classifyRisk,
   async executeAction() {
     return {
@@ -74,6 +73,3 @@ export const terminalAdapter: AppAdapter = {
   emitEvents: emitTerminalEvents,
   saveToMemory: saveTerminalMemory
 };
-
-
-

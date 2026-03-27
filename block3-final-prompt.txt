@@ -1,0 +1,45 @@
+You are editing an existing TypeScript codebase for Tsifulator.ai.
+
+BLOCK 3 ONLY.
+
+Goal:
+Replace only the real remaining uses of the terminal action-risk literal union with the existing shared type ActionRisk.
+
+Rules:
+- Use only code that actually exists in the files shown below.
+- Do not invent enums, interfaces, or functions.
+- Do not use diff format.
+- Do not say "before/after".
+- Return only:
+  1. files to change
+  2. exact replacement lines
+  3. exact commands to run after edits
+- If no change is needed in a file, say "no change".
+- Use npm, not yarn.
+
+Shared type already exists:
+- server/src/shared-types.ts exports ActionRisk
+
+Scan results are below:
+=== REMAINING LITERAL RISK UNIONS ===
+C:\Users\ntsif\OneDrive\Tsifulator.ai\server\src\adapters\contract.ts:9
+validateAction(command: string): "safe" | "confirm" | "blocked";
+ C:\Users\ntsif\OneDrive\Tsifulator.ai\server\src\risk.ts:16
+export type RiskLevel = "safe" | "confirm" | "blocked";
+ C:\Users\ntsif\OneDrive\Tsifulator.ai\server\src\shared-types.ts:1
+export type ActionRisk = "safe" | "confirm" | "blocked";
+ C:\Users\ntsif\OneDrive\Tsifulator.ai\server\src\types.ts:17
+risk: "safe" | "confirm" | "blocked";
+
+
+=== EXISTING ACTIONRISK USAGE ===
+C:\Users\ntsif\OneDrive\Tsifulator.ai\server\src\db.ts:3
+import { ActionRisk } from "./shared-types";
+ C:\Users\ntsif\OneDrive\Tsifulator.ai\server\src\db.ts:28
+risk: ActionRisk;
+ C:\Users\ntsif\OneDrive\Tsifulator.ai\server\src\db.ts:482
+saveActionProposal(sessionId: string, command: string, risk: ActionRisk): ActionProposalRecord {
+ C:\Users\ntsif\OneDrive\Tsifulator.ai\server\src\shared-types.ts:1
+export type ActionRisk = "safe" | "confirm" | "blocked";
+
+

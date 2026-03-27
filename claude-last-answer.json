@@ -1,0 +1,13 @@
+﻿{
+  "status": "ok",
+  "files": [
+    {
+      "path": "server/src/adapters/terminal-adapter.ts",
+      "content": "import { classifyRisk } from \"../risk\";\nimport { SharedMemory } from \"../shared-memory\";\nimport { AdapterContext, AdapterSuggestion } from \"../types\";\nimport { AppAdapter } from \"./contract\";\n\nfunction getTerminalSuggestion(message: string): AdapterSuggestion {\n  const lower = message.toLowerCase();\n\n  if (lower.startsWith(\"cmd:\")) {\n    return {\n      text: \"I drafted a command proposal from your explicit cmd request.\",\n      command: message.slice(4).trim()\n    };\n  }\n\n  if (lower.includes(\"list files\") || lower.includes(\"show files\")) {\n    return {\n      text: \"I can list files in the current directory after your approval.\",\n      command: \"Get-ChildItem\"\n    };\n  }\n\n  if (lower.includes(\"run test\") || lower.includes(\"run tests\")) {\n    return {\n      text: \"I can run tests once you approve execution.\",\n      command: \"npm test\"\n    };\n  }\n\n  return {\n    text: \"Received. I stored your message and can propose actions if you prefix with 'cmd:' or ask to list files/run tests.\"\n  };\n}\n\nfunction captureTerminalContext(context: AdapterContext) {\n  return {\n    cwd: context.cwd,\n    lastOutput: context.lastOutput?.slice(0, 1000)\n  };\n}\n\nfunction emitTerminalEvents(context: AdapterContext) {\n  return [\n    {\n      type: \"terminal_context_captured\",\n      payload: {\n        cwd: context.cwd,\n        hasLastOutput: Boolean(context.lastOutput)\n      }\n    }\n  ];\n}\n\nfunction saveTerminalMemory(context: AdapterContext, memory: SharedMemory) {\n  if (context.cwd) {\n    memory.set(context.userId, \"terminal\", \"last_cwd\", context.cwd, context.sessionId);\n  }\n  memory.set(context.userId, \"terminal\", \"last_prompt\", context.message.slice(0, 500), context.sessionId);\n}\n\nexport const terminalAdapter: AppAdapter = {\n  name: \"terminal\",\n  captureContext: captureTerminalContext,\n  proposeActions: getTerminalSuggestion,\n  validateAction: classifyRisk,\n  async executeAction() {\n    return {\n      supported: false,\n      output: \"Execution handled by core policy executor\"\n    };\n  },\n  emitEvents: emitTerminalEvents,\n  saveToMemory: saveTerminalMemory\n};\n"
+    }
+  ],
+  "commands": [
+    "npm run build",
+    "npm test"
+  ]
+}

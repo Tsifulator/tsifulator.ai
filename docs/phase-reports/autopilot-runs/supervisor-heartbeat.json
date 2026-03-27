@@ -1,7 +1,8 @@
 ﻿{
-    "status":  "running-autopilot",
-    "timestamp":  "2026-03-10T19:52:33.6806990-04:00",
+    "exitCode":  0,
+    "timestamp":  "2026-03-19T05:22:54.7443908-04:00",
     "cycles":  999,
-    "cycle":  995,
-    "sessionId":  "tsif-overnight-20260307-0101"
+    "sessionId":  "tsif-overnight-20260312-1056",
+    "cycle":  999,
+    "status":  "cycle-complete"
 }

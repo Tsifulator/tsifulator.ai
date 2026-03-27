@@ -1,0 +1,11 @@
+STRICT MODE.
+
+Output ONLY valid JSON.
+
+Edit server/src/adapters/terminal-adapter.ts only.
+
+Refactor one small thing safely (rename variable, improve clarity, no logic changes).
+
+Do NOT break anything.
+
+Return JSON only.

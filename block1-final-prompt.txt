@@ -1,0 +1,62 @@
+You are editing an existing TypeScript codebase.
+
+Work in one small block only.
+
+Rules:
+- Make the smallest correct change.
+- Do not rewrite unrelated code.
+- Do not add product features.
+- Preserve existing behavior unless explicitly asked.
+- Prefer modifying existing files over creating new ones.
+- Keep naming and style consistent with the current codebase.
+- Assume I will manually paste your output into my project.
+
+Task title:
+Normalize terminal shared shapes
+
+Goal:
+Centralize the shared terminal execution shapes so duplicated inline result/event types are removed and future terminal workflow blocks can build on one shared source of truth.
+
+Files allowed to change:
+- server/src/shared-types.ts
+- server/src/adapters/contract.ts
+- server/src/adapters/terminal-adapter.ts
+
+Do not touch:
+- server/src/db.ts
+- server/src/chat-engine.ts
+- server/src/risk.ts
+- tests/*
+
+Context:
+
+===== server/src/shared-types.ts =====
+$(Get-Content .\server\src\shared-types.ts -Raw)
+
+===== server/src/adapters/contract.ts =====
+$(Get-Content .\server\src\adapters\contract.ts -Raw)
+
+===== server/src/adapters/terminal-adapter.ts =====
+$(Get-Content .\server\src\adapters\terminal-adapter.ts -Raw)
+
+Exact task:
+1. Create or update server/src/shared-types.ts so it contains only shared terminal adapter shapes that are already implied by the current code.
+2. Move the executeAction result shape into shared-types.ts.
+3. Move the emitEvents item shape into shared-types.ts.
+4. Update contract.ts to import and use those shared types.
+5. Update terminal-adapter.ts only if required by the new imports/types.
+6. Keep behavior unchanged.
+7. Keep the refactor minimal and cohesive.
+
+Definition of done:
+- No duplicated inline executeAction result type remains in contract.ts.
+- No duplicated inline emitEvents event item type remains in contract.ts.
+- build passes.
+- tests should still be expected to pass.
+
+Your response must contain:
+1. Block summary
+2. Files changed
+3. Exact final code for each changed file, in full
+4. Commands to run after edits
+5. Very short note on what the next block should be

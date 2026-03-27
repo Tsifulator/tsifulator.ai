@@ -1,8 +1,8 @@
 ﻿{
     "statePath":  "C:\\Users\\ntsif\\OneDrive\\Tsifulator.ai\\docs\\phase-reports\\autopilot-runs\\overnight-state.json",
-    "supervisorPid":  9756,
-    "sessionId":  "tsif-overnight-20260307-0101",
-    "startedAt":  "2026-03-07T01:04:16.7573157-05:00",
-    "gatewayPid":  11892,
+    "supervisorPid":  6588,
+    "sessionId":  "tsif-overnight-20260312-1056",
+    "startedAt":  "2026-03-12T10:57:59.0717569-04:00",
+    "gatewayPid":  12272,
     "agentId":  "main"
 }

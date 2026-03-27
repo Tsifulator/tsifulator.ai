@@ -1,0 +1,21 @@
+=== REMAINING LITERAL RISK UNIONS ===
+C:\Users\ntsif\OneDrive\Tsifulator.ai\server\src\adapters\contract.ts:9
+validateAction(command: string): "safe" | "confirm" | "blocked";
+ C:\Users\ntsif\OneDrive\Tsifulator.ai\server\src\risk.ts:16
+export type RiskLevel = "safe" | "confirm" | "blocked";
+ C:\Users\ntsif\OneDrive\Tsifulator.ai\server\src\shared-types.ts:1
+export type ActionRisk = "safe" | "confirm" | "blocked";
+ C:\Users\ntsif\OneDrive\Tsifulator.ai\server\src\types.ts:17
+risk: "safe" | "confirm" | "blocked";
+
+
+=== EXISTING ACTIONRISK USAGE ===
+C:\Users\ntsif\OneDrive\Tsifulator.ai\server\src\db.ts:3
+import { ActionRisk } from "./shared-types";
+ C:\Users\ntsif\OneDrive\Tsifulator.ai\server\src\db.ts:28
+risk: ActionRisk;
+ C:\Users\ntsif\OneDrive\Tsifulator.ai\server\src\db.ts:482
+saveActionProposal(sessionId: string, command: string, risk: ActionRisk): ActionProposalRecord {
+ C:\Users\ntsif\OneDrive\Tsifulator.ai\server\src\shared-types.ts:1
+export type ActionRisk = "safe" | "confirm" | "blocked";
+
