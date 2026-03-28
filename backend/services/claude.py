@@ -17,42 +17,102 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 # ── System Prompt ─────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """
-You are tsifl, an elite AI financial analyst and workflow assistant embedded inside Excel, RStudio, Terminal, and Gmail.
-You can READ the user's current environment and make REAL changes in real time across all four apps.
-You have shared memory across all apps — everything you know in Excel is available in R, Terminal, and Gmail.
+You are tsifl, an elite AI financial analyst and Excel powerhouse embedded inside Excel, RStudio, Terminal, and Gmail.
+You READ the user's live workbook and execute real, multi-step operations with precision.
 
-## Your Capabilities
-### Excel
-- Write individual cells or entire ranges
-- Build full financial model structures (LBO, DCF, 3-statement, comps)
-- Read existing data and analyze or extend it
-- Format cells (bold headers, color coding, number formats)
+## Excel — Full Capabilities
+You can perform ANY Excel operation a power user can:
+- Write values AND formulas to any cell on any sheet (use write_cell with formula field for = formulas)
+- Navigate between worksheets with navigate_sheet before acting on a different sheet
+- Fill formulas down/right with fill_down / fill_right
+- Create named ranges with create_named_range
+- Sort data ranges with sort_range
+- Autofit specific columns with autofit_columns
+- Copy ranges with copy_range
+- Apply full formatting: bold, colors, font name/size, number formats, borders, alignment, freeze panes
+- Build complete financial models: LBO, DCF, 3-statement, comps, sensitivity tables
 
-### RStudio
-- Write and execute R code in the user's environment
-- Insert code into the active script editor
+## User Preferences
+The context includes a `preferences` object with the user's remembered style choices.
+ALWAYS apply these preferences automatically when formatting unless the user says otherwise.
+If the user says "I prefer X" or "always use X" for any style choice, call save_preference to remember it.
+Default preference fallbacks (use these if no preference is set):
+- header background: "#0D5EAF", header font: white, bold
+- body font: "Calibri", size 11
+- currency format: "$#,##0", percent: "0.0%"
+- always autofit columns after bulk writes
 
-### Terminal
-- Execute shell commands, write files, open URLs
+## Multi-Sheet Operations
+When working across sheets:
+1. Emit navigate_sheet FIRST, then the cell/range write actions for that sheet
+2. If the task touches 3 sheets, emit 3 navigate_sheet + write sequences
+3. Always navigate back to the original sheet at the end if helpful
 
-### Gmail
-- Read inbox, search emails, draft and send emails
+## Formula Rules
+- ALWAYS use write_cell with `formula` field (not `value`) for Excel formulas
+- Named ranges: create_named_range first, then reference the name in formulas
+- For fill_down: write the formula in the source cell first, THEN use fill_down for the full range including that source cell
+- For fill_right: write the formula in the leftmost cell first, THEN use fill_right to extend it across all columns
+- Cross-sheet references use the standard Excel syntax: SheetName!CellRef
+- For formulas that span multiple columns (e.g. DAVERAGE for Comfort/Fit/Style), always fill_right after writing the first column
+
+## Named Range Rules — CRITICAL
+- create_named_range MUST always include the `sheet` field explicitly — never omit it
+- Example: { "type": "create_named_range", "payload": { "name": "Survey", "range": "A4:G40", "sheet": "Satisfaction Survey" } }
+- The sheet field tells the add-in WHICH sheet the range lives on — without it the named range will point to the wrong data
+- Always create named ranges BEFORE any formulas that reference them
+
+## DAVERAGE / Database Function Pattern
+When building DAVERAGE formulas across multiple product rows and multiple metric columns:
+1. First navigate to the Criteria sheet and write ALL criteria filter values (the wildcard/product names below each header)
+   - Example: if A1="Product" header, write the filter value in A2 (e.g. "rug*" or "Rugged Hiking Boots")
+   - Do this for every criteria block before touching Average Ratings
+2. Create the named range for the database (e.g. Survey → 'Satisfaction Survey'!A4:G40) with explicit sheet field
+3. Navigate to Average Ratings and write the DAVERAGE formula in the first column (e.g. B5)
+4. Use fill_right to extend the formula across all metric columns (e.g. B5:D5) — the column reference like B$4 will adjust to C$4, D$4
+5. Use fill_down to extend all metric columns down for remaining product rows (e.g. B5:D9)
+6. Then write the AVERAGE and IFS formulas for each row
+
+## SUMIFS / Lookup Pattern
+For SUMIFS lookups in a side table:
+- Write each SUMIFS formula explicitly for every lookup row — do not leave any lookup cell empty
+- Example: =SUMIFS(E$4:E$50, B$4:B$50, J13, C$4:C$50, K13) where E=qty, B=product, C=color
+
+## Date / Time Formula Pattern
+For date arithmetic columns (e.g. Days in Transit, Arrival Day):
+- Days column: write =C5-B5 in the first data cell, then fill_down for the entire column
+- Day-of-week column: write =TEXT(C5,"dddd") in the first data cell, then fill_down for the entire column
+- Always include number_format "0" for numeric day-count columns
 
 ## Financial Model Guidelines
-When building model structures in Excel:
-- Header rows: color "#0a1929" background, white font_color, bold true
-- Number format "$#,##0" for currency, "0.0%" for percentages
+- Header rows: color "#0D5EAF" background, font_color "white", bold true, font_size 11
+- Number format "$#,##0" for currency, "0.0%" for percentages, "0.00x" for multiples
 - Years across columns (B, C, D...), line items down rows (A column)
-- Always call autofit as the final action
+- Always call autofit_columns or autofit as the final action
+- Freeze first row/column when building large models
 
-## Rules — IMPORTANT
-- For questions, memory recalls, or explanations: reply with plain text ONLY. Do NOT call execute_actions.
-- For any real change (writing cells, running code, sending email, shell commands): call execute_actions.
-- Reply in ONE short sentence max. No bullet points. No explanations.
-- If the sheet already has data, respect its structure.
-- Never make up financial data — use 0 or "TBD" as placeholders.
-- For R code, write clean, runnable code only.
-- Never call execute_actions with empty or dummy actions just to satisfy a format.
+## Completeness Rule — CRITICAL
+- For every column or row that is part of the task, emit ALL required actions — never leave a column half-finished
+- If the task says "Days column" and "Arrival Day column", BOTH must be written
+- If the task says "Comfort, Fit, Style" averages, ALL THREE columns must be filled — not just Comfort
+- If a lookup table has 2 rows, write formulas for BOTH rows
+- Before finishing, mentally scan every sheet and column in the task — emit actions for anything still empty
+
+## RStudio
+- Write and execute R code in the user's console
+- ALWAYS include library() calls at the top — never assume packages are loaded
+
+## Terminal / Gmail
+- Execute shell commands, write files, open URLs
+- Read/search/draft/send emails
+
+## Rules
+- Questions / explanations: plain text only, no execute_actions
+- ANY real change: call execute_actions with all actions as a sequence
+- Reply in ONE short sentence. No bullet points. No explanations.
+- Respect existing sheet structure — never overwrite headers unless asked
+- Never fabricate financial data — use 0 or "TBD" as placeholders
+- Never emit empty or no-op actions
 """
 
 # ── Tool Definition ───────────────────────────────────────────────────────────
@@ -70,7 +130,7 @@ TOOLS = [
             "properties": {
                 "actions": {
                     "type": "array",
-                    "description": "List of actions to execute in order.",
+                    "description": "Ordered list of actions to execute.",
                     "items": {
                         "type": "object",
                         "required": ["type", "payload"],
@@ -78,7 +138,12 @@ TOOLS = [
                             "type": {
                                 "type": "string",
                                 "description": (
-                                    "Action type. Excel: write_cell, write_range, format_range, autofit. "
+                                    "Excel cell/range: write_cell, write_formula, write_range. "
+                                    "Excel navigation: navigate_sheet. "
+                                    "Excel formulas: fill_down, fill_right, copy_range. "
+                                    "Excel structure: create_named_range, sort_range, add_sheet, clear_range, freeze_panes. "
+                                    "Excel format: format_range, set_number_format, autofit, autofit_columns. "
+                                    "Preferences: save_preference. "
                                     "R: run_r_code, install_package. "
                                     "Terminal: run_shell_command, write_file, open_url. "
                                     "Gmail: send_email, draft_email, search_emails."
@@ -87,18 +152,33 @@ TOOLS = [
                             "payload": {
                                 "type": "object",
                                 "description": (
-                                    "Action parameters. "
-                                    "write_cell: {cell, value, bold?, color?, font_color?}. "
-                                    "write_range: {range, values (2D array), bold?, color?, font_color?}. "
-                                    "format_range: {range, bold?, color?, font_color?, number_format?}. "
-                                    "autofit: {}. "
-                                    "run_r_code: {code}. "
-                                    "install_package: {package}. "
-                                    "run_shell_command: {command}. "
-                                    "write_file: {path, content}. "
-                                    "open_url: {url}. "
-                                    "send_email: {to, subject, body}. "
-                                    "draft_email: {to, subject, body}. "
+                                    "Payloads — all Excel actions accept optional sheet: 'SheetName' to target a specific worksheet.\n"
+                                    "navigate_sheet: {sheet}.\n"
+                                    "write_cell: {cell, value?, formula?, sheet?, bold?, color?, font_color?, font_size?, font_name?, number_format?, border?}.\n"
+                                    "  Use formula (not value) for any cell starting with =.\n"
+                                    "write_formula: {cell, formula, sheet?, bold?, color?, font_color?}.\n"
+                                    "write_range: {range, values? (2D array), formulas? (2D array), sheet?, bold?, color?, font_color?, number_format?}.\n"
+                                    "  Use formulas array when cells contain = formulas.\n"
+                                    "fill_down: {range, source?, sheet?}. Copies formula in first row down. source defaults to first cell of range.\n"
+                                    "fill_right: {range, source, sheet?}. Copies formula in source across range.\n"
+                                    "copy_range: {from, to, sheet?}. Copies values+formulas+format.\n"
+                                    "create_named_range: {name, range, sheet?}. Creates a named range (workbook-level).\n"
+                                    "sort_range: {range, key_column (letter), ascending?, sheet?}.\n"
+                                    "add_sheet: {name, activate?}.\n"
+                                    "clear_range: {range, sheet?, clear_type?}.\n"
+                                    "freeze_panes: {cell?, rows?, columns?, sheet?}.\n"
+                                    "format_range: {range, sheet?, bold?, italic?, color?, font_color?, font_size?, font_name?, number_format?, h_align?, border?, wrap_text?, row_height?, col_width?}.\n"
+                                    "set_number_format: {range, format, sheet?}.\n"
+                                    "autofit: {sheet?}. Autofits entire used range.\n"
+                                    "autofit_columns: {columns: ['A','B'], sheet?} or {column: 'F', sheet?}.\n"
+                                    "save_preference: {key: value, ...}. Saves user style preference to memory. Keys: font_name, font_size, header_color, header_font_color, accent_color, number_format_currency, number_format_percent.\n"
+                                    "run_r_code: {code}.\n"
+                                    "install_package: {package}.\n"
+                                    "run_shell_command: {command}.\n"
+                                    "write_file: {path, content}.\n"
+                                    "open_url: {url}.\n"
+                                    "send_email: {to, subject, body}.\n"
+                                    "draft_email: {to, subject, body}.\n"
                                     "search_emails: {query}."
                                 )
                             }
@@ -132,7 +212,7 @@ async def get_claude_response(message: str, context: dict,
 
     response = client.messages.create(
         model       = "claude-sonnet-4-5",
-        max_tokens  = 4096,
+        max_tokens  = 8192,
         system      = SYSTEM_PROMPT,
         tools       = TOOLS,
         tool_choice = {"type": "auto"},  # Call tool when acting, plain text for questions
@@ -177,20 +257,62 @@ def _format_context(context: dict) -> str:
     app = context.get("app", "excel")
 
     if app == "excel":
-        lines = ["[EXCEL CONTEXT]"]
-        lines.append(f"Sheet: {context.get('sheet', 'Sheet1')}")
+        lines = ["[EXCEL WORKBOOK CONTEXT]"]
+        active_sheet = context.get('sheet', 'Sheet1')
+        lines.append(f"Active sheet: {active_sheet}")
         lines.append(f"Selected cell: {context.get('selected_cell', 'A1')}")
 
-        sheet_data = context.get("sheet_data", [])
+        # User preferences
+        prefs = context.get("preferences", {})
+        if prefs:
+            lines.append("User preferences (apply automatically):")
+            for k, v in prefs.items():
+                lines.append(f"  {k}: {v}")
+
+        # ── All-sheet summaries (schema map of the workbook) ──────────────────
+        summaries = context.get("sheet_summaries", [])
+        if summaries:
+            lines.append("\n[WORKBOOK SHEET MAP]")
+            for s in summaries:
+                if s.get("rows", 0) == 0:
+                    lines.append(f"  Sheet '{s['name']}': empty")
+                    continue
+                lines.append(f"\n  Sheet '{s['name']}' — {s.get('rows',0)} rows × {s.get('cols',0)} cols  (range: {s.get('used_range','')})")
+                # Show first 5 rows as structure preview
+                preview = s.get("preview", [])
+                for r_idx, row in enumerate(preview[:5]):
+                    non_empty = [(c_idx, val) for c_idx, val in enumerate(row[:26])
+                                 if val not in (None, "", 0)]
+                    if non_empty:
+                        cells = "  ".join(f"{_col_letter(c)}{r_idx+1}={repr(v)}" for c, v in non_empty)
+                        lines.append(f"    {cells}")
+
+        # ── Active sheet — full data + formulas ───────────────────────────────
+        sheet_data     = context.get("sheet_data", [])
+        sheet_formulas = context.get("sheet_formulas", [])
+
         if sheet_data:
+            lines.append(f"\n[ACTIVE SHEET: '{active_sheet}' — full data]")
             lines.append(f"Used range: {context.get('used_range', '')}")
-            lines.append("Current data:")
-            for r_idx, row in enumerate(sheet_data[:30]):
-                for c_idx, val in enumerate(row[:20]):
-                    if val not in (None, "", 0):
-                        lines.append(f"  {_col_letter(c_idx)}{r_idx+1}: {val}")
+            # Determine start row from used_range address for accurate row labels
+            used_range = context.get("used_range", "")
+            try:
+                start_row = int(''.join(filter(str.isdigit,
+                                used_range.split("!")[1].split(":")[0]
+                                if "!" in used_range else used_range.split(":")[0])))
+            except Exception:
+                start_row = 1
+
+            for r_idx, row in enumerate(sheet_data[:50]):
+                actual_row = start_row + r_idx
+                for c_idx, val in enumerate(row[:26]):
+                    formula = sheet_formulas[r_idx][c_idx] if sheet_formulas and r_idx < len(sheet_formulas) and c_idx < len(sheet_formulas[r_idx]) else None
+                    if formula and str(formula).startswith("="):
+                        lines.append(f"  {_col_letter(c_idx)}{actual_row}: {formula}")
+                    elif val not in (None, "", 0):
+                        lines.append(f"  {_col_letter(c_idx)}{actual_row}: {repr(val)}")
         else:
-            lines.append("Sheet is empty.")
+            lines.append(f"\nActive sheet '{active_sheet}' is empty.")
 
     elif app == "rstudio":
         lines = ["[RSTUDIO CONTEXT]"]
