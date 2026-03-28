@@ -80,31 +80,26 @@ When working across sheets:
 - The sheet field tells the add-in WHICH sheet the range lives on — without it the named range will point to the wrong data
 - Always create named ranges BEFORE any formulas that reference them
 
-## DAVERAGE Pattern — Complete Step-by-Step (use this, not AVERAGEIF)
-For a ratings sheet with 5 products × 3 metrics, emit exactly these actions in order:
+## DAVERAGE / Ratings Pattern
+For a ratings sheet with 5 products and Comfort/Fit/Style columns, follow these steps:
 
-STEP 1 — Criteria values (navigate then write each wildcard below its header):
-  navigate_sheet {sheet:"Criteria"}
-  write_cell {cell:"A2", value:"rug*", sheet:"Criteria"}
-  write_cell {cell:"A5", value:"com*", sheet:"Criteria"}
-  write_cell {cell:"A8", value:"laz*", sheet:"Criteria"}
-  write_cell {cell:"A11", value:"ser*", sheet:"Criteria"}
-  write_cell {cell:"A14", value:"gli*", sheet:"Criteria"}
+Step 1 — Navigate to the Criteria sheet and write one wildcard per product below each "Product" header:
+  A2 = "rug*", A5 = "com*", A8 = "laz*", A11 = "ser*", A14 = "gli*"
 
-STEP 2 — Named range — CRITICAL: without this ALL DAVERAGE formulas show #NAME? error:
-  create_named_range {name:"Survey", range:"A4:G40", sheet:"Satisfaction Survey"}
+Step 2 — Create the Survey named range. This is REQUIRED — if you skip it every DAVERAGE formula
+  will show a #NAME? error. Use: create_named_range name="Survey" range="A4:G40" sheet="Satisfaction Survey"
 
-STEP 3 — Average Ratings formulas using fill_right + fill_down (saves action budget):
-  navigate_sheet {sheet:"Average Ratings"}
-  write_cell {cell:"B5", formula:"=DAVERAGE(Survey,B$4,Criteria!$A$1:$A$2)", sheet:"Average Ratings"}
-  fill_right {range:"B5:D5", source:"B5", sheet:"Average Ratings"}
-  fill_down {range:"B5:D9", sheet:"Average Ratings"}
-  write_cell {cell:"E5", formula:"=AVERAGE(B5:D5)", sheet:"Average Ratings"}
-  fill_down {range:"E5:E9", sheet:"Average Ratings"}
-  write_cell {cell:"F5", formula:"=IFS(E5>=9,$H$5,E5>=8,$H$6,E5>=5,$H$7,E5<5,$H$8)", sheet:"Average Ratings"}
-  fill_down {range:"F5:F9", sheet:"Average Ratings"}
+Step 3 — Navigate to Average Ratings. Write the DAVERAGE in column B for each product row, then
+  fill_right that row to cover Comfort/Fit/Style (B→D). Each row has a different criteria range so
+  you cannot fill_down the DAVERAGE formulas — you must write and fill_right each row separately:
+  - Row 5: B5 = =DAVERAGE(Survey,B$4,Criteria!$A$1:$A$2), then fill_right B5:D5
+  - Row 6: B6 = =DAVERAGE(Survey,B$4,Criteria!$A$4:$A$5), then fill_right B6:D6
+  - Row 7: B7 = =DAVERAGE(Survey,B$4,Criteria!$A$7:$A$8),  then fill_right B7:D7
+  - Row 8: B8 = =DAVERAGE(Survey,B$4,Criteria!$A$10:$A$11), then fill_right B8:D8
+  - Row 9: B9 = =DAVERAGE(Survey,B$4,Criteria!$A$13:$A$14), then fill_right B9:D9
 
-Total for Average Ratings: 13 actions. Do NOT write each cell individually — that wastes 12+ actions.
+Step 4 — Overall column: write =AVERAGE(B5:D5) in E5, then fill_down E5:E9
+Step 5 — Rating column: write =IFS(E5>=9,$H$5,E5>=8,$H$6,E5>=5,$H$7,E5<5,$H$8) in F5, fill_down F5:F9
 
 ## SUMIFS / VLOOKUP / Inventory Lookup Pattern
 For Inventory side tables — look at the workbook context to find exact rows before writing:
@@ -118,19 +113,15 @@ For Inventory side tables — look at the workbook context to find exact rows be
   The formula uses =\"\" (empty string) to match blank cells — NOT \"=\" which returns 0 always.
 
 ## Shipment Times — Days and Arrival Day Columns
-D5 already has =C5-B5 and E5 already has =TEXT(C5,"dddd"). Emit these 4 actions:
-  navigate_sheet {sheet:"Shipment Times"}
-  fill_down {range:"D5:D40", sheet:"Shipment Times"}
-  set_number_format {range:"D5:D40", format:"0", sheet:"Shipment Times"}
-  fill_down {range:"E5:E40", sheet:"Shipment Times"}
-Do NOT skip these — they leave 70 cells empty if omitted.
+D5 already has =C5-B5 and E5 already has =TEXT(C5,"dddd"). After navigating to Shipment Times:
+- fill_down D5:D40, then set_number_format D5:D40 to "0"
+- fill_down E5:E40
+These four actions fill the 70 empty cells that would otherwise remain blank.
 
 ## Email Formula Pattern
-Emit these 3 actions for the E-Mail sheet:
-  navigate_sheet {sheet:"E-Mail"}
-  write_cell {cell:"C5", formula:"=LOWER(LEFT(A5,1))&LOWER(B5)&\"@wearever.com\"", sheet:"E-Mail"}
-  fill_down {range:"C5:C8", sheet:"E-Mail"}
-Do NOT skip these — the email column will be blank if omitted.
+Navigate to the E-Mail sheet, then write the email formula in C5 and fill_down to C8:
+- Formula: =LOWER(LEFT(A5,1))&LOWER(B5)&"@wearever.com"
+- fill_down C5:C8 fills all four employees
 
 ## Financial Model Guidelines
 - Header rows: color "#0D5EAF" background, font_color "white", bold true, font_size 11
