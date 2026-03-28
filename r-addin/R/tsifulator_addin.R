@@ -161,6 +161,19 @@ tsifulator_addin <- function() {
       color: #94A3B8;
       padding: 1px 0;
     }
+
+    .msg-plot {
+      background: #FFFFFF;
+      border-left: 2px solid #0D5EAF;
+      padding: 6px;
+      border-radius: 5px;
+    }
+
+    .msg-plot img {
+      width: 100%;
+      border-radius: 4px;
+      display: block;
+    }
   "
 
   # ── UI ──────────────────────────────────────────────────────────────────────
@@ -203,7 +216,11 @@ tsifulator_addin <- function() {
           style = "color:#2a3f5f; font-style:italic; font-size:12px; padding:4px 0;"))
       }
       lapply(msgs, function(m) {
-        shiny::div(class = paste0("msg-", m$role), m$text)
+        if (m$role == "plot") {
+          shiny::div(class = "msg-plot", shiny::HTML(m$text))
+        } else {
+          shiny::div(class = paste0("msg-", m$role), m$text)
+        }
       })
     })
 
@@ -301,27 +318,68 @@ tsifulator_addin <- function() {
       if (type == "run_r_code") {
         code <- payload$code
 
+        # Insert code into the RStudio editor
         tryCatch({
-          ctx <- rstudioapi::getSourceEditorContext()
+          ctx         <- rstudioapi::getSourceEditorContext()
           insert_text <- paste0("\n# tsifl\n", code, "\n")
           rstudioapi::insertText(
             location = ctx$selection[[1]]$range$end,
             text     = insert_text,
             id       = ctx$id
           )
-          add_message("action", "\u270f\ufe0f  Inserted into editor")
         }, error = function(e) { })
 
         add_message("action", paste0("Running:\n", code))
-        result <- tryCatch({
-          output <- capture.output(eval(parse(text = code), envir = .GlobalEnv))
-          paste(output, collapse = "\n")
-        }, error = function(e) paste0("Error: ", e$message))
 
-        if (nchar(trimws(result)) > 0) {
-          add_message("action", paste0("Output:\n", result))
-        } else {
-          add_message("action", "\u2705 Done (check Plots pane)")
+        # Capture plot to temp PNG, capture text output separately
+        tmp_plot   <- tempfile(fileext = ".png")
+        txt_output <- character(0)
+        had_error  <- FALSE
+
+        tryCatch({
+          # Open PNG device — captures ALL graphics (base R + ggplot2)
+          grDevices::png(tmp_plot, width = 900, height = 560, res = 130, bg = "white")
+
+          # Evaluate each expression, force-print ggplot objects
+          for (expr in as.list(parse(text = code))) {
+            val <- withVisible(eval(expr, envir = .GlobalEnv))
+            if (val$visible && !is.null(val$value)) {
+              if (inherits(val$value, c("gg", "ggplot", "gtable", "trellis"))) {
+                print(val$value)
+              } else if (!inherits(val$value, "NULL")) {
+                txt_output <- c(txt_output,
+                  tryCatch(capture.output(print(val$value)), error = function(e) character(0)))
+              }
+            }
+          }
+
+          grDevices::dev.off()
+
+        }, error = function(e) {
+          try(grDevices::dev.off(), silent = TRUE)
+          txt_output <<- paste0("\u26a0\ufe0f Error: ", e$message)
+          had_error  <<- TRUE
+        })
+
+        # Show plot inline if it has real content (empty PNG is ~1-2KB)
+        plot_shown <- FALSE
+        if (!had_error && file.exists(tmp_plot) && file.size(tmp_plot) > 3000) {
+          if (requireNamespace("base64enc", quietly = TRUE)) {
+            b64 <- base64enc::base64encode(tmp_plot)
+            add_message("plot", paste0(
+              '<img src="data:image/png;base64,', b64, '" />'
+            ))
+            plot_shown <- TRUE
+          }
+        }
+        try(file.remove(tmp_plot), silent = TRUE)
+
+        # Show text output or status
+        txt <- paste(txt_output, collapse = "\n")
+        if (nchar(trimws(txt)) > 0) {
+          add_message("action", txt)
+        } else if (!plot_shown && !had_error) {
+          add_message("action", "\u2705 Done")
         }
 
       } else if (type == "install_package") {

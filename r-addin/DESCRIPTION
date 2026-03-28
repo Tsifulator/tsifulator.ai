@@ -1,14 +1,16 @@
 Package: tsifulator
-Title: Tsifulator.ai — Agentic Sandbox for Financial Analysts
-Version: 0.1.0
-Author: Tsifulator.ai
-Maintainer: Tsifulator.ai <hello@tsifulator.ai>
-Description: AI-powered sidebar for RStudio. Executes real R code, shares
-    memory with Excel, and automates financial analysis workflows.
+Title: tsifl — Agentic Sandbox for Financial Analysts
+Version: 0.2.0
+Author: tsifl
+Maintainer: tsifl <hello@tsifl.ai>
+Description: AI-powered sidebar for RStudio. Executes real R code, renders
+    plots inline, shares memory with Excel, and automates financial analysis.
 License: MIT
 Imports:
     shiny,
     httr2,
     jsonlite,
-    rstudioapi
+    rstudioapi,
+    base64enc,
+    grDevices
 Encoding: UTF-8
