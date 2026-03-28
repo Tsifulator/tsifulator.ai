@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Tsifulator.ai</title>
+  <link rel="stylesheet" href="taskpane.css"/>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+</head>
+<body>
+  <div id="app">
+
+    <!-- ── LOGIN SCREEN ── -->
+    <div id="login-screen">
+      <div id="login-logo">⚡ Tsifulator.ai</div>
+      <div id="login-tagline">Agentic Sandbox for Financial Analysts</div>
+
+      <div id="login-form">
+        <input type="email"    id="auth-email"    placeholder="Email" autocomplete="email"/>
+        <input type="password" id="auth-password" placeholder="Password" autocomplete="current-password"/>
+        <button id="login-btn">Sign In</button>
+        <button id="signup-btn" class="secondary">Create Account</button>
+        <div id="auth-error"></div>
+      </div>
+    </div>
+
+    <!-- ── MAIN CHAT SCREEN (shown after login) ── -->
+    <div id="chat-screen" style="display:none;">
+
+      <div id="header">
+        <span id="logo">⚡ Tsifulator.ai</span>
+        <div id="header-right">
+          <span id="tasks-remaining"></span>
+          <button id="logout-btn" title="Sign out">↩</button>
+        </div>
+      </div>
+
+      <div id="user-bar"></div>
+
+      <div id="chat-history"></div>
+
+      <div id="input-area">
+        <textarea
+          id="user-input"
+          placeholder="Build a model, update cells, run R code..."
+          rows="3"
+        ></textarea>
+        <button id="submit-btn">Send</button>
+      </div>
+
+      <div id="status-bar">Ready</div>
+    </div>
+
+  </div>
+  <script src="taskpane.js"></script>
+</body>
+</html>
