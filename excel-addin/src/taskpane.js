@@ -8,7 +8,7 @@ import { getCurrentUser, signIn, signUp, signOut } from "./auth.js";
 
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v9";   // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v10";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -269,6 +269,24 @@ function getSheet(ctx, sheetName) {
 }
 
 /**
+ * Normalise a cell/range address that Claude sometimes sends as "SheetName!A1"
+ * into a { sheet, addr } pair so each handler can call sheet.getRange(addr).
+ *
+ * Handles:
+ *   "Average Ratings!F8"   → { sheet: "Average Ratings", addr: "F8" }
+ *   "'Sheet Name'!A1:B5"   → { sheet: "Sheet Name",      addr: "A1:B5" }
+ *   "F8"                   → { sheet: fallback,           addr: "F8" }
+ */
+function splitAddr(raw, fallbackSheet) {
+  if (!raw) return { sheet: fallbackSheet, addr: raw };
+  const bang = raw.indexOf("!");
+  if (bang === -1) return { sheet: fallbackSheet, addr: raw };
+  const sheetPart = raw.slice(0, bang).replace(/^'|'$/g, ""); // strip surrounding quotes
+  const addrPart  = raw.slice(bang + 1);
+  return { sheet: sheetPart || fallbackSheet, addr: addrPart };
+}
+
+/**
  * Normalise a values/formulas array to the 2D form Excel.js requires.
  * Claude sometimes sends a flat 1D array ["val1","val2"] for a single-column
  * range; this converts it to [["val1"],["val2"]] so range.values/.formulas work.
@@ -323,10 +341,12 @@ async function executeAction(action) {
   // ── write_cell ─────────────────────────────────────────────────────────────
   // Supports: cell, value OR formula, sheet?, bold?, color?, font_color?,
   //           number_format?, font_size?, font_name?
+  // Claude sometimes sends cell as "SheetName!A1" — splitAddr handles that.
   else if (type === "write_cell") {
     await Excel.run(async (ctx) => {
-      const sheet = getSheet(ctx, payload.sheet);
-      const range = sheet.getRange(payload.cell);
+      const { sheet: s, addr } = splitAddr(payload.cell, payload.sheet);
+      const sheet = getSheet(ctx, s);
+      const range = sheet.getRange(addr);
       const val   = payload.formula ?? payload.value ?? "";
       if (typeof val === "string" && val.startsWith("=")) {
         range.formulas = [[val]];
@@ -343,8 +363,9 @@ async function executeAction(action) {
   // Note: ensure2D() handles flat 1D arrays that Claude sometimes sends
   else if (type === "write_range") {
     await Excel.run(async (ctx) => {
-      const sheet = getSheet(ctx, payload.sheet);
-      const range = sheet.getRange(payload.range);
+      const { sheet: s, addr } = splitAddr(payload.range, payload.sheet);
+      const sheet = getSheet(ctx, s);
+      const range = sheet.getRange(addr);
       if (payload.formulas) {
         range.formulas = ensure2D(payload.formulas);
       } else if (payload.values) {
@@ -363,8 +384,9 @@ async function executeAction(action) {
   // Write a single formula to a cell — explicit formula action
   else if (type === "write_formula") {
     await Excel.run(async (ctx) => {
-      const sheet = getSheet(ctx, payload.sheet);
-      const range = sheet.getRange(payload.cell);
+      const { sheet: s, addr } = splitAddr(payload.cell, payload.sheet);
+      const sheet = getSheet(ctx, s);
+      const range = sheet.getRange(addr);
       range.formulas = [[payload.formula]];
       _applyFormat(range, payload);
       await ctx.sync();
@@ -373,16 +395,15 @@ async function executeAction(action) {
 
   // ── fill_down ──────────────────────────────────────────────────────────────
   // Copy formula from first row of range down to the rest
-  // payload: { sheet?, source: "D5", target: "D5:D40" }
-  //      OR  { sheet?, range: "D5:D40" }  (source = first row)
   else if (type === "fill_down") {
     await Excel.run(async (ctx) => {
-      const sheet      = getSheet(ctx, payload.sheet);
-      const fullRange  = payload.range  || payload.target;
-      const sourceAddr = payload.source || fullRange.split(":")[0];
-      const source     = sheet.getRange(sourceAddr);
-      const dest       = sheet.getRange(fullRange);
-      // copyFrom handles relative reference adjustment automatically
+      const rawRange   = payload.range  || payload.target;
+      const { sheet: s, addr: fullAddr } = splitAddr(rawRange, payload.sheet);
+      const sheet      = getSheet(ctx, s);
+      const sourceAddr = payload.source || fullAddr.split(":")[0];
+      const { addr: srcAddr } = splitAddr(sourceAddr, null);
+      const source     = sheet.getRange(srcAddr);
+      const dest       = sheet.getRange(fullAddr);
       dest.copyFrom(source, Excel.RangeCopyType.formulas, false, false);
       await ctx.sync();
     });
@@ -391,9 +412,11 @@ async function executeAction(action) {
   // ── fill_right ─────────────────────────────────────────────────────────────
   else if (type === "fill_right") {
     await Excel.run(async (ctx) => {
-      const sheet  = getSheet(ctx, payload.sheet);
-      const source = sheet.getRange(payload.source);
-      const dest   = sheet.getRange(payload.range);
+      const { sheet: s, addr: destAddr } = splitAddr(payload.range,  payload.sheet);
+      const { addr: srcAddr }            = splitAddr(payload.source, null);
+      const sheet  = getSheet(ctx, s);
+      const source = sheet.getRange(srcAddr);
+      const dest   = sheet.getRange(destAddr);
       dest.copyFrom(source, Excel.RangeCopyType.formulas, false, false);
       await ctx.sync();
     });
@@ -403,9 +426,11 @@ async function executeAction(action) {
   // Copy values + formulas + formats from one range to another
   else if (type === "copy_range") {
     await Excel.run(async (ctx) => {
-      const sheet  = getSheet(ctx, payload.sheet);
-      const source = sheet.getRange(payload.from);
-      const dest   = sheet.getRange(payload.to);
+      const { sheet: s, addr: fromAddr } = splitAddr(payload.from, payload.sheet);
+      const { addr: toAddr }             = splitAddr(payload.to,   null);
+      const sheet  = getSheet(ctx, s);
+      const source = sheet.getRange(fromAddr);
+      const dest   = sheet.getRange(toAddr);
       dest.copyFrom(source, Excel.RangeCopyType.all, false, false);
       await ctx.sync();
     });
@@ -416,8 +441,9 @@ async function executeAction(action) {
   // Deletes any existing name with the same name before recreating (idempotent)
   else if (type === "create_named_range") {
     await Excel.run(async (ctx) => {
-      const sheet    = getSheet(ctx, payload.sheet);
-      const rangeObj = sheet.getRange(payload.range);
+      const { sheet: s, addr } = splitAddr(payload.range, payload.sheet);
+      const sheet    = getSheet(ctx, s);
+      const rangeObj = sheet.getRange(addr);
       // If name already exists, delete it first so we don't get a duplicate error
       const existing = ctx.workbook.names.getItemOrNullObject(payload.name);
       existing.load("isNullObject");
@@ -433,12 +459,13 @@ async function executeAction(action) {
   // payload: { sheet?, range, key_column (letter), ascending? }
   else if (type === "sort_range") {
     await Excel.run(async (ctx) => {
-      const sheet    = getSheet(ctx, payload.sheet);
-      const rng      = sheet.getRange(payload.range);
+      const { sheet: s, addr } = splitAddr(payload.range, payload.sheet);
+      const sheet    = getSheet(ctx, s);
+      const rng      = sheet.getRange(addr);
 
       // Compute 0-based key index within the range
-      const rangeStart  = payload.range.split(":")[0];            // e.g. "A4"
-      const rangeColLtr = cellToCol(rangeStart);                   // e.g. "A"
+      const rangeStart  = addr.split(":")[0];
+      const rangeColLtr = cellToCol(rangeStart);
       const keyColLtr   = (payload.key_column || rangeColLtr).toUpperCase();
       const keyIndex    = colLetterToIndex(keyColLtr) - colLetterToIndex(rangeColLtr);
 
@@ -451,11 +478,11 @@ async function executeAction(action) {
   }
 
   // ── format_range ──────────────────────────────────────────────────────────
-  // Enhanced: supports sheet?, font_size?, font_name?, number_format (single or array)
   else if (type === "format_range") {
     await Excel.run(async (ctx) => {
-      const sheet = getSheet(ctx, payload.sheet);
-      const range = sheet.getRange(payload.range);
+      const { sheet: s, addr } = splitAddr(payload.range, payload.sheet);
+      const sheet = getSheet(ctx, s);
+      const range = sheet.getRange(addr);
       _applyFormat(range, payload);
       await ctx.sync();
     });
@@ -464,8 +491,9 @@ async function executeAction(action) {
   // ── set_number_format ──────────────────────────────────────────────────────
   else if (type === "set_number_format") {
     await Excel.run(async (ctx) => {
-      const sheet = getSheet(ctx, payload.sheet);
-      const range = sheet.getRange(payload.range);
+      const { sheet: s, addr } = splitAddr(payload.range, payload.sheet);
+      const sheet = getSheet(ctx, s);
+      const range = sheet.getRange(addr);
       range.numberFormat = [[payload.format]];
       await ctx.sync();
     });
