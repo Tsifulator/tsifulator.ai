@@ -76,13 +76,20 @@ When building DAVERAGE formulas across multiple product rows and multiple metric
 ## SUMIFS / Lookup Pattern
 For SUMIFS lookups in a side table:
 - Write each SUMIFS formula explicitly for every lookup row — do not leave any lookup cell empty
-- Example: =SUMIFS(E$4:E$50, B$4:B$50, J13, C$4:C$50, K13) where E=qty, B=product, C=color
+- Use write_cell for each lookup cell individually — never skip a row
+- Example for Inventory In Stock: write_cell {cell:"L13", formula:"=SUMIFS(E$4:E$50,B$4:B$50,J13,C$4:C$50,K13)", sheet:"Inventory"}
+- Then write_cell {cell:"L14", formula:"=SUMIFS(E$4:E$50,B$4:B$50,J14,C$4:C$50,K14)", sheet:"Inventory"}
+
+## Email / Placeholder Data Pattern
+If email addresses or other contact data is missing, generate realistic placeholder values:
+- Format: first initial + last name + @company.com (e.g. vbowman@wearever.com)
+- Always write ALL rows — never leave a data column partially filled
 
 ## Date / Time Formula Pattern
 For date arithmetic columns (e.g. Days in Transit, Arrival Day):
-- Days column: write =C5-B5 in the first data cell, then fill_down for the entire column
-- Day-of-week column: write =TEXT(C5,"dddd") in the first data cell, then fill_down for the entire column
-- Always include number_format "0" for numeric day-count columns
+- Days column: use write_column {start:"D5", end:"D40", formula:"=C5-B5", number_format:"0", sheet:"Shipment Times"}
+- Day-of-week column: use write_column {start:"E5", end:"E40", formula:"=TEXT(C5,\"dddd\")", sheet:"Shipment Times"}
+- NEVER leave these columns empty — emit write_column for BOTH columns every time
 
 ## Financial Model Guidelines
 - Header rows: color "#0D5EAF" background, font_color "white", bold true, font_size 11
@@ -140,7 +147,7 @@ TOOLS = [
                                 "description": (
                                     "Excel cell/range: write_cell, write_formula, write_range. "
                                     "Excel navigation: navigate_sheet. "
-                                    "Excel formulas: fill_down, fill_right, copy_range. "
+                                    "Excel formulas: fill_down, fill_right, write_column, copy_range. "
                                     "Excel structure: create_named_range, sort_range, add_sheet, clear_range, freeze_panes. "
                                     "Excel format: format_range, set_number_format, autofit, autofit_columns. "
                                     "Preferences: save_preference. "
@@ -158,7 +165,12 @@ TOOLS = [
                                     "  Use formula (not value) for any cell starting with =.\n"
                                     "write_formula: {cell, formula, sheet?, bold?, color?, font_color?}.\n"
                                     "write_range: {range, values? (2D array), formulas? (2D array), sheet?, bold?, color?, font_color?, number_format?}.\n"
+                                    "  IMPORTANT: values and formulas MUST be 2D arrays, e.g. [[\"val1\"],[\"val2\"]] NOT [\"val1\",\"val2\"].\n"
                                     "  Use formulas array when cells contain = formulas.\n"
+                                    "write_column: {start, end, formula?, value?, sheet?, number_format?}. PREFERRED for filling a single column.\n"
+                                    "  Writes formula/value to start cell and fills it down to end cell automatically.\n"
+                                    "  Example: {start:'D5', end:'D40', formula:'=C5-B5', sheet:'Shipment Times'}.\n"
+                                    "  Use this instead of separate write_cell + fill_down whenever filling a column.\n"
                                     "fill_down: {range, source?, sheet?}. Copies formula in first row down. source defaults to first cell of range.\n"
                                     "fill_right: {range, source, sheet?}. Copies formula in source across range.\n"
                                     "copy_range: {from, to, sheet?}. Copies values+formulas+format.\n"

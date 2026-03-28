@@ -263,6 +263,17 @@ function getSheet(ctx, sheetName) {
   return ctx.workbook.worksheets.getActiveWorksheet();
 }
 
+/**
+ * Normalise a values/formulas array to the 2D form Excel.js requires.
+ * Claude sometimes sends a flat 1D array ["val1","val2"] for a single-column
+ * range; this converts it to [["val1"],["val2"]] so range.values/.formulas work.
+ */
+function ensure2D(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) return arr;
+  if (!Array.isArray(arr[0])) return arr.map(v => [v]);
+  return arr;
+}
+
 /** Apply formula or value to a range object */
 function applyValue(range, val) {
   if (typeof val === "string" && val.startsWith("=")) {
@@ -276,7 +287,7 @@ function applyValue(range, val) {
 
 // Action types that should inherit the last navigated sheet when no sheet is specified
 const SHEET_AWARE_TYPES = new Set([
-  "write_cell", "write_range", "write_formula",
+  "write_cell", "write_range", "write_formula", "write_column",
   "fill_down", "fill_right", "copy_range",
   "create_named_range", "sort_range",
   "format_range", "set_number_format",
@@ -324,19 +335,47 @@ async function executeAction(action) {
 
   // ── write_range ────────────────────────────────────────────────────────────
   // Supports: range, values (2D array) OR formulas (2D array), sheet?
+  // Note: ensure2D() handles flat 1D arrays that Claude sometimes sends
   else if (type === "write_range") {
     await Excel.run(async (ctx) => {
       const sheet = getSheet(ctx, payload.sheet);
       const range = sheet.getRange(payload.range);
       if (payload.formulas) {
-        range.formulas = payload.formulas;
+        range.formulas = ensure2D(payload.formulas);
       } else if (payload.values) {
-        // Auto-detect formulas in values array
-        const hasFormulas = payload.values.some(r => r.some(v => typeof v === "string" && v.startsWith("=")));
-        if (hasFormulas) range.formulas = payload.values;
-        else              range.values  = payload.values;
+        const vals = ensure2D(payload.values);
+        // Auto-detect formulas in the normalised 2D array
+        const hasFormulas = vals.some(r => Array.isArray(r) && r.some(v => typeof v === "string" && v.startsWith("=")));
+        if (hasFormulas) range.formulas = vals;
+        else              range.values  = vals;
       }
       _applyFormat(range, payload);
+      await ctx.sync();
+    });
+  }
+
+  // ── write_column ───────────────────────────────────────────────────────────
+  // Convenience: write a formula/value to the first cell then fill it down.
+  // payload: { start: "D5", end: "D40", formula?, value?, sheet?, number_format? }
+  // This is equivalent to write_cell(start) + fill_down(start:end) in one action.
+  else if (type === "write_column") {
+    await Excel.run(async (ctx) => {
+      const sheet     = getSheet(ctx, payload.sheet);
+      const startCell = sheet.getRange(payload.start);
+      const fullRange = sheet.getRange(`${payload.start}:${payload.end}`);
+      const val       = payload.formula ?? payload.value ?? "";
+      if (typeof val === "string" && val.startsWith("=")) {
+        startCell.formulas = [[val]];
+      } else {
+        startCell.values = [[val]];
+      }
+      if (payload.number_format) {
+        fullRange.numberFormat = [[typeof payload.number_format === "string"
+          ? payload.number_format : "General"]];
+      }
+      await ctx.sync();
+      // Fill the formula/value from start down through end
+      fullRange.copyFrom(startCell, Excel.RangeCopyType.all, false, false);
       await ctx.sync();
     });
   }
