@@ -8,7 +8,7 @@ import { getCurrentUser, signIn, signUp, signOut } from "./auth.js";
 
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v11";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v12";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -222,13 +222,14 @@ async function getExcelContext() {
           activeUsedRange     = used.address;
         }
 
-        // For non-active sheets: only first 8 rows as structural preview
+        // For ALL sheets: send full data + formulas so Claude can see empty cells
         sheetSummaries.push({
           name,
-          used_range: used.address,
-          rows:       used.rowCount,
-          cols:       used.columnCount,
-          preview:    values.slice(0, 8),
+          used_range:       used.address,
+          rows:             used.rowCount,
+          cols:             used.columnCount,
+          preview:          values,          // full data up to 60 rows
+          preview_formulas: formulas,        // formulas for all rows (= distinguishes formula vs value)
         });
       }
 

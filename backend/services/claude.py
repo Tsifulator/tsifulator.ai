@@ -39,6 +39,14 @@ You can perform ANY Excel operation a power user can:
 - The actions array can hold unlimited actions — emit 5, 10, 30, 50 — whatever is needed
 - NEVER emit run_shell_command for Excel tasks — it does nothing in Excel context
 
+## fill_down / fill_right MANDATE — CRITICAL
+- NEVER write formula cells row-by-row using individual write_cell actions
+- A column of 36 formula cells = 1 write_cell (row 5) + 1 fill_down — ALWAYS, no exceptions
+- A row of 3 metric columns = 1 write_cell (first col) + 1 fill_right — ALWAYS, no exceptions
+- If source formula already exists in the first cell (e.g. D5 already has =C5-B5), emit ONLY fill_down — no write_cell at all
+- The workbook context shows you EXACTLY which cells are empty vs filled — look before you write
+- Violating this rule wastes your action budget and leaves other sheets incomplete
+
 ## User Preferences
 The context includes a `preferences` object with the user's remembered style choices.
 ALWAYS apply these preferences automatically when formatting unless the user says otherwise.
@@ -97,15 +105,16 @@ When building DAVERAGE formulas across multiple product rows and multiple metric
 6. Then write the AVERAGE and IFS formulas for each row
 
 ## SUMIFS / VLOOKUP / Inventory Lookup Pattern
-For Inventory side tables:
-- VLOOKUP for quantity by Product ID (input in J6, output in J7):
-  write_cell {cell:"J7", formula:"=VLOOKUP(J6,$A$4:$H$50,5,FALSE)", sheet:"Inventory"}
-- SUMIFS for specific product+color counts (write BOTH rows — never skip):
+For Inventory side tables — look at the workbook context to find exact rows before writing:
+- VLOOKUP for quantity by Product ID (check which row has the empty lookup output cell):
+  write_cell {cell:"K6", formula:"=VLOOKUP(K5,$A$4:$H$50,5,FALSE)", sheet:"Inventory"}
+- SUMIFS for specific product+color counts — write ALL rows that have labels:
   write_cell {cell:"L13", formula:"=SUMIFS($E$4:$E$50,$B$4:$B$50,J13,$C$4:$C$50,K13)", sheet:"Inventory"}
   write_cell {cell:"L14", formula:"=SUMIFS($E$4:$E$50,$B$4:$B$50,J14,$C$4:$C$50,K14)", sheet:"Inventory"}
-- For a "Handbag Products" total (items with no M/W designation), use SUMPRODUCT:
+- For a "Handbag Products" total — handbags have no M/W value (column F blank). Use SUMPRODUCT with "" criteria:
   write_cell {cell:"L16", formula:"=SUMPRODUCT(($F$4:$F$50=\"\")*($E$4:$E$50))", sheet:"Inventory"}
-  (If the label is in row 16; adjust row to match wherever "Handbag Products" label appears)
+  IMPORTANT: use ="" not "=" — empty string criteria matches blank cells; "=" is literal and always returns 0
+  (Adjust row number to match wherever "Handbag Products" label appears in column J)
 
 ## Email Formula Pattern
 Construct email addresses from first/last name columns using a formula:
@@ -313,22 +322,38 @@ def _format_context(context: dict) -> str:
             for k, v in prefs.items():
                 lines.append(f"  {k}: {v}")
 
-        # ── All-sheet summaries (schema map of the workbook) ──────────────────
+        # ── All-sheet summaries — full data + formulas for every sheet ───────
         summaries = context.get("sheet_summaries", [])
         if summaries:
-            lines.append("\n[WORKBOOK SHEET MAP]")
+            lines.append("\n[WORKBOOK SHEET MAP — full data for every sheet]")
             for s in summaries:
                 if s.get("rows", 0) == 0:
                     lines.append(f"  Sheet '{s['name']}': empty")
                     continue
-                lines.append(f"\n  Sheet '{s['name']}' — {s.get('rows',0)} rows × {s.get('cols',0)} cols  (range: {s.get('used_range','')})")
-                # Show first 5 rows as structure preview
-                preview = s.get("preview", [])
-                for r_idx, row in enumerate(preview[:5]):
-                    non_empty = [(c_idx, val) for c_idx, val in enumerate(row[:26])
-                                 if val not in (None, "", 0)]
+                used_range_str = s.get("used_range", "")
+                lines.append(f"\n  Sheet '{s['name']}' — {s.get('rows',0)} rows × {s.get('cols',0)} cols  (range: {used_range_str})")
+                # Compute actual start row from used_range address
+                try:
+                    addr_part = used_range_str.split("!")[1] if "!" in used_range_str else used_range_str
+                    start_row = int(''.join(filter(str.isdigit, addr_part.split(":")[0])))
+                except Exception:
+                    start_row = 1
+                preview          = s.get("preview", [])
+                preview_formulas = s.get("preview_formulas", [])
+                for r_idx, row in enumerate(preview):
+                    actual_row = start_row + r_idx
+                    non_empty = []
+                    for c_idx, val in enumerate(row[:26]):
+                        formula = (preview_formulas[r_idx][c_idx]
+                                   if preview_formulas
+                                   and r_idx < len(preview_formulas)
+                                   and c_idx < len(preview_formulas[r_idx])
+                                   else None)
+                        display = formula if (formula and str(formula).startswith("=")) else val
+                        if display not in (None, "", 0):
+                            non_empty.append((c_idx, display))
                     if non_empty:
-                        cells = "  ".join(f"{_col_letter(c)}{r_idx+1}={repr(v)}" for c, v in non_empty)
+                        cells = "  ".join(f"{_col_letter(c)}{actual_row}={repr(v)}" for c, v in non_empty)
                         lines.append(f"    {cells}")
 
         # ── Active sheet — full data + formulas ───────────────────────────────
