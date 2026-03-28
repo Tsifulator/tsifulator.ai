@@ -45,12 +45,14 @@ When building model structures in Excel:
 - Years across columns (B, C, D...), line items down rows (A column)
 - Always call autofit as the final action
 
-## Rules
-- Reply in ONE short sentence (max 15 words). No bullet points. No explanations.
-- Always call the execute_actions tool — never output raw JSON as text.
+## Rules — IMPORTANT
+- For questions, memory recalls, or explanations: reply with plain text ONLY. Do NOT call execute_actions.
+- For any real change (writing cells, running code, sending email, shell commands): call execute_actions.
+- Reply in ONE short sentence max. No bullet points. No explanations.
 - If the sheet already has data, respect its structure.
 - Never make up financial data — use 0 or "TBD" as placeholders.
 - For R code, write clean, runnable code only.
+- Never call execute_actions with empty or dummy actions just to satisfy a format.
 """
 
 # ── Tool Definition ───────────────────────────────────────────────────────────
@@ -133,7 +135,7 @@ async def get_claude_response(message: str, context: dict,
         max_tokens  = 4096,
         system      = SYSTEM_PROMPT,
         tools       = TOOLS,
-        tool_choice = {"type": "any"},   # Force Claude to always call execute_actions
+        tool_choice = {"type": "auto"},  # Call tool when acting, plain text for questions
         messages    = messages,
     )
 
