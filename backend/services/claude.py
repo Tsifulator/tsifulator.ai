@@ -80,32 +80,31 @@ When working across sheets:
 - The sheet field tells the add-in WHICH sheet the range lives on — without it the named range will point to the wrong data
 - Always create named ranges BEFORE any formulas that reference them
 
-## AVERAGEIF Pattern (Average Ratings across products)
-When computing per-product average ratings from a survey sheet:
-1. Navigate to Average Ratings sheet
-2. Write AVERAGEIF in B5 using $A5 as criteria (column-absolute so fill_right doesn't shift it):
-   write_cell {cell:"B5", formula:"=AVERAGEIF('Satisfaction Survey'!$B$5:$B$40,$A5,'Satisfaction Survey'!E$5:E$40)", sheet:"Average Ratings"}
-   - $B$5:$B$40 = Product column (fully absolute)
-   - $A5 = product name cell (column-absolute, row shifts on fill_down)
-   - E$5:E$40 = Comfort column (column shifts on fill_right: E→F→G, row-anchor prevents row shift)
-3. fill_right {range:"B5:D5", source:"B5", sheet:"Average Ratings"}  (extends Comfort→Fit→Style)
-4. fill_down {range:"B5:D9", sheet:"Average Ratings"}  (extends all 3 columns for rows 6–9)
-5. Write Overall: write_cell {cell:"E5", formula:"=AVERAGE(B5:D5)", sheet:"Average Ratings"}
-6. fill_down {range:"E5:E9", sheet:"Average Ratings"}
-7. Write Rating IFS: write_cell {cell:"F5", formula:"=IFS(E5>=9,$H$5,E5>=8,$H$6,E5>=5,$H$7,E5<5,$H$8)", sheet:"Average Ratings"}
-8. fill_down {range:"F5:F9", sheet:"Average Ratings"}
-All 8 steps must be emitted in the SAME execute_actions call.
+## DAVERAGE Pattern — Complete Step-by-Step (use this, not AVERAGEIF)
+For a ratings sheet with 5 products × 3 metrics, emit exactly these actions in order:
 
-## DAVERAGE / Database Function Pattern
-When building DAVERAGE formulas across multiple product rows and multiple metric columns:
-1. First navigate to the Criteria sheet and write ALL criteria filter values (the product names below each header)
-   - Example: if A1="Product" header, write the filter value in A2 (e.g. "Rugged Hiking Boots")
-   - Write all 5 criteria blocks before touching Average Ratings
-2. Create the named range for the database (e.g. Survey → 'Satisfaction Survey'!A4:G40) with explicit sheet field
-3. Navigate to Average Ratings and write the DAVERAGE formula in the first column (e.g. B5)
-4. Use fill_right to extend across all metric columns (e.g. B5:D5)
-5. Use fill_down for remaining product rows (e.g. B5:D9)
-6. Then write the AVERAGE and IFS formulas for each row
+STEP 1 — Criteria values (navigate then write each wildcard below its header):
+  navigate_sheet {sheet:"Criteria"}
+  write_cell {cell:"A2", value:"rug*", sheet:"Criteria"}
+  write_cell {cell:"A5", value:"com*", sheet:"Criteria"}
+  write_cell {cell:"A8", value:"laz*", sheet:"Criteria"}
+  write_cell {cell:"A11", value:"ser*", sheet:"Criteria"}
+  write_cell {cell:"A14", value:"gli*", sheet:"Criteria"}
+
+STEP 2 — Named range — CRITICAL: without this ALL DAVERAGE formulas show #NAME? error:
+  create_named_range {name:"Survey", range:"A4:G40", sheet:"Satisfaction Survey"}
+
+STEP 3 — Average Ratings formulas using fill_right + fill_down (saves action budget):
+  navigate_sheet {sheet:"Average Ratings"}
+  write_cell {cell:"B5", formula:"=DAVERAGE(Survey,B$4,Criteria!$A$1:$A$2)", sheet:"Average Ratings"}
+  fill_right {range:"B5:D5", source:"B5", sheet:"Average Ratings"}
+  fill_down {range:"B5:D9", sheet:"Average Ratings"}
+  write_cell {cell:"E5", formula:"=AVERAGE(B5:D5)", sheet:"Average Ratings"}
+  fill_down {range:"E5:E9", sheet:"Average Ratings"}
+  write_cell {cell:"F5", formula:"=IFS(E5>=9,$H$5,E5>=8,$H$6,E5>=5,$H$7,E5<5,$H$8)", sheet:"Average Ratings"}
+  fill_down {range:"F5:F9", sheet:"Average Ratings"}
+
+Total for Average Ratings: 13 actions. Do NOT write each cell individually — that wastes 12+ actions.
 
 ## SUMIFS / VLOOKUP / Inventory Lookup Pattern
 For Inventory side tables — look at the workbook context to find exact rows before writing:
@@ -114,28 +113,24 @@ For Inventory side tables — look at the workbook context to find exact rows be
 - SUMIFS for specific product+color counts — write ALL rows that have labels:
   write_cell {cell:"L13", formula:"=SUMIFS($E$4:$E$50,$B$4:$B$50,J13,$C$4:$C$50,K13)", sheet:"Inventory"}
   write_cell {cell:"L14", formula:"=SUMIFS($E$4:$E$50,$B$4:$B$50,J14,$C$4:$C$50,K14)", sheet:"Inventory"}
-- For a "Handbag Products" total — handbags have no M/W value (column F blank). Use SUMPRODUCT with "" criteria:
+- For a "Handbag Products" total (handbags have blank F column = no M/W):
   write_cell {cell:"L16", formula:"=SUMPRODUCT(($F$4:$F$50=\"\")*($E$4:$E$50))", sheet:"Inventory"}
-  IMPORTANT: use ="" not "=" — empty string criteria matches blank cells; "=" is literal and always returns 0
-  (Adjust row number to match wherever "Handbag Products" label appears in column J)
+  The formula uses =\"\" (empty string) to match blank cells — NOT \"=\" which returns 0 always.
 
-## Email Formula Pattern
-Construct email addresses from first/last name columns using a formula:
-- Formula: =LOWER(LEFT(A5,1))&LOWER(B5)&"@wearever.com"   (first initial + last name + domain)
-- Write formula for EVERY row — never leave any email cell empty
-- Example for 4 employees in C5:C8:
-  write_cell {cell:"C5", formula:"=LOWER(LEFT(A5,1))&LOWER(B5)&\"@wearever.com\"", sheet:"E-Mail"}
-  fill_down {range:"C5:C8", sheet:"E-Mail"}
-
-## Date / Time Formula Pattern
-For date arithmetic columns (e.g. Days in Transit, Arrival Day):
-- Days column: if formula already exists in D5, SKIP write_cell and go straight to fill_down
+## Shipment Times — Days and Arrival Day Columns
+D5 already has =C5-B5 and E5 already has =TEXT(C5,"dddd"). Emit these 4 actions:
+  navigate_sheet {sheet:"Shipment Times"}
   fill_down {range:"D5:D40", sheet:"Shipment Times"}
   set_number_format {range:"D5:D40", format:"0", sheet:"Shipment Times"}
-- Day-of-week column: if formula already exists in E5, SKIP write_cell and go straight to fill_down
   fill_down {range:"E5:E40", sheet:"Shipment Times"}
-- If D5/E5 are EMPTY, write them first, then fill_down
-- NEVER leave these columns empty — emit ALL steps
+Do NOT skip these — they leave 70 cells empty if omitted.
+
+## Email Formula Pattern
+Emit these 3 actions for the E-Mail sheet:
+  navigate_sheet {sheet:"E-Mail"}
+  write_cell {cell:"C5", formula:"=LOWER(LEFT(A5,1))&LOWER(B5)&\"@wearever.com\"", sheet:"E-Mail"}
+  fill_down {range:"C5:C8", sheet:"E-Mail"}
+Do NOT skip these — the email column will be blank if omitted.
 
 ## Financial Model Guidelines
 - Header rows: color "#0D5EAF" background, font_color "white", bold true, font_size 11
