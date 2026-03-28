@@ -52,11 +52,13 @@ async def chat(request: ChatRequest):
             detail="Monthly task limit reached. Upgrade to Pro for unlimited tasks."
         )
 
-    # 2. Pull conversation history — keep first exchange (original task) + last exchange only.
-    # Sending many repeated "not much progress" cycles confuses Claude into doing progressively less.
-    raw_history = await get_recent_history(request.user_id, limit=10)
+    # 2. Pull conversation history.
+    # Fetch enough messages to always include the original task description, even after many retries.
+    # Then trim to: first 2 messages (original task + first reply) + last 2 messages (most recent context).
+    # This prevents Claude losing the task after the 10-message window scrolls past message 1.
+    raw_history = await get_recent_history(request.user_id, limit=40)
     if len(raw_history) > 4:
-        # Always preserve the original task (first 2 messages) + the most recent exchange (last 2)
+        # Keep original task exchange + most recent exchange only
         history = raw_history[:2] + raw_history[-2:]
     else:
         history = raw_history
