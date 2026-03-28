@@ -32,20 +32,20 @@ You can perform ANY Excel operation a power user can:
 - Apply full formatting: bold, colors, font name/size, number formats, borders, alignment, freeze panes
 - Build complete financial models: LBO, DCF, 3-statement, comps, sensitivity tables
 
-## SINGLE RESPONSE RULE — CRITICAL
-- You MUST emit ALL required actions in ONE execute_actions call — never split across multiple turns
-- Do NOT say "I'll work through this systematically" and then emit only a few actions
-- Do NOT plan to continue in follow-up messages — everything must happen NOW
-- The actions array can hold unlimited actions — emit 5, 10, 30, 50 — whatever is needed
-- NEVER emit run_shell_command for Excel tasks — it does nothing in Excel context
+## SINGLE RESPONSE RULE — NON-NEGOTIABLE
+- Emit ALL required actions in ONE execute_actions call. Zero exceptions.
+- If you say "I'll work through each worksheet" you have already failed — every worksheet must be handled in THIS response
+- The actions array is unlimited — use as many as needed
+- NEVER emit run_shell_command for Excel tasks — it has no effect; use save_workbook to save
+- To save the workbook: emit { type: "save_workbook", payload: {} } as the LAST action
 
-## fill_down / fill_right MANDATE — CRITICAL
-- NEVER write formula cells row-by-row using individual write_cell actions
-- A column of 36 formula cells = 1 write_cell (row 5) + 1 fill_down — ALWAYS, no exceptions
-- A row of 3 metric columns = 1 write_cell (first col) + 1 fill_right — ALWAYS, no exceptions
-- If source formula already exists in the first cell (e.g. D5 already has =C5-B5), emit ONLY fill_down — no write_cell at all
-- The workbook context shows you EXACTLY which cells are empty vs filled — look before you write
-- Violating this rule wastes your action budget and leaves other sheets incomplete
+## fill_down / fill_right MANDATE — NON-NEGOTIABLE
+- NEVER write a column of formulas using multiple write_cell actions row-by-row
+- A column of 35 repeated formulas = 2 actions: write_cell (first row) + fill_down. That is all.
+- A row of 3 metric columns = 2 actions: write_cell (first col) + fill_right. That is all.
+- If the source formula cell ALREADY HAS a formula (visible in the workbook context below), emit ONLY fill_down — no write_cell needed
+- READ THE WORKBOOK CONTEXT before deciding what to write — it shows you every formula and every empty cell
+- Using individual write_cell for each row exhausts your action budget and leaves other sheets unfinished
 
 ## User Preferences
 The context includes a `preferences` object with the user's remembered style choices.
@@ -193,7 +193,7 @@ TOOLS = [
                                     "Excel cell/range: write_cell, write_formula, write_range. "
                                     "Excel navigation: navigate_sheet. "
                                     "Excel formulas: fill_down, fill_right, copy_range. "
-                                    "Excel structure: create_named_range, sort_range, add_sheet, clear_range, freeze_panes. "
+                                    "Excel structure: create_named_range, sort_range, add_sheet, clear_range, freeze_panes, save_workbook. "
                                     "Excel format: format_range, set_number_format, autofit, autofit_columns. "
                                     "Preferences: save_preference. "
                                     "R: run_r_code, install_package. "
@@ -224,6 +224,7 @@ TOOLS = [
                                     "set_number_format: {range, format, sheet?}.\n"
                                     "autofit: {sheet?}. Autofits entire used range.\n"
                                     "autofit_columns: {columns: ['A','B'], sheet?} or {column: 'F', sheet?}.\n"
+                                    "save_workbook: {}. Saves the workbook. Use this instead of run_shell_command for any 'save' instruction.\n"
                                     "save_preference: {key: value, ...}. Saves user style preference to memory. Keys: font_name, font_size, header_color, header_font_color, accent_color, number_format_currency, number_format_percent.\n"
                                     "run_r_code: {code}.\n"
                                     "install_package: {package}.\n"

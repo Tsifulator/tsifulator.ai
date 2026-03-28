@@ -8,7 +8,7 @@ import { getCurrentUser, signIn, signUp, signOut } from "./auth.js";
 
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v12";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v13";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -222,14 +222,16 @@ async function getExcelContext() {
           activeUsedRange     = used.address;
         }
 
-        // For ALL sheets: send full data + formulas so Claude can see empty cells
+        // Non-active sheets: 20-row preview with formulas so Claude can see empty cells
+        // (active sheet already gets full 60-row data above)
+        const PREVIEW_ROWS = name === activeName ? 60 : 20;
         sheetSummaries.push({
           name,
           used_range:       used.address,
           rows:             used.rowCount,
           cols:             used.columnCount,
-          preview:          values,          // full data up to 60 rows
-          preview_formulas: formulas,        // formulas for all rows (= distinguishes formula vs value)
+          preview:          values.slice(0, PREVIEW_ROWS),
+          preview_formulas: formulas.slice(0, PREVIEW_ROWS),
         });
       }
 
@@ -574,6 +576,14 @@ async function executeAction(action) {
       } else if (payload.columns) {
         sheet.freezePanes.freezeColumns(payload.columns);
       }
+      await ctx.sync();
+    });
+  }
+
+  // ── save_workbook ───────────────────────────────────────────────────────────
+  else if (type === "save_workbook") {
+    await Excel.run(async (ctx) => {
+      await ctx.workbook.save(Excel.SaveBehavior.save);
       await ctx.sync();
     });
   }
