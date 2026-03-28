@@ -1,4 +1,4 @@
-#' Tsifulator.ai RStudio Addin
+#' tsifl RStudio Addin
 #'
 #' Launches the Tsifulator chat panel inside RStudio.
 #' Connects to the shared backend brain — same memory as Excel.
@@ -18,13 +18,13 @@ tsifulator_addin <- function() {
     "dev-user-001"
   }
 
-  # ── Design tokens (Greek flag blue)  ──────────────────────────────────────
+  # ── Design tokens — light/white + Greek flag blue ─────────────────────────
   CSS <- "
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      background: #090d14;
-      color: #e2e8f0;
+      background: #FFFFFF;
+      color: #1E293B;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       font-size: 13px;
       height: 100vh;
@@ -36,8 +36,8 @@ tsifulator_addin <- function() {
       justify-content: space-between;
       align-items: center;
       padding: 9px 14px;
-      background: #0f1623;
-      border-bottom: 1px solid #1c2840;
+      background: #FFFFFF;
+      border-bottom: 1px solid #E2E8F0;
       flex-shrink: 0;
     }
 
@@ -50,52 +50,56 @@ tsifulator_addin <- function() {
 
     #tasks_label {
       font-size: 10px;
-      color: #4a6080;
-      background: #141d2e;
+      color: #64748B;
+      background: #F1F5F9;
       padding: 2px 8px;
       border-radius: 10px;
-      border: 1px solid #1c2840;
+      border: 1px solid #E2E8F0;
     }
 
     #chat_history {
-      height: calc(100vh - 130px);
+      height: calc(100vh - 125px);
       overflow-y: auto;
       padding: 10px 12px;
       display: flex;
       flex-direction: column;
       gap: 7px;
+      background: #F8FAFC;
     }
 
     #chat_history::-webkit-scrollbar { width: 3px; }
     #chat_history::-webkit-scrollbar-track { background: transparent; }
-    #chat_history::-webkit-scrollbar-thumb { background: #1c2840; border-radius: 3px; }
+    #chat_history::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
 
     .msg-user {
-      background: rgba(13, 94, 175, 0.12);
+      background: #EBF3FB;
       border-left: 2px solid #0D5EAF;
       padding: 7px 10px;
       border-radius: 5px;
       line-height: 1.5;
       font-size: 13px;
+      color: #1E293B;
     }
 
     .msg-assistant {
-      background: #0f1623;
-      border-left: 2px solid #22c55e;
+      background: #FFFFFF;
+      border-left: 2px solid #86EFAC;
       padding: 7px 10px;
       border-radius: 5px;
       line-height: 1.5;
       font-size: 13px;
+      color: #1E293B;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
     }
 
     .msg-action {
-      background: rgba(34, 197, 94, 0.08);
-      border-left: 2px solid #22c55e;
+      background: rgba(22, 163, 74, 0.07);
+      border-left: 2px solid #16A34A;
       padding: 5px 10px;
       border-radius: 5px;
       font-family: 'SF Mono', 'Fira Code', Monaco, monospace;
       font-size: 11px;
-      color: #22c55e;
+      color: #16A34A;
       line-height: 1.4;
       white-space: pre-wrap;
     }
@@ -105,8 +109,8 @@ tsifulator_addin <- function() {
       bottom: 0;
       left: 0;
       right: 0;
-      background: #0f1623;
-      border-top: 1px solid #1c2840;
+      background: #FFFFFF;
+      border-top: 1px solid #E2E8F0;
       padding: 8px 12px;
       display: flex;
       flex-direction: column;
@@ -115,21 +119,26 @@ tsifulator_addin <- function() {
 
     #user_input {
       width: 100%;
-      background: #090d14;
-      color: #e2e8f0;
-      border: 1px solid #1c2840;
+      background: #F8FAFC;
+      color: #1E293B;
+      border: 1px solid #E2E8F0;
       border-radius: 5px;
       padding: 7px 10px;
       font-size: 13px;
       font-family: inherit;
       resize: none;
       outline: none;
-      transition: border-color 0.15s;
+      transition: border-color 0.15s, box-shadow 0.15s;
       line-height: 1.4;
     }
 
-    #user_input:focus { border-color: #0D5EAF; }
-    #user_input::placeholder { color: #4a6080; }
+    #user_input:focus {
+      border-color: #0D5EAF;
+      box-shadow: 0 0 0 3px rgba(13, 94, 175, 0.08);
+      background: #FFFFFF;
+    }
+
+    #user_input::placeholder { color: #94A3B8; }
 
     #send_btn {
       width: 100%;
@@ -149,7 +158,7 @@ tsifulator_addin <- function() {
 
     #status_bar {
       font-size: 10px;
-      color: #4a6080;
+      color: #94A3B8;
       padding: 1px 0;
     }
   "
@@ -160,7 +169,7 @@ tsifulator_addin <- function() {
 
     # Header
     shiny::div(id = "header",
-      shiny::span(id = "logo", "\u26a1 Tsifulator.ai"),
+      shiny::span(id = "logo", "\u26a1 tsifl"),
       shiny::uiOutput("tasks_label")
     ),
 
@@ -294,7 +303,7 @@ tsifulator_addin <- function() {
 
         tryCatch({
           ctx <- rstudioapi::getSourceEditorContext()
-          insert_text <- paste0("\n# Tsifulator.ai\n", code, "\n")
+          insert_text <- paste0("\n# tsifl\n", code, "\n")
           rstudioapi::insertText(
             location = ctx$selection[[1]]$range$end,
             text     = insert_text,

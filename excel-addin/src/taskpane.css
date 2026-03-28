@@ -1,22 +1,23 @@
-/* Tsifulator.ai — Design System v2
-   Greek flag blue (#0D5EAF) color scheme
-   Clean, compact, professional */
+/* tsifl — Light Design System
+   Clean white + Greek flag blue (#0D5EAF) */
 
 :root {
   --blue:        #0D5EAF;
   --blue-hover:  #0A4896;
-  --blue-dim:    rgba(13, 94, 175, 0.12);
-  --bg:          #090d14;
-  --surface:     #0f1623;
-  --surface-2:   #141d2e;
-  --border:      #1c2840;
-  --border-2:    #243352;
-  --text:        #e2e8f0;
-  --text-muted:  #4a6080;
-  --text-dim:    #2a3f5f;
-  --green:       #22c55e;
-  --green-dim:   rgba(34, 197, 94, 0.1);
-  --red:         #ef4444;
+  --blue-light:  #EBF3FB;
+  --blue-dim:    rgba(13, 94, 175, 0.09);
+  --bg:          #FFFFFF;
+  --surface:     #F8FAFC;
+  --surface-2:   #F1F5F9;
+  --border:      #E2E8F0;
+  --border-2:    #CBD5E1;
+  --text:        #1E293B;
+  --text-muted:  #64748B;
+  --text-dim:    #94A3B8;
+  --green:       #16A34A;
+  --green-dim:   rgba(22, 163, 74, 0.08);
+  --green-border: #86EFAC;
+  --red:         #DC2626;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -40,6 +41,7 @@ body {
   height: 100vh;
   padding: 30px 20px;
   gap: 10px;
+  background: var(--bg);
 }
 
 #login-logo {
@@ -74,11 +76,15 @@ body {
   padding: 10px 12px;
   font-size: 13px;
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-#login-form input:focus { border-color: var(--blue); }
-#login-form input::placeholder { color: var(--text-muted); }
+#login-form input:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(13, 94, 175, 0.1);
+}
+
+#login-form input::placeholder { color: var(--text-dim); }
 
 #login-btn {
   background: var(--blue);
@@ -108,7 +114,7 @@ body {
 
 #signup-btn:hover {
   border-color: var(--blue);
-  background: var(--blue-dim);
+  background: var(--blue-light);
 }
 
 #auth-error {
@@ -126,8 +132,8 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 9px 14px;
-  background: var(--surface);
+  padding: 10px 14px;
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -153,7 +159,7 @@ body {
 #logout-btn {
   background: none;
   border: none;
-  color: var(--text-muted);
+  color: var(--text-dim);
   cursor: pointer;
   font-size: 14px;
   padding: 2px 4px;
@@ -167,7 +173,7 @@ body {
   font-size: 10px;
   color: var(--text-dim);
   padding: 3px 14px;
-  background: var(--bg);
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
   overflow: hidden;
@@ -182,6 +188,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  background: var(--surface);
 }
 
 #chat-history::-webkit-scrollbar { width: 4px; }
@@ -197,15 +204,16 @@ body {
 }
 
 .message.user {
-  background: var(--blue-dim);
+  background: var(--blue-light);
   border-left: 2px solid var(--blue);
   color: var(--text);
 }
 
 .message.assistant {
-  background: var(--surface);
-  border-left: 2px solid var(--green);
+  background: var(--bg);
+  border-left: 2px solid var(--green-border);
   color: var(--text);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
 }
 
 .message.action {
@@ -219,7 +227,7 @@ body {
 
 #input-area {
   padding: 10px 12px;
-  background: var(--surface);
+  background: var(--bg);
   border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -229,7 +237,7 @@ body {
 
 #user-input {
   width: 100%;
-  background: var(--bg);
+  background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -238,12 +246,17 @@ body {
   font-family: inherit;
   resize: none;
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
   line-height: 1.4;
 }
 
-#user-input:focus { border-color: var(--blue); }
-#user-input::placeholder { color: var(--text-muted); }
+#user-input:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(13, 94, 175, 0.08);
+  background: var(--bg);
+}
+
+#user-input::placeholder { color: var(--text-dim); }
 
 #submit-btn {
   background: var(--blue);
@@ -259,13 +272,17 @@ body {
 }
 
 #submit-btn:hover { background: var(--blue-hover); }
-#submit-btn:disabled { background: var(--surface-2); color: var(--text-muted); cursor: not-allowed; }
+#submit-btn:disabled {
+  background: var(--surface-2);
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
 
 #status-bar {
   padding: 4px 12px;
   font-size: 10px;
-  color: var(--text-muted);
-  background: var(--bg);
+  color: var(--text-dim);
+  background: var(--surface);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
 }

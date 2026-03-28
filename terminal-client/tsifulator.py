@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
 """
-Tsifulator.ai — Terminal Client
-Run this in any terminal to get the same AI brain as Excel + RStudio.
-Same shared memory. Same user ID. Same Claude.
-
-Usage:
-    python3 tsifulator.py
+tsifl — Terminal Client
+Run: python3 terminal-client/tsifulator.py
 """
 
 import os
@@ -15,40 +11,51 @@ import subprocess
 import readline
 import urllib.request
 import urllib.error
+import ssl
 from pathlib import Path
-from datetime import datetime
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
 BACKEND_URL = "https://focused-solace-production-6839.up.railway.app"
-CONFIG_PATH = Path.home() / ".tsifulator_user"
+CONFIG_PATH  = Path.home() / ".tsifulator_user"
 HISTORY_FILE = Path.home() / ".tsifulator_history"
 
-# ── ANSI Colors (Greek flag blue palette) ─────────────────────────────────────
+# SSL context — bypasses cert verification for Railway's endpoint
+SSL_CTX = ssl.create_default_context()
+SSL_CTX.check_hostname = False
+SSL_CTX.verify_mode    = ssl.CERT_NONE
 
-class C:
-    RESET   = "\033[0m"
-    BOLD    = "\033[1m"
-    DIM     = "\033[2m"
-    BLUE    = "\033[38;2;13;94;175m"      # #0D5EAF — Greek flag blue
-    LBLUE   = "\033[38;2;56;139;218m"     # Lighter blue for accents
-    GREEN   = "\033[38;2;34;197;94m"      # #22c55e
-    RED     = "\033[38;2;239;68;68m"      # #ef4444
-    MUTED   = "\033[38;2;74;96;128m"      # Muted text
-    WHITE   = "\033[38;2;226;232;240m"    # #e2e8f0
-    BG_BLUE = "\033[48;2;13;94;175;22m"   # Subtle blue background
+# ── ANSI Colors — bright, clear Greek blue palette ───────────────────────────
 
-def blue(s):   return f"{C.BLUE}{C.BOLD}{s}{C.RESET}"
-def green(s):  return f"{C.GREEN}{s}{C.RESET}"
-def red(s):    return f"{C.RED}{s}{C.RESET}"
-def muted(s):  return f"{C.MUTED}{s}{C.RESET}"
-def white(s):  return f"{C.WHITE}{s}{C.RESET}"
-def lblue(s):  return f"{C.LBLUE}{s}{C.RESET}"
+RESET   = "\033[0m"
+BOLD    = "\033[1m"
+DIM     = "\033[2m"
+
+# Greek flag blue — vivid
+BLUE    = "\033[38;2;13;94;175m"
+LBLUE   = "\033[38;2;66;153;225m"    # Lighter blue for secondary text
+WHITE   = "\033[38;2;255;255;255m"   # Pure white for replies
+MUTED   = "\033[38;2;140;160;185m"   # Soft blue-grey for chrome/borders
+GREEN   = "\033[38;2;52;211;153m"    # Bright mint green for actions
+YELLOW  = "\033[38;2;251;191;36m"    # Amber for warnings
+RED     = "\033[38;2;248;113;113m"   # Soft red for errors
+
+# Background highlights
+BG_BLUE = "\033[48;2;13;94;175m"     # Solid blue background (for prompt badge)
+BG_DARK = "\033[48;2;15;25;40m"      # Very dark blue-black for reply blocks
+
+def b(s):   return f"{BLUE}{BOLD}{s}{RESET}"
+def lb(s):  return f"{LBLUE}{s}{RESET}"
+def w(s):   return f"{WHITE}{s}{RESET}"
+def m(s):   return f"{MUTED}{s}{RESET}"
+def g(s):   return f"{GREEN}{s}{RESET}"
+def r(s):   return f"{RED}{s}{RESET}"
+def y(s):   return f"{YELLOW}{s}{RESET}"
+def dim(s): return f"{DIM}{MUTED}{s}{RESET}"
 
 # ── User Identity ─────────────────────────────────────────────────────────────
 
 def get_user_id():
-    """Read user ID — same one as Excel and RStudio use."""
     if CONFIG_PATH.exists():
         uid = CONFIG_PATH.read_text().strip()
         if uid:
@@ -58,43 +65,34 @@ def get_user_id():
         return env_id
     return "terminal-user-001"
 
-# ── Terminal Context ──────────────────────────────────────────────────────────
+# ── Context ───────────────────────────────────────────────────────────────────
 
 def get_terminal_context():
-    """Gather shell environment context to send with each message."""
-    context = {
-        "app": "terminal",
-        "shell": os.environ.get("SHELL", "bash"),
+    ctx = {
+        "app":         "terminal",
+        "shell":       os.environ.get("SHELL", "zsh"),
         "working_dir": os.getcwd(),
-        "user": os.environ.get("USER", ""),
-        "os": sys.platform,
+        "user":        os.environ.get("USER", ""),
+        "os":          sys.platform,
     }
-
-    # Last few commands from shell history (bash/zsh)
     try:
         hist_file = Path.home() / (
-            ".zsh_history" if "zsh" in context["shell"] else ".bash_history"
+            ".zsh_history" if "zsh" in ctx["shell"] else ".bash_history"
         )
         if hist_file.exists():
             lines = hist_file.read_text(errors="replace").strip().splitlines()
-            recent = [l.lstrip(": 0123456789;") for l in lines[-5:]]
-            context["recent_commands"] = recent
+            ctx["recent_commands"] = [l.lstrip(": 0123456789;") for l in lines[-5:]]
     except Exception:
         pass
-
-    # Current directory listing
     try:
-        files = os.listdir(".")[:20]
-        context["ls"] = files
+        ctx["ls"] = os.listdir(".")[:20]
     except Exception:
         pass
+    return ctx
 
-    return context
+# ── Backend ───────────────────────────────────────────────────────────────────
 
-# ── Backend Call ──────────────────────────────────────────────────────────────
-
-def send_message(user_id: str, message: str, context: dict) -> dict:
-    """POST to Tsifulator backend."""
+def send_message(user_id, message, context):
     payload = json.dumps({
         "user_id": user_id,
         "message": message,
@@ -107,80 +105,70 @@ def send_message(user_id: str, message: str, context: dict) -> dict:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with urllib.request.urlopen(req, timeout=60, context=SSL_CTX) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
-# ── Action Execution ──────────────────────────────────────────────────────────
+# ── Actions ───────────────────────────────────────────────────────────────────
 
-def execute_action(action: dict):
-    """Execute a shell action returned by Claude."""
-    action_type = action.get("type", "")
-    payload     = action.get("payload", {})
+def execute_action(action):
+    atype   = action.get("type", "")
+    payload = action.get("payload", {})
 
-    if action_type == "run_shell_command":
+    if atype == "run_shell_command":
         cmd = payload.get("command", "")
         if not cmd:
             return
-
-        print(f"\n{muted('─' * 50)}")
-        print(f"{green('▶')} {muted('Running:')} {lblue(cmd)}")
-        print(f"{muted('─' * 50)}")
-
+        print(f"\n  {m('┌─')} {g('Running')}  {lb(cmd)}")
         try:
-            result = subprocess.run(
-                cmd, shell=True, capture_output=True, text=True, timeout=30
-            )
-            if result.stdout.strip():
-                print(white(result.stdout.strip()))
-            if result.stderr.strip():
-                print(red(result.stderr.strip()))
-            if result.returncode == 0:
-                print(f"\n{green('✅')} {muted('Done')}")
-            else:
-                print(f"\n{red('⚠')} {muted(f'Exit code: {result.returncode}')}")
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+            lines  = (result.stdout + result.stderr).strip().splitlines()
+            for line in lines:
+                print(f"  {m('│')}  {w(line)}")
+            status = g("✓ Done") if result.returncode == 0 else r(f"✗ Exit {result.returncode}")
+            print(f"  {m('└─')} {status}\n")
         except subprocess.TimeoutExpired:
-            print(red("⚠ Command timed out (30s limit)"))
+            print(f"  {m('└─')} {y('⚠ Timed out (30s)')}\n")
         except Exception as e:
-            print(red(f"⚠ Error: {e}"))
+            print(f"  {m('└─')} {r(f'Error: {e}')}\n")
 
-        print()
-
-    elif action_type == "write_file":
+    elif atype == "write_file":
         path    = payload.get("path", "")
         content = payload.get("content", "")
         if path and content:
             try:
                 Path(path).write_text(content)
-                print(f"{green('✅')} {muted('Wrote:')} {lblue(path)}\n")
+                print(f"\n  {g('✓')} {m('Wrote')} {lb(path)}\n")
             except Exception as e:
-                print(red(f"⚠ Could not write {path}: {e}\n"))
+                print(f"\n  {r(f'✗ {e}')}\n")
 
-    elif action_type == "open_url":
+    elif atype == "open_url":
         url = payload.get("url", "")
         if url:
             subprocess.run(["open", url], check=False)
-            print(f"{green('✅')} {muted('Opened:')} {lblue(url)}\n")
+            print(f"\n  {g('✓')} {m('Opened')} {lb(url)}\n")
 
 # ── Display ───────────────────────────────────────────────────────────────────
 
-def print_header(user_id: str):
+DIVIDER = m("  " + "─" * 48)
+
+def print_header(user_id):
+    uid_short = user_id[:20] + "..." if len(user_id) > 20 else user_id
     print()
-    print(f"  {blue('⚡ Tsifulator.ai')}  {muted('— Terminal')}")
-    print(f"  {muted('User:')} {lblue(user_id[:16] + '...' if len(user_id) > 16 else user_id)}")
-    print(f"  {muted('Shared memory: Excel + RStudio + Terminal')}")
-    print(f"  {muted('Type your message. Type')} {lblue('/exit')} {muted('to quit.')}")
-    print(f"  {muted('─' * 44)}")
+    print(f"  {BLUE}{BOLD}⚡ tsifl{RESET}  {m('— Terminal')}")
+    print(f"  {m('User')}  {lb(uid_short)}")
+    print(f"  {m('Memory  Excel · RStudio · Terminal · Gmail')}")
+    print(DIVIDER)
+    print(f"  {dim('Type /exit to quit  ·  /clear to reset  ·  /user for ID')}")
     print()
 
-def print_reply(reply: str, tasks_remaining: int):
+def print_reply(reply, tasks_remaining):
     print()
-    # Word-wrap the reply at ~70 chars for readability
+    # Word-wrap at 68 chars
     words = reply.split()
     line  = ""
     lines = []
     for word in words:
-        if len(line) + len(word) + 1 > 72:
+        if len(line) + len(word) + 1 > 68:
             lines.append(line)
             line = word
         else:
@@ -188,18 +176,18 @@ def print_reply(reply: str, tasks_remaining: int):
     if line:
         lines.append(line)
 
+    print(f"  {BLUE}{BOLD}tsifl{RESET}")
     for l in lines:
-        print(f"  {white(l)}")
+        print(f"  {WHITE}{l}{RESET}")
 
     print()
     if tasks_remaining >= 0:
-        print(f"  {muted(f'{tasks_remaining} tasks remaining')}")
+        print(f"  {dim(f'{tasks_remaining} tasks remaining')}")
     print()
 
-# ── Main Loop ─────────────────────────────────────────────────────────────────
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    # Set up readline history
     if HISTORY_FILE.exists():
         try:
             readline.read_history_file(str(HISTORY_FILE))
@@ -213,21 +201,18 @@ def main():
     try:
         while True:
             try:
-                prompt = f"{blue('You')} {muted('›')} "
-                # Use input() with ANSI in prompt
-                sys.stdout.write(prompt)
+                sys.stdout.write(f"  {BLUE}{BOLD}You{RESET}  {MUTED}›{RESET} ")
                 sys.stdout.flush()
                 user_input = input("").strip()
             except (EOFError, KeyboardInterrupt):
-                print(f"\n\n  {muted('Goodbye.')}\n")
+                print(f"\n  {m('Goodbye.')}\n")
                 break
 
             if not user_input:
                 continue
 
-            # Slash commands
             if user_input.lower() in ("/exit", "/quit", "exit", "quit"):
-                print(f"\n  {muted('Goodbye.')}\n")
+                print(f"\n  {m('Goodbye.')}\n")
                 break
 
             if user_input.lower() == "/clear":
@@ -236,25 +221,24 @@ def main():
                 continue
 
             if user_input.lower() == "/user":
-                print(f"\n  {muted('User ID:')} {lblue(user_id)}\n")
+                print(f"\n  {m('User ID')}  {lb(user_id)}\n")
                 continue
 
-            # Send to backend
-            print(f"  {muted('Thinking...')}")
+            # Thinking indicator
+            sys.stdout.write(f"  {MUTED}Thinking...{RESET}\n")
+            sys.stdout.flush()
 
             try:
                 context = get_terminal_context()
                 data    = send_message(user_id, user_input, context)
 
-                # Clear "Thinking..." line
+                # Clear thinking line
                 sys.stdout.write("\033[F\033[K")
 
                 print_reply(data.get("reply", ""), data.get("tasks_remaining", -1))
 
-                # Execute actions
                 actions = data.get("actions", [])
                 action  = data.get("action", {})
-
                 if actions:
                     for a in actions:
                         execute_action(a)
@@ -265,14 +249,14 @@ def main():
                 sys.stdout.write("\033[F\033[K")
                 try:
                     err = json.loads(e.read())
-                    print(f"\n  {red('⚠')} {white(err.get('detail', str(e)))}\n")
+                    print(f"\n  {r('✗')} {w(err.get('detail', str(e)))}\n")
                 except Exception:
-                    print(f"\n  {red('⚠')} {white(f'HTTP {e.code}')}\n")
+                    print(f"\n  {r(f'✗ HTTP {e.code}')}\n")
 
             except Exception as e:
                 sys.stdout.write("\033[F\033[K")
-                print(f"\n  {red('⚠')} {white('Could not reach Tsifulator backend.')}")
-                print(f"  {muted(str(e))}\n")
+                print(f"\n  {r('✗ Could not reach backend')}")
+                print(f"  {dim(str(e))}\n")
 
     finally:
         try:

@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# Tsifulator.ai — One-command startup
+# tsifl — One-command startup
 # Double-click this file or run: bash start.sh
 # ============================================================
 
@@ -16,7 +16,7 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 echo ""
-echo -e "${PURPLE}⚡ Tsifulator.ai — Starting up...${NC}"
+echo -e "${PURPLE}⚡ tsifl — Starting up...${NC}"
 echo "────────────────────────────────────"
 
 # Kill any previous add-in server
@@ -47,10 +47,10 @@ fi
 
 echo ""
 echo "────────────────────────────────────"
-echo -e "${PURPLE}⚡ Tsifulator.ai is running!${NC}"
+echo -e "${PURPLE}⚡ tsifl is running!${NC}"
 echo ""
-echo "  Excel:    Open Excel → Home → Add-ins → Tsifulator.ai"
-echo "  RStudio:  Addins → Tsifulator.ai"
+echo "  Excel:    Open Excel → Home → Add-ins → tsifl"
+echo "  RStudio:  Addins → tsifl"
 echo "  Terminal: python3 terminal-client/tsifulator.py"
 echo "  Gmail:    python3 gmail-client/gmail_setup.py  (first time only)"
 echo ""

@@ -160,22 +160,24 @@ async function handleSubmit() {
         `${data.tasks_remaining} tasks left`;
     }
 
-    // Execute actions
-    const allActions = (data.actions && data.actions.length > 0)
-      ? data.actions
-      : (data.action && data.action.type && data.action.type !== "none")
-        ? [data.action]
-        : [];
+    // Execute actions — collect from either array or single action field
+    const allActions = [];
+    if (data.actions && data.actions.length > 0) {
+      allActions.push(...data.actions);
+    } else if (data.action && data.action.type && data.action.type !== "none") {
+      allActions.push(data.action);
+    }
 
     if (allActions.length > 0) {
-      setStatus(`Executing ${allActions.length} action${allActions.length > 1 ? "s" : ""}...`);
+      setStatus(`Applying ${allActions.length} change${allActions.length > 1 ? "s" : ""}...`);
       for (const action of allActions) {
         try {
           await executeAction(action);
         } catch (actionErr) {
-          appendMessage("action", `⚠️ Action failed (${action.type}): ${actionErr.message}`);
+          appendMessage("action", `⚠️ ${action.type} failed: ${actionErr.message}`);
         }
       }
+      appendMessage("action", `✅ ${allActions.length} change${allActions.length > 1 ? "s" : ""} applied to sheet`);
     }
 
     setStatus("Done");
@@ -223,17 +225,17 @@ async function getExcelContext() {
 
 async function executeAction(action) {
   const { type, payload } = action;
+  if (!type || !payload) return;
 
   if (type === "write_cell") {
     await Excel.run(async (ctx) => {
       const sheet = ctx.workbook.worksheets.getActiveWorksheet();
       const range = sheet.getRange(payload.cell);
-      range.values = [[payload.value]];
-      if (payload.bold)       range.format.font.bold        = true;
-      if (payload.color)      range.format.fill.color       = payload.color;
-      if (payload.font_color) range.format.font.color       = payload.font_color;
+      range.values = [[payload.value ?? ""]];
+      if (payload.bold)       range.format.font.bold    = true;
+      if (payload.color)      range.format.fill.color   = payload.color;
+      if (payload.font_color) range.format.font.color   = payload.font_color;
       await ctx.sync();
-      appendMessage("action", `✅ ${payload.cell} → ${payload.value}`);
     });
   }
 
@@ -242,11 +244,10 @@ async function executeAction(action) {
       const sheet = ctx.workbook.worksheets.getActiveWorksheet();
       const range = sheet.getRange(payload.range);
       range.values = payload.values;
-      if (payload.bold)       range.format.font.bold  = true;
-      if (payload.color)      range.format.fill.color = payload.color;
-      if (payload.font_color) range.format.font.color = payload.font_color;
+      if (payload.bold)       range.format.font.bold    = true;
+      if (payload.color)      range.format.fill.color   = payload.color;
+      if (payload.font_color) range.format.font.color   = payload.font_color;
       await ctx.sync();
-      appendMessage("action", `✅ Range ${payload.range} updated`);
     });
   }
 
@@ -259,17 +260,20 @@ async function executeAction(action) {
       if (payload.font_color)         range.format.font.color = payload.font_color;
       if (payload.number_format)      range.numberFormat      = [[payload.number_format]];
       await ctx.sync();
-      appendMessage("action", `🎨 Formatted ${payload.range}`);
     });
   }
 
   else if (type === "autofit") {
     await Excel.run(async (ctx) => {
-      const sheet = ctx.workbook.worksheets.getActiveWorksheet();
-      sheet.getUsedRange().format.autofitColumns();
-      sheet.getUsedRange().format.autofitRows();
+      const sheet    = ctx.workbook.worksheets.getActiveWorksheet();
+      const used     = sheet.getUsedRangeOrNullObject();
+      used.load("isNullObject");
       await ctx.sync();
-      appendMessage("action", `📐 Columns auto-fitted`);
+      if (!used.isNullObject) {
+        used.format.autofitColumns();
+        used.format.autofitRows();
+        await ctx.sync();
+      }
     });
   }
 }

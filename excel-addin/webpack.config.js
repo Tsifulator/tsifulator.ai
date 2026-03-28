@@ -28,7 +28,10 @@ module.exports = {
       chunks: ["taskpane"],
     }),
     new CopyWebpackPlugin({
-      patterns: [{ from: "manifest.xml", to: "manifest.xml" }],
+      patterns: [
+        { from: "manifest.xml", to: "manifest.xml" },
+        { from: "assets",       to: "assets" },
+      ],
     }),
   ],
   devServer: {
