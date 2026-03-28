@@ -52,8 +52,14 @@ async def chat(request: ChatRequest):
             detail="Monthly task limit reached. Upgrade to Pro for unlimited tasks."
         )
 
-    # 2. Pull conversation history from memory (cross-app, cross-session)
-    history = await get_recent_history(request.user_id, limit=10)
+    # 2. Pull conversation history — keep first exchange (original task) + last exchange only.
+    # Sending many repeated "not much progress" cycles confuses Claude into doing progressively less.
+    raw_history = await get_recent_history(request.user_id, limit=10)
+    if len(raw_history) > 4:
+        # Always preserve the original task (first 2 messages) + the most recent exchange (last 2)
+        history = raw_history[:2] + raw_history[-2:]
+    else:
+        history = raw_history
 
     # 3. Save the user's message
     app = request.context.get("app", "excel")
