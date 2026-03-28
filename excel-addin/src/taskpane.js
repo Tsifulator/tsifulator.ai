@@ -6,8 +6,9 @@
 import "./taskpane.css";
 import { getCurrentUser, signIn, signUp, signOut } from "./auth.js";
 
-const BACKEND_URL = "https://focused-solace-production-6839.up.railway.app";
-const PREFS_KEY   = "tsifl_preferences";
+const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
+const PREFS_KEY    = "tsifl_preferences";
+const BUILD_VER    = "v9";   // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -52,7 +53,7 @@ function showLoginScreen() {
 function showChatScreen(user) {
   document.getElementById("login-screen").style.display = "none";
   document.getElementById("chat-screen").style.display  = "flex";
-  document.getElementById("user-bar").textContent = user.email;
+  document.getElementById("user-bar").textContent = `${user.email} · ${BUILD_VER}`;
 
   document.getElementById("submit-btn").addEventListener("click", handleSubmit);
   document.getElementById("user-input").addEventListener("keydown", (e) => {
@@ -144,20 +145,24 @@ async function handleSubmit() {
     if (data.actions && data.actions.length > 0) allActions.push(...data.actions);
     else if (data.action && data.action.type && data.action.type !== "none") allActions.push(data.action);
 
+    // Always show how many actions Claude returned — helps diagnose "no changes" issues
+    appendMessage("action", `📋 ${BUILD_VER} · Claude returned ${allActions.length} action${allActions.length !== 1 ? "s" : ""}` +
+      (allActions.length > 0 ? `: ${[...new Set(allActions.map(a => a.type))].join(", ")}` : " — text-only reply"));
+
     if (allActions.length > 0) {
       setStatus(`Applying ${allActions.length} action${allActions.length > 1 ? "s" : ""}...`);
       let applied = 0;
+      let failed  = 0;
       for (const action of allActions) {
         try {
           await executeAction(action);
           applied++;
         } catch (err) {
-          appendMessage("action", `⚠️ ${action.type} failed: ${err.message}`);
+          failed++;
+          appendMessage("action", `⚠️ ${action.type} → ${err.message} | payload: ${JSON.stringify(action.payload || {}).slice(0, 120)}`);
         }
       }
-      if (applied > 0) {
-        appendMessage("action", `✅ ${applied} action${applied > 1 ? "s" : ""} applied`);
-      }
+      appendMessage("action", `✅ ${applied} applied${failed > 0 ? ` · ⚠️ ${failed} failed` : ""}`);
     }
 
     setStatus("Done");
