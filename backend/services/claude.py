@@ -87,9 +87,14 @@ If email addresses or other contact data is missing, generate realistic placehol
 
 ## Date / Time Formula Pattern
 For date arithmetic columns (e.g. Days in Transit, Arrival Day):
-- Days column: use write_column {start:"D5", end:"D40", formula:"=C5-B5", number_format:"0", sheet:"Shipment Times"}
-- Day-of-week column: use write_column {start:"E5", end:"E40", formula:"=TEXT(C5,\"dddd\")", sheet:"Shipment Times"}
-- NEVER leave these columns empty — emit write_column for BOTH columns every time
+- Days column:
+  1. write_cell {cell:"D5", formula:"=C5-B5", sheet:"Shipment Times"}
+  2. fill_down {range:"D5:D40", sheet:"Shipment Times"}
+  3. set_number_format {range:"D5:D40", format:"0", sheet:"Shipment Times"}
+- Day-of-week column:
+  1. write_cell {cell:"E5", formula:"=TEXT(C5,\"dddd\")", sheet:"Shipment Times"}
+  2. fill_down {range:"E5:E40", sheet:"Shipment Times"}
+- NEVER leave these columns empty — emit ALL three steps for the Days column and BOTH steps for Arrival Day
 
 ## Financial Model Guidelines
 - Header rows: color "#0D5EAF" background, font_color "white", bold true, font_size 11
@@ -147,7 +152,7 @@ TOOLS = [
                                 "description": (
                                     "Excel cell/range: write_cell, write_formula, write_range. "
                                     "Excel navigation: navigate_sheet. "
-                                    "Excel formulas: fill_down, fill_right, write_column, copy_range. "
+                                    "Excel formulas: fill_down, fill_right, copy_range. "
                                     "Excel structure: create_named_range, sort_range, add_sheet, clear_range, freeze_panes. "
                                     "Excel format: format_range, set_number_format, autofit, autofit_columns. "
                                     "Preferences: save_preference. "
@@ -167,10 +172,6 @@ TOOLS = [
                                     "write_range: {range, values? (2D array), formulas? (2D array), sheet?, bold?, color?, font_color?, number_format?}.\n"
                                     "  IMPORTANT: values and formulas MUST be 2D arrays, e.g. [[\"val1\"],[\"val2\"]] NOT [\"val1\",\"val2\"].\n"
                                     "  Use formulas array when cells contain = formulas.\n"
-                                    "write_column: {start, end, formula?, value?, sheet?, number_format?}. PREFERRED for filling a single column.\n"
-                                    "  Writes formula/value to start cell and fills it down to end cell automatically.\n"
-                                    "  Example: {start:'D5', end:'D40', formula:'=C5-B5', sheet:'Shipment Times'}.\n"
-                                    "  Use this instead of separate write_cell + fill_down whenever filling a column.\n"
                                     "fill_down: {range, source?, sheet?}. Copies formula in first row down. source defaults to first cell of range.\n"
                                     "fill_right: {range, source, sheet?}. Copies formula in source across range.\n"
                                     "copy_range: {from, to, sheet?}. Copies values+formulas+format.\n"

@@ -287,7 +287,7 @@ function applyValue(range, val) {
 
 // Action types that should inherit the last navigated sheet when no sheet is specified
 const SHEET_AWARE_TYPES = new Set([
-  "write_cell", "write_range", "write_formula", "write_column",
+  "write_cell", "write_range", "write_formula",
   "fill_down", "fill_right", "copy_range",
   "create_named_range", "sort_range",
   "format_range", "set_number_format",
@@ -350,32 +350,6 @@ async function executeAction(action) {
         else              range.values  = vals;
       }
       _applyFormat(range, payload);
-      await ctx.sync();
-    });
-  }
-
-  // ── write_column ───────────────────────────────────────────────────────────
-  // Convenience: write a formula/value to the first cell then fill it down.
-  // payload: { start: "D5", end: "D40", formula?, value?, sheet?, number_format? }
-  // This is equivalent to write_cell(start) + fill_down(start:end) in one action.
-  else if (type === "write_column") {
-    await Excel.run(async (ctx) => {
-      const sheet     = getSheet(ctx, payload.sheet);
-      const startCell = sheet.getRange(payload.start);
-      const fullRange = sheet.getRange(`${payload.start}:${payload.end}`);
-      const val       = payload.formula ?? payload.value ?? "";
-      if (typeof val === "string" && val.startsWith("=")) {
-        startCell.formulas = [[val]];
-      } else {
-        startCell.values = [[val]];
-      }
-      if (payload.number_format) {
-        fullRange.numberFormat = [[typeof payload.number_format === "string"
-          ? payload.number_format : "General"]];
-      }
-      await ctx.sync();
-      // Fill the formula/value from start down through end
-      fullRange.copyFrom(startCell, Excel.RangeCopyType.all, false, false);
       await ctx.sync();
     });
   }
