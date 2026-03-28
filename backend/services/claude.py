@@ -41,28 +41,29 @@ You have shared memory across all apps — everything you know in Excel is avail
 - Draft professional emails
 - Send emails
 
-## Response Format
-Always respond with:
-1. A short, confident reply (1-2 sentences max — you're in a sidebar or terminal)
-2. A JSON block with your actions
+## Response Format — CRITICAL: follow this exactly every time
 
-For a SINGLE action:
+Your response MUST have exactly two parts and nothing else:
+
+PART 1 — One short sentence (max 15 words). No bullet points. No lists. No explanations.
+
+PART 2 — A single ```json code block. No other text after it.
+
+Single action example:
 ```json
-{
-  "type": "write_cell",
-  "payload": {"cell": "B2", "value": 50000}
-}
+{"type": "write_cell", "payload": {"cell": "B2", "value": 50000}}
 ```
 
-For MULTIPLE actions (e.g. building a model):
+Multiple actions example:
 ```json
-{
-  "actions": [
-    {"type": "write_range", "payload": {"range": "A1:D1", "values": [["Revenue", "COGS", "GP", "EBITDA"]], "bold": true, "color": "#0a1929", "font_color": "#ffffff"}},
-    {"type": "autofit", "payload": {}}
-  ]
-}
+{"actions": [
+  {"type": "write_range", "payload": {"range": "A1:D1", "values": [["Revenue", "COGS", "GP", "EBITDA"]], "bold": true, "color": "#0a1929", "font_color": "#ffffff"}},
+  {"type": "autofit", "payload": {}}
+]}
 ```
+
+NEVER write the JSON as plain text. ALWAYS wrap it in ```json ... ```.
+NEVER explain the JSON. NEVER add text after the closing ```.
 
 ## Excel Action Types
 - write_cell: {"cell": "B2", "value": ..., "bold": true/false, "color": "#hex", "font_color": "#hex"}
@@ -236,23 +237,77 @@ def _col_letter(idx: int) -> str:
 
 
 def _parse_response(raw: str) -> dict:
-    """Parses Claude's response into reply text + action(s)."""
-    action = {}
+    """Parses Claude's response into reply text + action(s).
+    Handles multiple response formats Claude may use."""
+    import re
+
+    action  = {}
     actions = []
-    reply = raw
 
-    try:
-        if "```json" in raw:
+    # ── Strategy 1: ```json ... ``` block ────────────────────────────────────
+    if "```json" in raw:
+        try:
             json_str = raw.split("```json")[1].split("```")[0].strip()
-            parsed = json.loads(json_str)
-            reply = raw.split("```json")[0].strip()
-
-            # Handle multi-action responses
+            parsed   = json.loads(json_str)
+            reply    = raw.split("```json")[0].strip()
             if "actions" in parsed:
                 actions = parsed["actions"]
             else:
                 action = parsed
-    except Exception:
-        reply = raw
+            return {"reply": reply, "action": action, "actions": actions}
+        except Exception:
+            pass
 
-    return {"reply": reply, "action": action, "actions": actions}
+    # ── Strategy 2: ``` ... ``` block (no language tag) ──────────────────────
+    if "```" in raw:
+        try:
+            parts = raw.split("```")
+            for i in range(1, len(parts), 2):
+                candidate = parts[i].strip()
+                if candidate.startswith("{"):
+                    parsed = json.loads(candidate)
+                    reply  = parts[0].strip()
+                    if "actions" in parsed:
+                        actions = parsed["actions"]
+                    else:
+                        action = parsed
+                    return {"reply": reply, "action": action, "actions": actions}
+        except Exception:
+            pass
+
+    # ── Strategy 3: find the first { ... } block that contains action keys ───
+    try:
+        # Find the outermost JSON object that has "actions" or "type" key
+        brace_depth = 0
+        start_idx   = None
+        for i, ch in enumerate(raw):
+            if ch == "{":
+                if brace_depth == 0:
+                    start_idx = i
+                brace_depth += 1
+            elif ch == "}":
+                brace_depth -= 1
+                if brace_depth == 0 and start_idx is not None:
+                    candidate = raw[start_idx:i+1]
+                    try:
+                        parsed = json.loads(candidate)
+                        if "actions" in parsed or "type" in parsed:
+                            reply = raw[:start_idx].strip()
+                            if "actions" in parsed:
+                                actions = parsed["actions"]
+                            else:
+                                action = parsed
+                            return {"reply": reply, "action": action, "actions": actions}
+                    except Exception:
+                        pass
+                    start_idx = None
+    except Exception:
+        pass
+
+    # ── Fallback: return reply with JSON stripped out so it's readable ────────
+    # Remove any raw JSON blobs from the reply text
+    clean = re.sub(r'\{[^{}]*"type"[^{}]*\}', "", raw)
+    clean = re.sub(r'\{[^{}]*"actions"[^{}]*\}', "", clean)
+    clean = clean.strip()
+
+    return {"reply": clean if clean else raw, "action": action, "actions": actions}
