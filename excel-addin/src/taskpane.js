@@ -8,7 +8,7 @@ import { getCurrentUser, signIn, signUp, signOut } from "./auth.js";
 
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v10";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v11";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -494,7 +494,13 @@ async function executeAction(action) {
       const { sheet: s, addr } = splitAddr(payload.range, payload.sheet);
       const sheet = getSheet(ctx, s);
       const range = sheet.getRange(addr);
-      range.numberFormat = [[payload.format]];
+      // Load dimensions first — numberFormat must be a 2D array matching range size
+      range.load("rowCount,columnCount");
+      await ctx.sync();
+      const fmt = Array.from({ length: range.rowCount }, () =>
+        Array.from({ length: range.columnCount }, () => payload.format)
+      );
+      range.numberFormat = fmt;
       await ctx.sync();
     });
   }
