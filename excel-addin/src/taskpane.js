@@ -3,6 +3,7 @@
  * Full auth + chat + Excel action execution.
  */
 
+import "./taskpane.css";
 import { getCurrentUser, signIn, signUp, signOut } from "./auth.js";
 
 const BACKEND_URL = "https://focused-solace-production-6839.up.railway.app";
@@ -12,6 +13,11 @@ let CURRENT_USER = null;
 // ── Boot ─────────────────────────────────────────────────────────────────────
 
 Office.onReady(async () => {
+  // Pin the taskpane so it reopens automatically every time Excel starts
+  try {
+    await Office.addin.setStartupBehavior(Office.StartupBehavior.load);
+  } catch (_) {}
+
   CURRENT_USER = await getCurrentUser();
 
   if (CURRENT_USER) {
@@ -155,11 +161,21 @@ async function handleSubmit() {
     }
 
     // Execute actions
-    if (data.actions && data.actions.length > 0) {
-      setStatus(`Executing ${data.actions.length} actions...`);
-      for (const action of data.actions) await executeAction(action);
-    } else if (data.action && data.action.type !== "none") {
-      await executeAction(data.action);
+    const allActions = (data.actions && data.actions.length > 0)
+      ? data.actions
+      : (data.action && data.action.type && data.action.type !== "none")
+        ? [data.action]
+        : [];
+
+    if (allActions.length > 0) {
+      setStatus(`Executing ${allActions.length} action${allActions.length > 1 ? "s" : ""}...`);
+      for (const action of allActions) {
+        try {
+          await executeAction(action);
+        } catch (actionErr) {
+          appendMessage("action", `⚠️ Action failed (${action.type}): ${actionErr.message}`);
+        }
+      }
     }
 
     setStatus("Done");

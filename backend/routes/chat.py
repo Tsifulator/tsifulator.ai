@@ -25,6 +25,23 @@ class ChatResponse(BaseModel):
     tasks_remaining: int = -1
     memory_active: bool = False
 
+@router.get("/debug")
+async def debug():
+    """Quick test: does the tool call work and return actions?"""
+    from services.claude import get_claude_response
+    result = await get_claude_response(
+        message    = "Write the word Test in cell A1",
+        context    = {"app": "excel", "sheet": "Sheet1", "sheet_data": []},
+        session_id = "debug",
+        history    = []
+    )
+    return {
+        "reply":        result.get("reply"),
+        "action":       result.get("action"),
+        "actions":      result.get("actions"),
+        "action_count": len(result.get("actions", [])) + (1 if result.get("action") else 0)
+    }
+
 @router.post("/", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     # 1. Check usage limit

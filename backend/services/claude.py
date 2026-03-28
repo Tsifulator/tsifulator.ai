@@ -129,11 +129,12 @@ async def get_claude_response(message: str, context: dict,
     messages.append({"role": "user", "content": user_content})
 
     response = client.messages.create(
-        model      = "claude-sonnet-4-5",
-        max_tokens = 4096,
-        system     = SYSTEM_PROMPT,
-        tools      = TOOLS,
-        messages   = messages,
+        model       = "claude-sonnet-4-5",
+        max_tokens  = 4096,
+        system      = SYSTEM_PROMPT,
+        tools       = TOOLS,
+        tool_choice = {"type": "any"},   # Force Claude to always call execute_actions
+        messages    = messages,
     )
 
     return _parse_tool_response(response)
