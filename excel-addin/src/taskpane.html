@@ -39,12 +39,17 @@
       <div id="chat-history"></div>
 
       <div id="input-area">
+        <div id="image-preview-bar" style="display:none;"></div>
         <textarea
           id="user-input"
           placeholder="Build a model, update cells, run R code..."
           rows="3"
         ></textarea>
-        <button id="submit-btn">Send</button>
+        <div id="input-actions">
+          <input type="file" id="image-input" accept="image/*" multiple style="display:none;" />
+          <button id="attach-btn" title="Attach image">+</button>
+          <button id="submit-btn">Send</button>
+        </div>
       </div>
 
       <div id="status-bar">Ready</div>

@@ -1,74 +1,98 @@
 /**
- * tsifl — Background Service Worker
- * Coordinates between the Side Panel and content scripts.
- * All browser actions and context capture flow through here for reliability.
+ * tsifl — Background Service Worker (MV3)
+ *
+ * Responsibilities:
+ * 1. Open side panel on toolbar icon click
+ * 2. Handle keyboard shortcut (Cmd+Shift+E)
+ * 3. Relay context capture between panel and content scripts
+ * 4. Execute browser actions (open tabs, search, navigate, DOM actions)
  */
 
-// ── Side Panel Setup ────────────────────────────────────────────────────
+// ── Side Panel Behavior ─────────────────────────────────────────────────
+// Must run EVERY time the service worker starts (it can restart at any time in MV3)
 
-// Ensure side panel opens when toolbar icon is clicked
-chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+try {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+} catch (e) {
+  console.warn("tsifl: setPanelBehavior failed on startup:", e);
+}
 
-// Keyboard shortcut — Cmd+Shift+T / Ctrl+Shift+T
+// Also set on install/update for safety
+chrome.runtime.onInstalled.addListener(() => {
+  try {
+    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+  } catch (e) {
+    console.warn("tsifl: setPanelBehavior failed on install:", e);
+  }
+});
+
+// ── Keyboard Shortcut ───────────────────────────────────────────────────
+// Cmd+Shift+E (Mac) / Ctrl+Shift+E (Win/Linux)
+// NOTE: Cmd+Shift+T was Chrome's "reopen closed tab" — conflicted and never fired.
+
 chrome.commands.onCommand.addListener(async (command) => {
   if (command === "toggle-sidebar") {
     try {
       const win = await chrome.windows.getCurrent();
-      await chrome.sidePanel.open({ windowId: win.id });
+      if (win?.id) {
+        await chrome.sidePanel.open({ windowId: win.id });
+      }
     } catch (e) {
-      console.warn("tsifl: Could not open side panel:", e.message);
+      console.warn("tsifl: keyboard shortcut open failed:", e);
     }
   }
 });
 
-// Re-register panel behavior on install/update (service worker can restart)
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
-});
-
-// ── Message Handler ─────────────────────────────────────────────────────
+// ── Message Router ──────────────────────────────────────────────────────
+// Panel.js and content.js communicate through here.
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "get_context") {
-    handleGetContext(msg).then(sendResponse).catch(() => {
-      sendResponse({ context: { app: "browser", url: "", title: "" } });
-    });
-    return true;
+    handleGetContext()
+      .then(ctx => sendResponse({ context: ctx }))
+      .catch(() => sendResponse({ context: { app: "browser", url: "", title: "" } }));
+    return true; // Keep channel open for async response
   }
 
   if (msg.action === "execute_browser_action") {
-    handleBrowserAction(msg.type, msg.payload).then(sendResponse).catch((e) => {
-      sendResponse({ success: false, message: e.message });
-    });
+    handleBrowserAction(msg.type, msg.payload)
+      .then(result => sendResponse(result))
+      .catch(e => sendResponse({ success: false, message: e.message }));
     return true;
   }
 
   if (msg.action === "get_page_text") {
-    handleGetPageText().then(sendResponse).catch(() => {
-      sendResponse({ text: "" });
-    });
+    handleGetPageText()
+      .then(result => sendResponse(result))
+      .catch(() => sendResponse({ text: "" }));
     return true;
   }
 });
 
 // ── Context Capture ─────────────────────────────────────────────────────
 
-async function handleGetContext(msg) {
+async function handleGetContext() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   const tab = tabs[0];
-  if (!tab?.id || tab.url?.startsWith("chrome://") || tab.url?.startsWith("chrome-extension://")) {
-    return { context: { app: "browser", url: tab?.url || "", title: tab?.title || "" } };
+
+  // Can't inject into chrome:// or extension pages
+  if (!tab?.id || tab.url?.startsWith("chrome://") || tab.url?.startsWith("chrome-extension://") || tab.url?.startsWith("about:")) {
+    return { app: "browser", url: tab?.url || "", title: tab?.title || "" };
   }
 
-  // Ensure content script is injected
-  await injectContentScript(tab.id);
+  // Ensure content script is injected (may already be via manifest)
+  await safeInjectContentScript(tab.id);
 
   try {
-    const response = await sendTabMessage(tab.id, { action: "capture_context" });
-    return { context: response || { app: "browser", url: tab.url, title: tab.title } };
-  } catch {
-    return { context: { app: "browser", url: tab.url, title: tab.title } };
+    const response = await sendToTab(tab.id, { action: "capture_context" });
+    if (response && response.app) {
+      return response;
+    }
+  } catch (e) {
+    // Content script not available — return basic tab info
   }
+
+  return { app: "browser", url: tab.url || "", title: tab.title || "" };
 }
 
 async function handleGetPageText() {
@@ -76,12 +100,12 @@ async function handleGetPageText() {
   const tab = tabs[0];
   if (!tab?.id || tab.url?.startsWith("chrome://")) return { text: "" };
 
-  await injectContentScript(tab.id);
+  await safeInjectContentScript(tab.id);
 
   try {
-    const response = await sendTabMessage(tab.id, { action: "get_full_page_text" });
+    const response = await sendToTab(tab.id, { action: "get_full_page_text" });
     return { text: response?.text || "" };
-  } catch {
+  } catch (e) {
     return { text: "" };
   }
 }
@@ -89,67 +113,95 @@ async function handleGetPageText() {
 // ── Browser Action Execution ────────────────────────────────────────────
 
 async function handleBrowserAction(type, payload) {
+  if (!type) return { success: false, message: "No action type" };
+  if (!payload) payload = {};
+
   switch (type) {
     case "open_url": {
-      await chrome.tabs.create({ url: payload.url, active: true });
-      return { success: true, message: `Opened ${payload.url}` };
+      const url = payload.url;
+      if (!url) return { success: false, message: "No URL provided" };
+      await chrome.tabs.create({ url, active: true });
+      return { success: true, message: `Opened ${url}` };
     }
+
     case "open_url_current_tab": {
+      const url = payload.url;
+      if (!url) return { success: false, message: "No URL provided" };
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab) await chrome.tabs.update(tab.id, { url: payload.url });
-      return { success: true, message: `Navigated to ${payload.url}` };
+      if (tab?.id) {
+        await chrome.tabs.update(tab.id, { url });
+      } else {
+        await chrome.tabs.create({ url, active: true });
+      }
+      return { success: true, message: `Navigated to ${url}` };
     }
+
     case "search_web": {
-      const q = encodeURIComponent(payload.query);
+      const query = payload.query;
+      if (!query) return { success: false, message: "No search query" };
+      const q = encodeURIComponent(query);
       await chrome.tabs.create({ url: `https://www.google.com/search?q=${q}`, active: true });
-      return { success: true, message: `Searched: ${payload.query}` };
+      return { success: true, message: `Searched: ${query}` };
     }
+
     case "navigate_back": {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab) await chrome.tabs.goBack(tab.id);
+      if (tab?.id) await chrome.tabs.goBack(tab.id);
       return { success: true, message: "Went back" };
     }
+
     case "navigate_forward": {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab) await chrome.tabs.goForward(tab.id);
+      if (tab?.id) await chrome.tabs.goForward(tab.id);
       return { success: true, message: "Went forward" };
     }
+
+    // DOM actions — relay to content script
     case "scroll_to":
     case "click_element":
     case "fill_input":
     case "extract_text": {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab?.id) return { success: false, message: "No active tab" };
-      await injectContentScript(tab.id);
-      const response = await sendTabMessage(tab.id, { action: "execute_dom_action", type, payload });
-      return response || { success: false, message: "No response from page" };
+      await safeInjectContentScript(tab.id);
+      try {
+        const response = await sendToTab(tab.id, { action: "execute_dom_action", type, payload });
+        return response || { success: false, message: "No response from content script" };
+      } catch (e) {
+        return { success: false, message: `DOM action failed: ${e.message}` };
+      }
     }
+
     default:
-      return { success: false, message: `Unknown action: ${type}` };
+      return { success: false, message: `Unknown browser action: ${type}` };
   }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
-async function injectContentScript(tabId) {
+async function safeInjectContentScript(tabId) {
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
       files: ["content.js"],
     });
   } catch (e) {
-    // May already be injected or page is restricted
+    // Already injected, restricted page, or no permission
   }
 }
 
-function sendTabMessage(tabId, message) {
+function sendToTab(tabId, message) {
   return new Promise((resolve, reject) => {
-    chrome.tabs.sendMessage(tabId, message, (response) => {
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
-      } else {
-        resolve(response);
-      }
-    });
+    try {
+      chrome.tabs.sendMessage(tabId, message, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+        } else {
+          resolve(response);
+        }
+      });
+    } catch (e) {
+      reject(e);
+    }
   });
 }

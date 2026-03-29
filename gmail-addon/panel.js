@@ -1,18 +1,30 @@
 /**
  * tsifl — Side Panel Script
- * Handles auth, chat, images, and action execution.
- * All browser actions are routed through background.js for reliability.
+ *
+ * Complete code paths:
+ *
+ * AUTH: checkAuth() → chrome.storage.local → Supabase refresh → showChat()
+ *       If local fails → restoreFromBackend() → GET /auth/get-session → Supabase refresh → showChat()
+ *       If both fail → showLogin()
+ *
+ * CHAT: handleSubmit() → getContext() → POST /chat/ → appendMessage() → executeAction()
+ *
+ * ACTIONS: executeAction() → chrome.runtime.sendMessage({action:"execute_browser_action"})
+ *          → background.js → chrome.tabs.create / chrome.tabs.update
  */
 
 const BACKEND_URL = "https://focused-solace-production-6839.up.railway.app";
 const SUPABASE_URL = "https://dvynmzeyttwlmvunicqz.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR2eW5temV5dHR3bG12dW5pY3F6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2NTIwMTIsImV4cCI6MjA5MDIyODAxMn0.9j_f-2f1VswxWfqiuXy4bPnUi1qLk9nAeTDlodUBUZw";
+const NOTES_URL = `${BACKEND_URL}/notes-app`;
 
 let currentUser = null;
 let pendingImages = [];
 let sessionId = `browser-${Date.now()}`;
 
-// ── Auth ─────────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+// AUTH
+// ══════════════════════════════════════════════════════════════════════════
 
 async function supabaseAuth(endpoint, body) {
   const resp = await fetch(`${SUPABASE_URL}/auth/v1/${endpoint}`, {
@@ -36,44 +48,71 @@ async function syncSessionToBackend(session) {
         email: session.user?.email || "",
       }),
     });
-  } catch (e) {}
+  } catch (e) {
+    console.warn("tsifl: sync to backend failed:", e);
+  }
 }
 
 async function restoreFromBackend() {
   try {
     const resp = await fetch(`${BACKEND_URL}/auth/get-session`);
     const data = await resp.json();
-    if (!data.session?.access_token) return false;
+    if (!data.session || !data.session.refresh_token) return false;
+
     const result = await supabaseAuth("token?grant_type=refresh_token", {
       refresh_token: data.session.refresh_token,
     });
-    if (result.access_token) {
+
+    if (result.access_token && result.user) {
       chrome.storage.local.set({ tsifl_session: result });
       syncSessionToBackend(result);
-      showChat({ id: result.user?.id || data.session.user_id, email: result.user?.email || data.session.email });
+      showChat({
+        id: result.user.id || data.session.user_id,
+        email: result.user.email || data.session.email,
+      });
       return true;
     }
-  } catch (e) {}
+  } catch (e) {
+    console.warn("tsifl: restore from backend failed:", e);
+  }
   return false;
 }
 
 async function checkAuth() {
-  const stored = await new Promise(r => chrome.storage.local.get("tsifl_session", d => r(d.tsifl_session)));
-  if (stored) {
+  // Step 1: Check chrome.storage.local for saved session
+  let stored = null;
+  try {
+    stored = await new Promise((resolve) => {
+      chrome.storage.local.get("tsifl_session", (data) => resolve(data.tsifl_session || null));
+    });
+  } catch (e) {
+    console.warn("tsifl: chrome.storage.local.get failed:", e);
+  }
+
+  if (stored && stored.refresh_token) {
     try {
       const result = await supabaseAuth("token?grant_type=refresh_token", {
         refresh_token: stored.refresh_token,
       });
-      if (result.access_token) {
+      if (result.access_token && result.user) {
         chrome.storage.local.set({ tsifl_session: result });
         syncSessionToBackend(result);
-        showChat({ id: result.user?.id || stored.user?.id, email: result.user?.email || stored.user?.email });
+        showChat({
+          id: result.user.id || stored.user?.id,
+          email: result.user.email || stored.user?.email,
+        });
         return;
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn("tsifl: local session refresh failed:", e);
+    }
   }
+
+  // Step 2: Try to restore from backend (logged in via another add-in)
   const restored = await restoreFromBackend();
-  if (!restored) showLogin();
+  if (!restored) {
+    showLogin();
+  }
 }
 
 async function handleSignIn() {
@@ -84,14 +123,18 @@ async function handleSignIn() {
   errEl.style.color = "#DC2626";
   if (!email || !password) { errEl.textContent = "Enter email and password."; return; }
 
-  const result = await supabaseAuth("token?grant_type=password", { email, password });
-  if (result.error || result.error_description) {
-    errEl.textContent = result.error_description || "Sign in failed";
-    return;
+  try {
+    const result = await supabaseAuth("token?grant_type=password", { email, password });
+    if (result.error || result.error_description) {
+      errEl.textContent = result.error_description || result.error || "Sign in failed";
+      return;
+    }
+    chrome.storage.local.set({ tsifl_session: result });
+    await syncSessionToBackend(result);
+    showChat({ id: result.user.id, email: result.user.email });
+  } catch (e) {
+    errEl.textContent = "Network error — check your connection.";
   }
-  chrome.storage.local.set({ tsifl_session: result });
-  syncSessionToBackend(result);
-  showChat({ id: result.user.id, email: result.user.email });
 }
 
 async function handleSignUp() {
@@ -103,13 +146,17 @@ async function handleSignUp() {
   if (!email || !password) { errEl.textContent = "Enter email and password."; return; }
   if (password.length < 6) { errEl.textContent = "Password must be 6+ characters."; return; }
 
-  const result = await supabaseAuth("signup", { email, password });
-  if (result.error || result.error_description) {
-    errEl.textContent = result.error_description || "Sign up failed";
-    return;
+  try {
+    const result = await supabaseAuth("signup", { email, password });
+    if (result.error || result.error_description) {
+      errEl.textContent = result.error_description || result.error || "Sign up failed";
+      return;
+    }
+    errEl.style.color = "#16A34A";
+    errEl.textContent = "Check your email to confirm, then sign in.";
+  } catch (e) {
+    errEl.textContent = "Network error — check your connection.";
   }
-  errEl.style.color = "#16A34A";
-  errEl.textContent = "Check your email to confirm, then sign in.";
 }
 
 function showLogin() {
@@ -121,41 +168,54 @@ function showChat(user) {
   currentUser = user;
   document.getElementById("tsifl-login").style.display = "none";
   document.getElementById("tsifl-chat-area").style.display = "flex";
-  document.getElementById("tsifl-user-bar").textContent = user.email;
+  document.getElementById("tsifl-user-bar").textContent = user.email || "Signed in";
 }
 
-// ── Context ──────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+// CONTEXT CAPTURE
+// ══════════════════════════════════════════════════════════════════════════
 
 function getContext() {
   return new Promise((resolve) => {
     const timeout = setTimeout(() => resolve({ app: "browser" }), 5000);
-    chrome.runtime.sendMessage({ action: "get_context" }, (response) => {
+    try {
+      chrome.runtime.sendMessage({ action: "get_context" }, (response) => {
+        clearTimeout(timeout);
+        if (chrome.runtime.lastError) {
+          resolve({ app: "browser" });
+        } else {
+          resolve(response?.context || { app: "browser" });
+        }
+      });
+    } catch (e) {
       clearTimeout(timeout);
-      if (chrome.runtime.lastError) {
-        resolve({ app: "browser" });
-      } else {
-        resolve(response?.context || { app: "browser" });
-      }
-    });
+      resolve({ app: "browser" });
+    }
   });
 }
 
-// Get full page text for summarization
 function getPageText() {
   return new Promise((resolve) => {
     const timeout = setTimeout(() => resolve(""), 5000);
-    chrome.runtime.sendMessage({ action: "get_page_text" }, (response) => {
+    try {
+      chrome.runtime.sendMessage({ action: "get_page_text" }, (response) => {
+        clearTimeout(timeout);
+        if (chrome.runtime.lastError) {
+          resolve("");
+        } else {
+          resolve(response?.text || "");
+        }
+      });
+    } catch (e) {
       clearTimeout(timeout);
-      if (chrome.runtime.lastError) {
-        resolve("");
-      } else {
-        resolve(response?.text || "");
-      }
-    });
+      resolve("");
+    }
   });
 }
 
-// ── Images ───────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+// IMAGES
+// ══════════════════════════════════════════════════════════════════════════
 
 function addImage(file) {
   const reader = new FileReader();
@@ -185,16 +245,18 @@ function updateImagePreview() {
   );
 }
 
-// ── Chat ─────────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+// CHAT
+// ══════════════════════════════════════════════════════════════════════════
 
-// Detect if user is asking for a page summary
 function isSummarizationRequest(msg) {
   const lower = msg.toLowerCase();
   const triggers = [
-    "summarize", "summary", "summarise", "main points", "key points", "key takeaways",
-    "tldr", "tl;dr", "what does this page say", "what is this page about", "what is this article about",
-    "explain this page", "explain this article", "break down this article", "overview of this",
-    "give me the gist", "what's this about", "digest this",
+    "summarize", "summary", "summarise", "main points", "key points",
+    "key takeaways", "tldr", "tl;dr", "what does this page say",
+    "what is this page about", "what is this article about",
+    "explain this page", "explain this article", "break down this article",
+    "overview of this", "give me the gist", "what's this about", "digest this",
   ];
   return triggers.some(t => lower.includes(t));
 }
@@ -203,6 +265,7 @@ async function handleSubmit() {
   const input = document.getElementById("tsifl-user-input");
   const msg = input.value.trim();
   if (!msg && !pendingImages.length) return;
+  if (!currentUser) { appendMessage("assistant", "Please sign in first."); return; }
 
   input.value = "";
   setSubmitEnabled(false);
@@ -217,54 +280,46 @@ async function handleSubmit() {
   try {
     const context = await getContext();
 
-    // If this looks like a summarization request, capture full page text
+    // If summarization request, capture full page text
     if (isSummarizationRequest(msg)) {
+      setStatus("Reading page...");
       const pageText = await getPageText();
-      if (pageText) {
-        context.full_page_text = pageText;
-      }
+      if (pageText) context.full_page_text = pageText;
     }
 
-    // Update site badge
+    // Update UI badges
+    const siteLabels = {
+      gmail: "Gmail", google_sheets: "Sheets", google_docs: "Docs",
+      google_slides: "Slides", browser: "Browser",
+    };
+    const siteName = siteLabels[context.app] || "Browser";
     const badge = document.getElementById("tsifl-site-badge");
-    const siteLabels = { gmail: "Gmail", google_sheets: "Sheets", google_docs: "Docs", google_slides: "Slides", browser: "Browser" };
-    if (badge) badge.textContent = siteLabels[context.app] || "Browser";
+    if (badge) badge.textContent = siteName;
     const userBar = document.getElementById("tsifl-user-bar");
-    if (userBar && currentUser) userBar.textContent = `${currentUser.email} \u00b7 ${siteLabels[context.app] || "Browser"}`;
+    if (userBar && currentUser) userBar.textContent = `${currentUser.email} \u00b7 ${siteName}`;
 
-    const chatBody = JSON.stringify({
-      user_id: currentUser.id,
-      message: msg,
-      context,
-      session_id: sessionId,
-      images,
+    setStatus("Thinking...");
+
+    // Send to backend with timeout
+    const controller = new AbortController();
+    const fetchTimeout = setTimeout(() => controller.abort(), 90000);
+
+    const resp = await fetch(`${BACKEND_URL}/chat/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: currentUser.id,
+        message: msg,
+        context,
+        session_id: sessionId,
+        images,
+      }),
+      signal: controller.signal,
     });
+    clearTimeout(fetchTimeout);
 
-    // Fetch with timeout and single retry
-    let resp;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 90000); // 90s timeout
-        resp = await fetch(`${BACKEND_URL}/chat/`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: chatBody,
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
-        if (resp.ok) break;
-      } catch (e) {
-        if (attempt === 0 && e.name === "AbortError") {
-          setStatus("Retrying...");
-          continue;
-        }
-        throw e;
-      }
-    }
-
-    if (!resp || !resp.ok) {
-      const err = resp ? await resp.json().catch(() => ({ detail: resp.statusText })) : { detail: "Request timed out" };
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: resp.statusText }));
       appendMessage("assistant", `Error: ${err.detail || "Request failed"}`);
       setSubmitEnabled(true);
       setStatus("Ready");
@@ -272,33 +327,54 @@ async function handleSubmit() {
     }
 
     const result = await resp.json();
-    appendMessage("assistant", result.reply);
 
-    if (result.tasks_remaining >= 0) {
-      document.getElementById("tsifl-tasks-remaining").textContent = `${result.tasks_remaining} tasks left`;
+    // Show the reply
+    if (result.reply) {
+      appendMessage("assistant", result.reply);
     }
 
-    // Execute actions
-    const actions = result.actions?.length ? result.actions : (result.action?.type ? [result.action] : []);
+    // Update tasks count
+    if (result.tasks_remaining >= 0) {
+      const tasksEl = document.getElementById("tsifl-tasks-remaining");
+      if (tasksEl) tasksEl.textContent = `${result.tasks_remaining} tasks left`;
+    }
+
+    // Execute ALL actions — handle both single and multiple action formats
+    const actions = [];
+    if (result.actions && result.actions.length > 0) {
+      actions.push(...result.actions);
+    } else if (result.action && result.action.type) {
+      actions.push(result.action);
+    }
+
     for (const action of actions) {
       await executeAction(action);
     }
+
   } catch (e) {
-    appendMessage("assistant", `Error: ${e.message}`);
+    if (e.name === "AbortError") {
+      appendMessage("assistant", "Request timed out. Please try again.");
+    } else {
+      appendMessage("assistant", `Error: ${e.message}`);
+    }
   }
 
   setSubmitEnabled(true);
   setStatus("Ready");
 }
 
-// ── Action Execution ─────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+// ACTION EXECUTION
+// ══════════════════════════════════════════════════════════════════════════
 
 async function executeAction(action) {
+  if (!action || !action.type) return;
   const { type, payload } = action;
-  if (!type || !payload) return;
+  if (!payload) return;
 
   // Gmail backend-proxied actions
-  if (["draft_email", "send_email", "reply_email", "search_emails"].includes(type)) {
+  const gmailActions = ["draft_email", "send_email", "reply_email", "search_emails"];
+  if (gmailActions.includes(type)) {
     try {
       const endpoint = type === "search_emails" ? "/gmail/search"
         : type === "draft_email" ? "/gmail/draft"
@@ -316,7 +392,7 @@ async function executeAction(action) {
     return;
   }
 
-  // All browser/DOM actions — route through background service worker for reliability
+  // Browser/DOM actions — route through background.js
   const browserActions = [
     "open_url", "open_url_current_tab", "search_web",
     "navigate_back", "navigate_forward",
@@ -325,18 +401,7 @@ async function executeAction(action) {
 
   if (browserActions.includes(type)) {
     try {
-      const result = await new Promise((resolve, reject) => {
-        chrome.runtime.sendMessage(
-          { action: "execute_browser_action", type, payload },
-          (response) => {
-            if (chrome.runtime.lastError) {
-              reject(new Error(chrome.runtime.lastError.message));
-            } else {
-              resolve(response);
-            }
-          }
-        );
-      });
+      const result = await sendToBackground("execute_browser_action", type, payload);
       appendMessage("action", `${type}: ${result?.message || "Done"}`);
     } catch (e) {
       appendMessage("action", `${type}: Failed \u2014 ${e.message}`);
@@ -344,7 +409,7 @@ async function executeAction(action) {
     return;
   }
 
-  // launch_app — request backend to open a local app
+  // Launch local app
   if (type === "launch_app") {
     try {
       const resp = await fetch(`${BACKEND_URL}/launch-app`, {
@@ -360,18 +425,59 @@ async function executeAction(action) {
     return;
   }
 
-  // Fallback for unknown action types
+  // Open notes
+  if (type === "open_notes") {
+    try {
+      await sendToBackground("execute_browser_action", "open_url", { url: NOTES_URL });
+      appendMessage("action", "Opened Notes");
+    } catch (e) {
+      appendMessage("action", `open_notes: ${e.message}`);
+    }
+    return;
+  }
+
+  // Fallback — show action as text
   appendMessage("action", `${type}: Done`);
 }
 
-// ── UI Helpers ───────────────────────────────────────────────────────────
+/**
+ * Send message to background.js and wait for response.
+ * This is the critical path for ALL browser actions.
+ */
+function sendToBackground(action, type, payload) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error("Background script did not respond within 10s"));
+    }, 10000);
+
+    try {
+      chrome.runtime.sendMessage(
+        { action, type, payload },
+        (response) => {
+          clearTimeout(timeout);
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+          } else {
+            resolve(response || { success: true, message: "Done" });
+          }
+        }
+      );
+    } catch (e) {
+      clearTimeout(timeout);
+      reject(e);
+    }
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// UI HELPERS
+// ══════════════════════════════════════════════════════════════════════════
 
 function appendMessage(role, text, imageCount) {
   const h = document.getElementById("tsifl-chat-history");
   const d = document.createElement("div");
   d.className = `tsifl-msg ${role}`;
 
-  // Render markdown-like formatting for assistant messages
   if (role === "assistant" && text) {
     d.innerHTML = renderMarkdown(text);
   } else {
@@ -389,7 +495,6 @@ function appendMessage(role, text, imageCount) {
 }
 
 function renderMarkdown(text) {
-  // Basic markdown rendering — bold, italic, code, links
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -402,20 +507,35 @@ function renderMarkdown(text) {
 
 function setStatus(text) {
   const bar = document.getElementById("tsifl-status-bar");
-  bar.textContent = text;
-  bar.className = text.includes("Thinking") || text.includes("Retrying") ? "thinking" : "";
+  if (bar) {
+    bar.textContent = text;
+    bar.className = text.includes("Thinking") || text.includes("Reading") ? "thinking" : "";
+  }
 }
 
 function setSubmitEnabled(enabled) {
-  document.getElementById("tsifl-submit-btn").disabled = !enabled;
+  const btn = document.getElementById("tsifl-submit-btn");
+  if (btn) btn.disabled = !enabled;
 }
 
-// ── Event Wiring ─────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+// EVENT WIRING
+// ══════════════════════════════════════════════════════════════════════════
 
 document.getElementById("tsifl-login-btn").onclick = handleSignIn;
 document.getElementById("tsifl-signup-btn").onclick = handleSignUp;
 document.getElementById("tsifl-submit-btn").onclick = handleSubmit;
 document.getElementById("tsifl-attach-btn").onclick = () => document.getElementById("tsifl-image-input").click();
+
+// Notes button
+const notesBtn = document.getElementById("tsifl-notes-btn");
+if (notesBtn) {
+  notesBtn.onclick = () => {
+    sendToBackground("execute_browser_action", "open_url", { url: NOTES_URL }).catch(() => {
+      window.open(NOTES_URL, "_blank");
+    });
+  };
+}
 
 document.getElementById("tsifl-auth-password").addEventListener("keydown", (e) => {
   if (e.key === "Enter") handleSignIn();
@@ -449,5 +569,7 @@ document.getElementById("tsifl-user-bar").addEventListener("dblclick", () => {
   showLogin();
 });
 
-// ── Init ─────────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════════════════════════
 checkAuth();

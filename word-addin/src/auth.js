@@ -69,7 +69,11 @@ async function restoreSessionFromBackend() {
  */
 export async function getCurrentUser() {
   const { data: { session } } = await supabase.auth.getSession();
-  if (session?.user) return session.user;
+  if (session?.user) {
+    // Already logged in locally — push tokens to backend so other add-ins can use them
+    syncSessionToBackend(session);
+    return session.user;
+  }
   const restored = await restoreSessionFromBackend();
   return restored ?? null;
 }

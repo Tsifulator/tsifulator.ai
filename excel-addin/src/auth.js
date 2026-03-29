@@ -72,7 +72,11 @@ async function restoreSessionFromBackend() {
 export async function getCurrentUser() {
   // 1. Check local session first (fast path)
   const { data: { session } } = await supabase.auth.getSession();
-  if (session?.user) return session.user;
+  if (session?.user) {
+    // Already logged in locally — push tokens to backend so other add-ins can use them
+    syncSessionToBackend(session);
+    return session.user;
+  }
 
   // 2. No local session — try restoring from backend (shared login)
   const restored = await restoreSessionFromBackend();

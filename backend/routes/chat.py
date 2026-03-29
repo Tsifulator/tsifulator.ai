@@ -12,11 +12,16 @@ from services.memory import save_message, get_recent_history, is_connected
 
 router = APIRouter()
 
+class ImageData(BaseModel):
+    media_type: str = "image/png"
+    data: str  # base64-encoded image data
+
 class ChatRequest(BaseModel):
     user_id: str
     message: str
     context: dict = {}
     session_id: str = ""
+    images: list[ImageData] = []
 
 class ChatResponse(BaseModel):
     reply: str
@@ -68,12 +73,14 @@ async def chat(request: ChatRequest):
         session_id=request.session_id
     )
 
-    # 4. Send to Claude with full history context
+    # 4. Send to Claude with full history context (+ images if attached)
+    images = [{"media_type": img.media_type, "data": img.data} for img in request.images] if request.images else []
     result = await get_claude_response(
         message=request.message,
         context=request.context,
         session_id=request.session_id,
-        history=history
+        history=history,
+        images=images
     )
 
     # 5. Save Claude's reply

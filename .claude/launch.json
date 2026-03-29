@@ -19,6 +19,12 @@
       "runtimeArgs": ["start"],
       "cwd": "excel-addin",
       "port": 3000
+    },
+    {
+      "name": "brand-preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["http-server", "brand", "-p", "8888", "-c-1"],
+      "port": 8888
     }
   ]
 }

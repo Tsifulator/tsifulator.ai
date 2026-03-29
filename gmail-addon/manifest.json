@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "tsifl — AI Assistant",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "Agentic AI Sandbox for Financial Analysts — works on any webpage.",
   "minimum_chrome_version": "114",
   "permissions": ["activeTab", "storage", "sidePanel", "scripting", "tabs"],
@@ -19,13 +19,13 @@
       "16": "icons/icon-16.png",
       "32": "icons/icon-32.png"
     },
-    "default_title": "tsifl"
+    "default_title": "tsifl — Click to open AI sidebar"
   },
   "commands": {
     "toggle-sidebar": {
       "suggested_key": {
-        "default": "Ctrl+Shift+T",
-        "mac": "Command+Shift+T"
+        "default": "Ctrl+Shift+E",
+        "mac": "Command+Shift+E"
       },
       "description": "Toggle tsifl sidebar"
     }

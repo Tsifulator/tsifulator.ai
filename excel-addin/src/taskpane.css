@@ -231,6 +231,7 @@ body {
   flex-direction: column;
   gap: 6px;
   flex-shrink: 0;
+  transition: background 0.15s, outline 0.15s;
 }
 
 #user-input {
@@ -256,6 +257,31 @@ body {
 
 #user-input::placeholder { color: var(--text-dim); }
 
+#input-actions {
+  display: flex;
+  gap: 6px;
+}
+
+#attach-btn {
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+#attach-btn:hover {
+  background: var(--blue-light);
+  color: var(--blue);
+  border-color: var(--blue);
+}
+
 #submit-btn {
   background: var(--blue);
   color: white;
@@ -267,6 +293,7 @@ body {
   cursor: pointer;
   transition: background 0.15s;
   letter-spacing: 0.2px;
+  flex: 1;
 }
 
 #submit-btn:hover { background: var(--blue-hover); }
@@ -274,6 +301,73 @@ body {
   background: var(--surface-2);
   color: var(--text-dim);
   cursor: not-allowed;
+}
+
+/* Image preview bar */
+#image-preview-bar {
+  display: flex;
+  gap: 6px;
+  padding: 4px 0;
+  flex-wrap: wrap;
+}
+
+.image-preview-item {
+  position: relative;
+  display: inline-block;
+}
+
+.image-preview-item img {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.image-preview-item .remove-img {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 16px;
+  height: 16px;
+  background: var(--red);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* Image badge in chat messages */
+.image-badge {
+  display: inline-block;
+  background: var(--blue-dim);
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-top: 6px;
+  border: 1px solid rgba(13, 94, 175, 0.2);
+}
+
+/* Image in chat messages */
+.message img.chat-image {
+  max-width: 100%;
+  max-height: 150px;
+  border-radius: 4px;
+  margin-top: 6px;
+  display: block;
+  border: 1px solid var(--border);
+}
+
+/* Attach button when images are pending */
+#attach-btn:has(+ #submit-btn) {
+  min-width: 32px;
+  text-align: center;
 }
 
 #status-bar {

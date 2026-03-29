@@ -45,5 +45,11 @@ module.exports = {
       },
     },
     headers: { "Access-Control-Allow-Origin": "*" },
+    proxy: [{
+      context: ["/local-api"],
+      target: "http://localhost:8000",
+      pathRewrite: { "^/local-api": "" },
+      secure: false,
+    }],
   },
 };
