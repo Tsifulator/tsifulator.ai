@@ -81,13 +81,14 @@ When working across sheets:
 - Always create named ranges BEFORE any formulas that reference them
 
 ## DAVERAGE / Ratings Pattern
-For a ratings sheet with 5 products and Comfort/Fit/Style columns, follow these steps:
+For a ratings sheet with 5 products and Comfort/Fit/Style columns, follow these steps IN ORDER:
 
-Step 1 — Navigate to the Criteria sheet and write one wildcard per product below each "Product" header:
+Step 1 — create_named_range (do this FIRST, before any navigation or formula writing):
+  name="Survey", range="A4:G40", sheet="Satisfaction Survey"
+  Without this step, every DAVERAGE formula returns #NAME? — the workbook analysis in example17 confirms this exact failure.
+
+Step 2 — Navigate to Criteria sheet and write wildcards:
   A2 = "rug*", A5 = "com*", A8 = "laz*", A11 = "ser*", A14 = "gli*"
-
-Step 2 — Create the Survey named range. This is REQUIRED — if you skip it every DAVERAGE formula
-  will show a #NAME? error. Use: create_named_range name="Survey" range="A4:G40" sheet="Satisfaction Survey"
 
 Step 3 — Navigate to Average Ratings. Write the DAVERAGE in column B for each product row, then
   fill_right that row to cover Comfort/Fit/Style (B→D). Each row has a different criteria range so
@@ -105,12 +106,13 @@ Step 5 — Rating column: write =IFS(E5>=9,$H$5,E5>=8,$H$6,E5>=5,$H$7,E5<5,$H$8)
 For Inventory side tables — look at the workbook context to find exact rows before writing:
 - VLOOKUP for quantity by Product ID (check which row has the empty lookup output cell):
   write_cell {cell:"K6", formula:"=VLOOKUP(K5,$A$4:$H$50,5,FALSE)", sheet:"Inventory"}
-- SUMIFS for specific product+color counts — write ALL rows that have labels:
+- SUMIFS for specific product+color counts — write BOTH rows L13 AND L14 (both are required):
   write_cell {cell:"L13", formula:"=SUMIFS($E$4:$E$50,$B$4:$B$50,J13,$C$4:$C$50,K13)", sheet:"Inventory"}
   write_cell {cell:"L14", formula:"=SUMIFS($E$4:$E$50,$B$4:$B$50,J14,$C$4:$C$50,K14)", sheet:"Inventory"}
-- For a "Handbag Products" total (handbags have blank F column = no M/W):
+  Do not skip L14 — it needs the same formula pattern as L13, referencing J14 and K14.
+- For a "Handbag Products" total at L16 (handbags have blank F column = no M/W gender value):
   write_cell {cell:"L16", formula:"=SUMPRODUCT(($F$4:$F$50=\"\")*($E$4:$E$50))", sheet:"Inventory"}
-  The formula uses =\"\" (empty string) to match blank cells — NOT \"=\" which returns 0 always.
+  Use SUMPRODUCT with =\"\" to match blank F cells — SUMIFS with \"=\" returns 0 and is wrong.
 
 ## Shipment Times — Days and Arrival Day Columns
 D5 already has =C5-B5 and E5 already has =TEXT(C5,"dddd"). After navigating to Shipment Times:
@@ -119,9 +121,11 @@ D5 already has =C5-B5 and E5 already has =TEXT(C5,"dddd"). After navigating to S
 These four actions fill the 70 empty cells that would otherwise remain blank.
 
 ## Email Formula Pattern
+The E-Mail sheet may be hidden — navigate_sheet will unhide it automatically.
 Navigate to the E-Mail sheet, then write the email formula in C5 and fill_down to C8:
 - Formula: =LOWER(LEFT(A5,1))&LOWER(B5)&"@wearever.com"
 - fill_down C5:C8 fills all four employees
+- Never skip this section even if the sheet is marked hidden in the workbook summary
 
 ## Financial Model Guidelines
 - Header rows: color "#0D5EAF" background, font_color "white", bold true, font_size 11

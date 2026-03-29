@@ -8,7 +8,7 @@ import { getCurrentUser, signIn, signUp, signOut } from "./auth.js";
 
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v17";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v18";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -336,6 +336,13 @@ async function executeAction(action) {
     lastNavigatedSheet = payload.sheet;   // track for subsequent write actions
     await Excel.run(async (ctx) => {
       const ws = ctx.workbook.worksheets.getItem(payload.sheet);
+      // Unhide sheet first — activate() throws on hidden sheets
+      ws.load("visibility");
+      await ctx.sync();
+      if (ws.visibility !== Excel.SheetVisibility.visible) {
+        ws.visibility = Excel.SheetVisibility.visible;
+        await ctx.sync();
+      }
       ws.activate();
       await ctx.sync();
     });

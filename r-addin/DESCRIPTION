@@ -12,5 +12,7 @@ Imports:
     jsonlite,
     rstudioapi,
     base64enc,
-    grDevices
+    grDevices,
+    grid,
+    png
 Encoding: UTF-8

@@ -1,0 +1,24 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Backend API",
+      "runtimeExecutable": "/opt/homebrew/opt/python@3.13/bin/python3.13",
+      "runtimeArgs": ["-m", "uvicorn", "main:app", "--reload"],
+      "cwd": "/Users/nicholastsiflikiotis/tsifulator.ai/backend",
+      "env": {
+        "PYTHONPATH": "/Users/nicholastsiflikiotis/tsifulator.ai/backend",
+        "VIRTUAL_ENV": "/Users/nicholastsiflikiotis/tsifulator.ai/backend/.venv",
+        "PATH": "/Users/nicholastsiflikiotis/tsifulator.ai/backend/.venv/bin:/opt/homebrew/bin:/usr/bin:/bin"
+      },
+      "port": 8000
+    },
+    {
+      "name": "Excel Add-in",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start"],
+      "cwd": "excel-addin",
+      "port": 3000
+    }
+  ]
+}

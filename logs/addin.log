@@ -26,3 +26,633 @@ modules by path ./src/ 20.5 KiB
     ./src/taskpane.css 2.24 KiB [built] [code generated]
     ./node_modules/css-loader/dist/cjs.js!./src/taskpane.css 6.1 KiB [built] [code generated]
 webpack 5.105.4 compiled successfully in 375 ms
+assets by status 5.68 KiB [cached] 2 assets
+assets by status 2.14 MiB [emitted]
+  assets by path assets/*.png 14.4 KiB
+    asset assets/tsifl-wordmark.png 11.3 KiB [emitted] [from: assets/tsifl-wordmark.png] [copied]
+    asset assets/icon-128.png 1.62 KiB [emitted] [from: assets/icon-128.png] [copied]
+    asset assets/icon-80.png 955 bytes [emitted] [from: assets/icon-80.png] [copied]
+    + 2 assets
+  assets by path *.js 2.13 MiB
+    assets by chunk 1.08 MiB (name: taskpane) 2 assets
+    assets by chunk 1.05 MiB (name: auth) 2 assets
+  assets by path *.json 60 bytes
+    asset taskpane.066c6c95acf3cce7d995.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.066c6c95acf3cce7d995.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.08 MiB = taskpane.js 1.08 MiB taskpane.066c6c95acf3cce7d995.hot-update.js 872 bytes
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.066c6c95acf3cce7d995.hot-update.js 868 bytes
+cached modules 920 KiB [cached] 66 modules
+runtime modules 56 KiB 25 modules
+webpack 5.105.4 compiled successfully in 105 ms
+assets by status 18.5 KiB [cached] 6 assets
+assets by status 2.13 MiB [emitted]
+  assets by path *.js 2.13 MiB
+    assets by chunk 1.08 MiB (name: taskpane)
+      asset taskpane.js 1.08 MiB [emitted] (name: taskpane)
+      asset taskpane.d8445a175f4e1af06843.hot-update.js 872 bytes [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.d8445a175f4e1af06843.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.d8445a175f4e1af06843.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.d8445a175f4e1af06843.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+  asset taskpane.html 1.68 KiB [emitted]
+Entrypoint taskpane 1.08 MiB = taskpane.js 1.08 MiB taskpane.d8445a175f4e1af06843.hot-update.js 872 bytes
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.d8445a175f4e1af06843.hot-update.js 868 bytes
+cached modules 920 KiB [cached] 66 modules
+runtime modules 56 KiB 25 modules
+webpack 5.105.4 compiled successfully in 38 ms
+assets by status 18.5 KiB [cached] 6 assets
+assets by status 2.13 MiB [emitted]
+  assets by path *.js 2.13 MiB
+    assets by chunk 1.08 MiB (name: taskpane)
+      asset taskpane.js 1.08 MiB [emitted] (name: taskpane)
+      asset taskpane.097497677b876651f75c.hot-update.js 872 bytes [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.097497677b876651f75c.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.097497677b876651f75c.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.097497677b876651f75c.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+  asset taskpane.html 1.72 KiB [emitted]
+Entrypoint taskpane 1.08 MiB = taskpane.js 1.08 MiB taskpane.097497677b876651f75c.hot-update.js 872 bytes
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.097497677b876651f75c.hot-update.js 868 bytes
+cached modules 920 KiB [cached] 66 modules
+runtime modules 56 KiB 25 modules
+webpack 5.105.4 compiled successfully in 34 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.14 MiB [emitted]
+  assets by path *.js 2.14 MiB
+    assets by chunk 1.09 MiB (name: taskpane)
+      asset taskpane.js 1.08 MiB [emitted] (name: taskpane)
+      asset taskpane.20dbf0dfcdfe868cf011.hot-update.js 8.76 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.20dbf0dfcdfe868cf011.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.20dbf0dfcdfe868cf011.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.20dbf0dfcdfe868cf011.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.09 MiB = taskpane.js 1.08 MiB taskpane.20dbf0dfcdfe868cf011.hot-update.js 8.76 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.20dbf0dfcdfe868cf011.hot-update.js 868 bytes
+cached modules 914 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./node_modules/css-loader/dist/cjs.js!./src/taskpane.css 6.07 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 41 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.14 MiB [emitted]
+  assets by path *.js 2.14 MiB
+    assets by chunk 1.09 MiB (name: taskpane)
+      asset taskpane.js 1.08 MiB [emitted] (name: taskpane)
+      asset taskpane.4f8228a8478317fcac8b.hot-update.js 8.72 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.4f8228a8478317fcac8b.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.4f8228a8478317fcac8b.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.4f8228a8478317fcac8b.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.09 MiB = taskpane.js 1.08 MiB taskpane.4f8228a8478317fcac8b.hot-update.js 8.72 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.4f8228a8478317fcac8b.hot-update.js 868 bytes
+cached modules 914 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./node_modules/css-loader/dist/cjs.js!./src/taskpane.css 6.03 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 30 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.16 MiB [emitted]
+  assets by path *.js 2.16 MiB
+    assets by chunk 1.12 MiB (name: taskpane)
+      asset taskpane.js 1.09 MiB [emitted] (name: taskpane)
+      asset taskpane.3bbd777153dbdf776b95.hot-update.js 25 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.3bbd777153dbdf776b95.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.3bbd777153dbdf776b95.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.3bbd777153dbdf776b95.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.12 MiB = taskpane.js 1.09 MiB taskpane.3bbd777153dbdf776b95.hot-update.js 25 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.3bbd777153dbdf776b95.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 22.6 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 491 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.17 MiB [emitted]
+  assets by path *.js 2.17 MiB
+    assets by chunk 1.12 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.68fb7594b65e9adac44d.hot-update.js 26.2 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.68fb7594b65e9adac44d.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.68fb7594b65e9adac44d.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.68fb7594b65e9adac44d.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.12 MiB = taskpane.js 1.1 MiB taskpane.68fb7594b65e9adac44d.hot-update.js 26.2 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.68fb7594b65e9adac44d.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 23.9 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 139 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.17 MiB [emitted]
+  assets by path *.js 2.17 MiB
+    assets by chunk 1.12 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.5d23de0b0bb3c0156668.hot-update.js 26.3 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.5d23de0b0bb3c0156668.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.5d23de0b0bb3c0156668.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.5d23de0b0bb3c0156668.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.12 MiB = taskpane.js 1.1 MiB taskpane.5d23de0b0bb3c0156668.hot-update.js 26.3 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.5d23de0b0bb3c0156668.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 24 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 76 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.17 MiB [emitted]
+  assets by path *.js 2.17 MiB
+    assets by chunk 1.12 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.59527ec599c0152a1647.hot-update.js 26.4 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.59527ec599c0152a1647.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.59527ec599c0152a1647.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.59527ec599c0152a1647.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.12 MiB = taskpane.js 1.1 MiB taskpane.59527ec599c0152a1647.hot-update.js 26.4 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.59527ec599c0152a1647.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 24.1 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 85 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.17 MiB [emitted]
+  assets by path *.js 2.17 MiB
+    assets by chunk 1.12 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.706a22cc51f6e031de7a.hot-update.js 27.2 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.706a22cc51f6e031de7a.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.706a22cc51f6e031de7a.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.706a22cc51f6e031de7a.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.12 MiB = taskpane.js 1.1 MiB taskpane.706a22cc51f6e031de7a.hot-update.js 27.2 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.706a22cc51f6e031de7a.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 24.8 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 73 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.17 MiB [emitted]
+  assets by path *.js 2.17 MiB
+    assets by chunk 1.12 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.4083fa6aa57860025ed1.hot-update.js 27.6 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.4083fa6aa57860025ed1.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.4083fa6aa57860025ed1.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.4083fa6aa57860025ed1.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.12 MiB = taskpane.js 1.1 MiB taskpane.4083fa6aa57860025ed1.hot-update.js 27.6 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.4083fa6aa57860025ed1.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 25.1 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 88 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.17 MiB [emitted]
+  assets by path *.js 2.17 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.3dcfe7225542957d04bd.hot-update.js 28 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.3dcfe7225542957d04bd.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.3dcfe7225542957d04bd.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.3dcfe7225542957d04bd.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.3dcfe7225542957d04bd.hot-update.js 28 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.3dcfe7225542957d04bd.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 25.5 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 72 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.17 MiB [emitted]
+  assets by path *.js 2.17 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.a14d28c90b31496513e2.hot-update.js 29.4 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.a14d28c90b31496513e2.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.a14d28c90b31496513e2.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.a14d28c90b31496513e2.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.a14d28c90b31496513e2.hot-update.js 29.4 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.a14d28c90b31496513e2.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 26.9 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 72 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.17 MiB [emitted]
+  assets by path *.js 2.17 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.73145d2171499ffb9ab7.hot-update.js 29.4 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.73145d2171499ffb9ab7.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.73145d2171499ffb9ab7.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.73145d2171499ffb9ab7.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.73145d2171499ffb9ab7.hot-update.js 29.4 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.73145d2171499ffb9ab7.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 26.9 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 129 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.17 MiB [emitted]
+  assets by path *.js 2.17 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.cd90833a0fecc3932346.hot-update.js 28.1 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.cd90833a0fecc3932346.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.cd90833a0fecc3932346.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.cd90833a0fecc3932346.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.cd90833a0fecc3932346.hot-update.js 28.1 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.cd90833a0fecc3932346.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 25.7 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 121 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.17 MiB [emitted]
+  assets by path *.js 2.17 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.c7e36ccce42a55d7fa9e.hot-update.js 28.1 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.c7e36ccce42a55d7fa9e.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.c7e36ccce42a55d7fa9e.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.c7e36ccce42a55d7fa9e.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.c7e36ccce42a55d7fa9e.hot-update.js 28.1 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.c7e36ccce42a55d7fa9e.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 25.7 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 46 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.17 MiB [emitted]
+  assets by path *.js 2.17 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.ea39ed49ea7318943b2d.hot-update.js 28.2 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.ea39ed49ea7318943b2d.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.ea39ed49ea7318943b2d.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.ea39ed49ea7318943b2d.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.ea39ed49ea7318943b2d.hot-update.js 28.2 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.ea39ed49ea7318943b2d.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 25.7 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 294 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.17 MiB [emitted]
+  assets by path *.js 2.17 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.ff274adeb7905ac0e643.hot-update.js 28.2 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.ff274adeb7905ac0e643.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.ff274adeb7905ac0e643.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.ff274adeb7905ac0e643.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.ff274adeb7905ac0e643.hot-update.js 28.2 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.ff274adeb7905ac0e643.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 25.8 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 92 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.17 MiB [emitted]
+  assets by path *.js 2.17 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.49fde456798f3ebfe0e1.hot-update.js 28.6 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.49fde456798f3ebfe0e1.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.49fde456798f3ebfe0e1.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.49fde456798f3ebfe0e1.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.49fde456798f3ebfe0e1.hot-update.js 28.6 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.49fde456798f3ebfe0e1.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 26.2 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 89 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.17 MiB [emitted]
+  assets by path *.js 2.17 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.17f83d9505dc9878037c.hot-update.js 29.5 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.17f83d9505dc9878037c.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.17f83d9505dc9878037c.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.17f83d9505dc9878037c.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.17f83d9505dc9878037c.hot-update.js 29.5 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.17f83d9505dc9878037c.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 27 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 161 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.17 MiB [emitted]
+  assets by path *.js 2.17 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.185d67e1e1c7ea6f421d.hot-update.js 30 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.185d67e1e1c7ea6f421d.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.185d67e1e1c7ea6f421d.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.185d67e1e1c7ea6f421d.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.185d67e1e1c7ea6f421d.hot-update.js 30 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.185d67e1e1c7ea6f421d.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 27.5 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 76 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.17 MiB [emitted]
+  assets by path *.js 2.17 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.505847b84fb668024a0a.hot-update.js 30 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.505847b84fb668024a0a.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.505847b84fb668024a0a.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.505847b84fb668024a0a.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.505847b84fb668024a0a.hot-update.js 30 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.505847b84fb668024a0a.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 27.5 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 46 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.17 MiB [emitted]
+  assets by path *.js 2.17 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.f9d44cbf7d8ac066b872.hot-update.js 30.2 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.f9d44cbf7d8ac066b872.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.f9d44cbf7d8ac066b872.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.f9d44cbf7d8ac066b872.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.f9d44cbf7d8ac066b872.hot-update.js 30.2 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.f9d44cbf7d8ac066b872.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 27.7 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 70 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.17 MiB [emitted]
+  assets by path *.js 2.17 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.6e944a337964381127e2.hot-update.js 30.2 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.6e944a337964381127e2.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.6e944a337964381127e2.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.6e944a337964381127e2.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.6e944a337964381127e2.hot-update.js 30.2 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.6e944a337964381127e2.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 27.7 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 52 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.17 MiB [emitted]
+  assets by path *.js 2.17 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.a04c3e1560d4f2d525c1.hot-update.js 30.4 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.a04c3e1560d4f2d525c1.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.a04c3e1560d4f2d525c1.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.a04c3e1560d4f2d525c1.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.a04c3e1560d4f2d525c1.hot-update.js 30.4 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.a04c3e1560d4f2d525c1.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 27.9 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 145 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.17 MiB [emitted]
+  assets by path *.js 2.17 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.9613991c1df4251ca72d.hot-update.js 30.4 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.9613991c1df4251ca72d.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.9613991c1df4251ca72d.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.9613991c1df4251ca72d.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.9613991c1df4251ca72d.hot-update.js 30.4 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.9613991c1df4251ca72d.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 27.9 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 60 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.18 MiB [emitted]
+  assets by path *.js 2.18 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.8002e3f497714cd4264a.hot-update.js 30.5 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.8002e3f497714cd4264a.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.8002e3f497714cd4264a.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.8002e3f497714cd4264a.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.8002e3f497714cd4264a.hot-update.js 30.5 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.8002e3f497714cd4264a.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 28 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 174 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.18 MiB [emitted]
+  assets by path *.js 2.18 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.72aee00bb2fafd927017.hot-update.js 30.8 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.72aee00bb2fafd927017.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.72aee00bb2fafd927017.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.72aee00bb2fafd927017.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.72aee00bb2fafd927017.hot-update.js 30.8 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.72aee00bb2fafd927017.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 28.3 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 51 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.18 MiB [emitted]
+  assets by path *.js 2.18 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.39b0db8e43ab6041030d.hot-update.js 30.8 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.39b0db8e43ab6041030d.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.39b0db8e43ab6041030d.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.39b0db8e43ab6041030d.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.39b0db8e43ab6041030d.hot-update.js 30.8 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.39b0db8e43ab6041030d.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 28.3 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 29 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.18 MiB [emitted]
+  assets by path *.js 2.18 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.8e6c163436d03da8b493.hot-update.js 30.8 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.8e6c163436d03da8b493.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.8e6c163436d03da8b493.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.8e6c163436d03da8b493.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.8e6c163436d03da8b493.hot-update.js 30.8 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.8e6c163436d03da8b493.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 28.3 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 65 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.18 MiB [emitted]
+  assets by path *.js 2.18 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.e2efb00b1dbbe2eb2aee.hot-update.js 30.8 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.e2efb00b1dbbe2eb2aee.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.e2efb00b1dbbe2eb2aee.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.e2efb00b1dbbe2eb2aee.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.e2efb00b1dbbe2eb2aee.hot-update.js 30.8 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.e2efb00b1dbbe2eb2aee.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 28.3 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 72 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.18 MiB [emitted]
+  assets by path *.js 2.18 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.afd891e3ae8e8cd40797.hot-update.js 30.8 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.afd891e3ae8e8cd40797.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.afd891e3ae8e8cd40797.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.afd891e3ae8e8cd40797.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.afd891e3ae8e8cd40797.hot-update.js 30.8 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.afd891e3ae8e8cd40797.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 28.3 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 269 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.18 MiB [emitted]
+  assets by path *.js 2.18 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.af2ed8d9f0d7a8a5456d.hot-update.js 30.8 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.af2ed8d9f0d7a8a5456d.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.af2ed8d9f0d7a8a5456d.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.af2ed8d9f0d7a8a5456d.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.af2ed8d9f0d7a8a5456d.hot-update.js 30.8 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.af2ed8d9f0d7a8a5456d.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 28.3 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 141 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.18 MiB [emitted]
+  assets by path *.js 2.18 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.1e9d1e083fa4844af5ee.hot-update.js 30.8 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.1e9d1e083fa4844af5ee.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.1e9d1e083fa4844af5ee.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.1e9d1e083fa4844af5ee.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.1e9d1e083fa4844af5ee.hot-update.js 30.8 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.1e9d1e083fa4844af5ee.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 28.3 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 440 ms
+assets by status 20.2 KiB [cached] 7 assets
+assets by status 2.18 MiB [emitted]
+  assets by path *.js 2.18 MiB
+    assets by chunk 1.13 MiB (name: taskpane)
+      asset taskpane.js 1.1 MiB [emitted] (name: taskpane)
+      asset taskpane.d82f2ba7b4c1586a0cf3.hot-update.js 31.1 KiB [emitted] [immutable] [hmr] (name: taskpane)
+    assets by chunk 1.05 MiB (name: auth)
+      asset auth.js 1.04 MiB [emitted] (name: auth)
+      asset auth.d82f2ba7b4c1586a0cf3.hot-update.js 868 bytes [emitted] [immutable] [hmr] (name: auth)
+  assets by path *.json 60 bytes
+    asset taskpane.d82f2ba7b4c1586a0cf3.hot-update.json 32 bytes [emitted] [immutable] [hmr]
+    asset auth.d82f2ba7b4c1586a0cf3.hot-update.json 28 bytes [emitted] [immutable] [hmr]
+Entrypoint taskpane 1.13 MiB = taskpane.js 1.1 MiB taskpane.d82f2ba7b4c1586a0cf3.hot-update.js 31.1 KiB
+Entrypoint auth 1.05 MiB = auth.js 1.04 MiB auth.d82f2ba7b4c1586a0cf3.hot-update.js 868 bytes
+cached modules 909 KiB [cached] 65 modules
+runtime modules 56 KiB 25 modules
+./src/taskpane.js 28.6 KiB [built] [code generated]
+webpack 5.105.4 compiled successfully in 60 ms

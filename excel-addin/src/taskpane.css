@@ -45,11 +45,10 @@ body {
 }
 
 #login-logo {
-  font-size: 22px;
-  font-weight: 800;
-  color: var(--blue);
-  letter-spacing: -0.5px;
-  margin-bottom: 2px;
+  width: 110px;
+  height: auto;
+  margin-bottom: 4px;
+  display: block;
 }
 
 #login-tagline {
@@ -138,11 +137,10 @@ body {
   flex-shrink: 0;
 }
 
-#logo {
-  font-weight: 700;
-  font-size: 13px;
-  color: var(--blue);
-  letter-spacing: -0.3px;
+#logo-img {
+  height: 18px;
+  width: auto;
+  display: block;
 }
 
 #header-right { display: flex; align-items: center; gap: 8px; }
