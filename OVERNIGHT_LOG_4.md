@@ -81,7 +81,35 @@ Browser context confirmed to have full executable action list (open_url, search_
 
 ---
 
+## Phase 7: Continuous Improvement — Integration Tests
+**Time:** 00:10 UTC
+
+### Live Backend Test Results (9/9 passing):
+
+| # | App | Prompt | Expected | Got | Status |
+|---|-----|--------|----------|-----|--------|
+| 1 | Browser | "open google.com" | open_url action | open_url_current_tab → google.com | PASS |
+| 2 | Browser | "search Apple AAPL stock" | search_web action | search_web → "Apple AAPL stock price" | PASS |
+| 3 | Browser | "open my notes" | open_notes action | open_notes {} | PASS |
+| 4 | Excel | "write Revenue in A1" | write_cell action | write_cell A1="Revenue" sheet=Sheet1 | PASS |
+| 5 | VS Code | "fix error in code" | replace_selection | replace_selection (corrected code) | PASS |
+| 6 | PPT | "create title slide" | create_slide | create_slide (Q3 Board Meeting) | PASS |
+| 7 | Word | "write memo header" | insert_paragraph(s) | 5 actions (full memo header) | PASS |
+| 8 | Browser | "top 5 SaaS metrics?" | detailed text | 1439 chars, structured answer | PASS |
+| 9 | Auth | set → get → clear | roundtrip tokens | email=nick@test.com, tokens=true | PASS |
+
+---
+
 ## Deployments:
 1. Phase 1: auth.py + Chrome extension → Railway + GitHub
 2. Phase 2: notes.py + notes.html → Railway + GitHub
 3. Phase 3: cross-platform + prompts → Railway + GitHub
+4. Phase 4-6: VS Code + prompts → GitHub (no backend changes)
+
+## Summary of All Fixes:
+- **Auth:** File-based → in-memory storage (fixes Railway ephemeral FS)
+- **Keyboard shortcut:** Cmd+Shift+T → Cmd+Shift+E (fixes Chrome conflict)
+- **Notes app:** Complete build with CRUD + AI endpoint (summarize, expand, rewrite, action_items, ask)
+- **Cross-platform:** open_notes, open_url across ALL add-ins (Chrome, VS Code, Excel, Word, PPT)
+- **Prompts:** Cross-app navigation section, browser actions fully declared
+- **Tests:** 9/9 integration tests passing on live backend
