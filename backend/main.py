@@ -47,13 +47,19 @@ app.include_router(files.router, prefix="/files")
 app.include_router(notes.router, prefix="/notes")
 
 # --- Notes App (served as static HTML) ---
-NOTES_APP_PATH = Path(__file__).parent.parent / "notes-app" / "index.html"
+NOTES_APP_PATH = Path(__file__).parent / "static" / "notes.html"
 
 @app.get("/notes-app")
 async def serve_notes_app():
     if NOTES_APP_PATH.exists():
         return FileResponse(NOTES_APP_PATH, media_type="text/html")
-    return {"error": "Notes app not found"}
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(
+        content='<html><body style="font-family:sans-serif;text-align:center;padding:60px;">'
+        '<h1 style="color:#0D5EAF;">tsifl Notes</h1>'
+        '<p>Notes app file not found.</p></body></html>',
+        status_code=200
+    )
 
 # --- Launch App Endpoint (for cross-app capability) ---
 import subprocess
