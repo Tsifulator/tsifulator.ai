@@ -133,9 +133,23 @@ Built `/google-workspace-addon/` as a Google Apps Script project:
    - `google_slides`: slides, shapes, text, current slide
    - `browser`: URL, title, page text, selection, meta description
 
-5. **Test file**: Created `backend/tests/test_all_apps.py` with 45 test scenarios across 9 app contexts (5+ per app)
+5. **Test file**: Created `backend/tests/test_all_apps.py` with 40 test scenarios across 9 app contexts (5 per app)
 
-### Backend deployed to Railway
+### Test Results: 40/40 PASS (100%)
+All 40 scenarios pass against the live Railway backend:
+
+| App | Tests | Status |
+|-----|-------|--------|
+| PowerPoint | 5 (title slide, pitch deck, table, chart, no-shell-command) | ALL PASS |
+| Word | 5 (memo, table, heading, find-replace, no-shell-command) | ALL PASS |
+| Gmail | 5 (draft, reply, summarize, action items, cold outreach) | ALL PASS |
+| VS Code | 5 (explain, refactor, fix error, generate tests, create file) | ALL PASS |
+| Google Sheets | 5 (formula, format, chart, sort, add sheet) | ALL PASS |
+| Google Docs | 5 (section, table, find-replace, header, memo) | ALL PASS |
+| Google Slides | 5 (create slide, shapes, table, background, delete) | ALL PASS |
+| Browser | 5 (summarize, extract, explain, selection, action items) | ALL PASS |
+
+### Backend deployed to Railway (2 deploys)
 
 ---
 
