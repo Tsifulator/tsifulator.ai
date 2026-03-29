@@ -388,6 +388,21 @@ class TsiflSidebarProvider {
           return;
         }
 
+        case "open_notes": {
+          const notesUrl = `${BACKEND_URL}/notes-app`;
+          vscode.env.openExternal(vscode.Uri.parse(notesUrl));
+          wv?.postMessage({ type: "actionComplete", action: type, success: true, message: "Opened Notes" });
+          return;
+        }
+
+        case "open_url": {
+          if (payload.url) {
+            vscode.env.openExternal(vscode.Uri.parse(payload.url));
+            wv?.postMessage({ type: "actionComplete", action: type, success: true, message: `Opened ${payload.url}` });
+          }
+          return;
+        }
+
         case "explain_code":
         case "fix_error":
         case "refactor":

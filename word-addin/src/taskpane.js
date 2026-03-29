@@ -601,6 +601,17 @@ async function executeAction(action) {
       }
       break;
 
+    case "open_notes":
+    case "open_url":
+      try {
+        const url = type === "open_notes" ? `${BACKEND_URL}/notes-app` : (payload.url || "");
+        if (url) window.open(url, "_blank");
+        appendMessage("action", `Opened: ${url}`);
+      } catch (e) {
+        appendMessage("action", `open: ${e.message}`);
+      }
+      break;
+
     default:
       console.warn("Unknown action type:", type);
   }

@@ -922,6 +922,17 @@ async function executeAction(action) {
       appendMessage("action", `launch_app: ${e.message}`);
     }
   }
+
+  // ── open_notes / open_url ──────────────────────────────────────────────────
+  else if (type === "open_notes" || (type === "open_url" && payload.url)) {
+    const url = type === "open_notes" ? `${BACKEND_URL}/notes-app` : payload.url;
+    try {
+      window.open(url, "_blank");
+      appendMessage("action", `Opened: ${url}`);
+    } catch (e) {
+      appendMessage("action", `open: ${e.message}`);
+    }
+  }
 }
 
 // ── Format helper (shared by write_cell, write_range, format_range) ──────────

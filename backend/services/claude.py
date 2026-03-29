@@ -501,6 +501,15 @@ For notes context, respond with helpful text. Do NOT emit actions — just provi
 When summarizing: provide TL;DR + key points as bullets.
 When extracting action items: return a numbered list with owner and deadline if mentioned.
 
+## CROSS-APP NAVIGATION
+When the user asks to open another app or integration, use these actions:
+- "open my notes" / "open notes" → action type "open_notes" with payload {}
+- "open Excel" / "open Word" / "open PowerPoint" → action type "launch_app" with payload {app_name: "Excel"}
+- "open [URL]" → action type "open_url" with payload {url: "https://..."}
+- "search for [query]" → action type "search_web" with payload {query: "..."}
+The tsifl Notes app is available at https://focused-solace-production-6839.up.railway.app/notes-app
+All tsifl integrations share the same user session and can open each other.
+
 ## OTHER APPS
 - RStudio: run_r_code with library() calls. Terminal: run_shell_command.
 """
@@ -633,7 +642,7 @@ TOOLS = [
                                     "delete_slide: {slide_index}. set_slide_background: {slide_index, color}. modify_slide: {slide_index, changes}.\n"
                                     "Browser — open_url: {url}. open_url_current_tab: {url}. search_web: {query}. navigate_back: {}. navigate_forward: {}.\n"
                                     "click_element: {selector}. fill_input: {selector, value}. extract_text: {selector?}. scroll_to: {selector?, y?}.\n"
-                                    "Cross-app — launch_app: {app_name}. Opens a local application (Excel, PowerPoint, Word, VS Code, Notes, Terminal)."
+                                    "Cross-app — launch_app: {app_name}. open_notes: {}. open_url: {url}. Opens apps, notes, or URLs."
                                 )
                             }
                         }
