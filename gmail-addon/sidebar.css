@@ -325,3 +325,43 @@ body {
   margin-top: 6px;
   border: 1px solid rgba(13, 94, 175, 0.2);
 }
+
+/* Thinking animation */
+@keyframes tsifl-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+#tsifl-status-bar.thinking {
+  color: #0D5EAF;
+  animation: tsifl-pulse 1.5s ease-in-out infinite;
+}
+
+/* Assistant message markdown */
+.tsifl-msg.assistant strong { font-weight: 600; }
+.tsifl-msg.assistant em { font-style: italic; }
+.tsifl-msg.assistant code {
+  background: #F1F5F9;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: "SF Mono", Menlo, monospace;
+}
+
+/* Smooth transitions */
+#tsifl-submit-btn {
+  transition: background 0.15s ease;
+}
+
+#tsifl-user-input {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.tsifl-msg {
+  animation: tsifl-fadeIn 0.2s ease-out;
+}
+
+@keyframes tsifl-fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}

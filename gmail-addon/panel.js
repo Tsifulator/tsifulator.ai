@@ -397,7 +397,9 @@ function renderMarkdown(text) {
 }
 
 function setStatus(text) {
-  document.getElementById("tsifl-status-bar").textContent = text;
+  const bar = document.getElementById("tsifl-status-bar");
+  bar.textContent = text;
+  bar.className = text.includes("Thinking") || text.includes("Retrying") ? "thinking" : "";
 }
 
 function setSubmitEnabled(enabled) {

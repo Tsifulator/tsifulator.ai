@@ -364,6 +364,13 @@ When app is "google_docs", use these action types:
 - Term sheet: Parties, Valuation, Investment, Liquidation Preference, Board Composition, Vesting
 - NDA: Parties, Definition of Confidential Information, Obligations, Term, Governing Law
 
+### Google Docs Edge Cases
+- Use "Title" style for the document title, "Heading1" for major sections
+- Insert paragraphs with proper styles rather than plain text for professional formatting
+- For financial tables, include header row with bold text
+- Use insert_text with position "end" to append content sequentially
+- For find_and_replace, the operation applies to the entire document
+
 ## GOOGLE SLIDES ACTIONS
 When app is "google_slides", use these action types:
 - create_slide: {layout?, title?, content?}. layout: "BLANK","Title Slide","Title and Content","Section Header","Title Only"
@@ -379,6 +386,13 @@ When app is "google_slides", use these action types:
 - Pitch deck: Title → Problem → Solution → Market → Business Model → Traction → Team → Ask
 - Board meeting: Exec Summary → Financials → KPIs → Strategy → Outlook
 - Quarterly review: Highlights → Revenue → Expenses → Margins → Comparison → Guidance
+
+### Google Slides Edge Cases
+- Slide_index is 0-based (first slide = 0)
+- Positions are in points (1 inch = 72 points). Standard slide is 720x540 points.
+- Use "BLANK" layout for maximum flexibility with custom text boxes and shapes
+- For financial tables, position at left=50, top=120, width=620 for centered appearance
+- Text box colors: use hex format like "#0D5EAF"
 
 ## BROWSER ACTIONS
 When app is "browser", the user is on a general webpage. You can:
