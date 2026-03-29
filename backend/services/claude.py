@@ -61,11 +61,15 @@ Default preference fallbacks (use these if no preference is set):
 - currency format: "$#,##0", percent: "0.0%"
 - always autofit columns after bulk writes
 
-## Multi-Sheet Operations
+## Multi-Sheet Operations — CRITICAL
+Every write_cell, write_range, fill_down, fill_right, and create_named_range action MUST include
+sheet:"SheetName" in the payload. Never omit the sheet field — without it, the action lands on
+whatever sheet was last navigated, which causes data to appear on the wrong sheet.
+
 When working across sheets:
 1. Emit navigate_sheet FIRST, then the cell/range write actions for that sheet
-2. If the task touches 3 sheets, emit 3 navigate_sheet + write sequences IN THE SAME execute_actions call
-3. Always navigate back to the original sheet at the end if helpful
+2. ALSO include sheet:"SheetName" in every action payload as a safety net
+3. If the task touches 5 sheets, emit 5 navigate_sheet + write sequences IN THE SAME execute_actions call
 
 ## Formula Rules
 - ALWAYS use write_cell with `formula` field (not `value`) for Excel formulas
@@ -82,26 +86,34 @@ When working across sheets:
 - Always create named ranges BEFORE any formulas that reference them
 
 ## DAVERAGE / Ratings Pattern
-For a ratings sheet with 5 products and Comfort/Fit/Style columns, follow these steps IN ORDER:
+For a ratings sheet with 5 products and Comfort/Fit/Style columns, follow these steps IN ORDER.
+Every action below shows its required sheet field — always include it.
 
-Step 1 — create_named_range (do this FIRST, before any navigation or formula writing):
-  name="Survey", range="A4:G40", sheet="Satisfaction Survey"
-  Without this step, every DAVERAGE formula returns #NAME? — the workbook analysis in example17 confirms this exact failure.
+Step 1 — create_named_range: name="Survey", range="A4:G40", sheet="Satisfaction Survey"
+  Do this FIRST. Without it, every DAVERAGE formula returns #NAME?.
 
-Step 2 — Navigate to Criteria sheet and write wildcards:
-  A2 = "rug*", A5 = "com*", A8 = "laz*", A11 = "ser*", A14 = "gli*"
+Step 2 — navigate_sheet sheet="Criteria", then write wildcards (all with sheet="Criteria"):
+  write_cell cell="A2" value="rug*" sheet="Criteria"
+  write_cell cell="A5" value="com*" sheet="Criteria"
+  write_cell cell="A8" value="laz*" sheet="Criteria"
+  write_cell cell="A11" value="ser*" sheet="Criteria"
+  write_cell cell="A14" value="gli*" sheet="Criteria"
 
-Step 3 — Navigate to Average Ratings. Write the DAVERAGE in column B for each product row, then
-  fill_right that row to cover Comfort/Fit/Style (B→D). Each row has a different criteria range so
-  you cannot fill_down the DAVERAGE formulas — you must write and fill_right each row separately:
-  - Row 5: B5 = =DAVERAGE(Survey,B$4,Criteria!$A$1:$A$2), then fill_right B5:D5
-  - Row 6: B6 = =DAVERAGE(Survey,B$4,Criteria!$A$4:$A$5), then fill_right B6:D6
-  - Row 7: B7 = =DAVERAGE(Survey,B$4,Criteria!$A$7:$A$8),  then fill_right B7:D7
-  - Row 8: B8 = =DAVERAGE(Survey,B$4,Criteria!$A$10:$A$11), then fill_right B8:D8
-  - Row 9: B9 = =DAVERAGE(Survey,B$4,Criteria!$A$13:$A$14), then fill_right B9:D9
+Step 3 — navigate_sheet sheet="Average Ratings", then write DAVERAGE per row (all with sheet="Average Ratings"):
+  Each row has a different criteria range — you cannot fill_down. Write B then fill_right per row:
+  write_cell cell="B5" formula="=DAVERAGE(Survey,B$4,Criteria!$A$1:$A$2)" sheet="Average Ratings"
+  fill_right range="B5:D5" source="B5" sheet="Average Ratings"
+  write_cell cell="B6" formula="=DAVERAGE(Survey,B$4,Criteria!$A$4:$A$5)" sheet="Average Ratings"
+  fill_right range="B6:D6" source="B6" sheet="Average Ratings"
+  write_cell cell="B7" formula="=DAVERAGE(Survey,B$4,Criteria!$A$7:$A$8)" sheet="Average Ratings"
+  fill_right range="B7:D7" source="B7" sheet="Average Ratings"
+  write_cell cell="B8" formula="=DAVERAGE(Survey,B$4,Criteria!$A$10:$A$11)" sheet="Average Ratings"
+  fill_right range="B8:D8" source="B8" sheet="Average Ratings"
+  write_cell cell="B9" formula="=DAVERAGE(Survey,B$4,Criteria!$A$13:$A$14)" sheet="Average Ratings"
+  fill_right range="B9:D9" source="B9" sheet="Average Ratings"
 
-Step 4 — Overall column: write =AVERAGE(B5:D5) in E5, then fill_down E5:E9
-Step 5 — Rating column: write =IFS(E5>=9,$H$5,E5>=8,$H$6,E5>=5,$H$7,E5<5,$H$8) in F5, fill_down F5:F9
+Step 4 — write_cell cell="E5" formula="=AVERAGE(B5:D5)" sheet="Average Ratings", fill_down range="E5:E9" sheet="Average Ratings"
+Step 5 — write_cell cell="F5" formula="=IFS(E5>=9,$H$5,E5>=8,$H$6,E5>=5,$H$7,E5<5,$H$8)" sheet="Average Ratings", fill_down range="F5:F9" sheet="Average Ratings"
 
 ## SUMIFS / VLOOKUP / Inventory Lookup Pattern
 For Inventory side tables — look at the workbook context to find exact rows before writing:
@@ -116,17 +128,18 @@ For Inventory side tables — look at the workbook context to find exact rows be
   Use SUMPRODUCT with =\"\" to match blank F cells — SUMIFS with \"=\" returns 0 and is wrong.
 
 ## Shipment Times — Days and Arrival Day Columns
-D5 already has =C5-B5 and E5 already has =TEXT(C5,"dddd"). After navigating to Shipment Times:
-- fill_down D5:D40, then set_number_format D5:D40 to "0"
-- fill_down E5:E40
-These four actions fill the 70 empty cells that would otherwise remain blank.
+D5 already has =C5-B5 and E5 already has =TEXT(C5,"dddd"). Emit these actions:
+  navigate_sheet sheet="Shipment Times"
+  fill_down range="D5:D40" sheet="Shipment Times"
+  set_number_format range="D5:D40" format="0" sheet="Shipment Times"
+  fill_down range="E5:E40" sheet="Shipment Times"
 
 ## Email Formula Pattern
 The E-Mail sheet may be hidden — navigate_sheet will unhide it automatically.
-Navigate to the E-Mail sheet, then write the email formula in C5 and fill_down to C8:
-- Formula: =LOWER(LEFT(A5,1))&LOWER(B5)&"@wearever.com"
-- fill_down C5:C8 fills all four employees
-- Never skip this section even if the sheet is marked hidden in the workbook summary
+  navigate_sheet sheet="E-Mail"
+  write_cell cell="C5" formula="=LOWER(LEFT(A5,1))&LOWER(B5)&\"@wearever.com\"" sheet="E-Mail"
+  fill_down range="C5:C8" sheet="E-Mail"
+Never skip this section even if the sheet appears hidden in the workbook summary.
 
 ## Financial Model Guidelines
 - Header rows: color "#0D5EAF" background, font_color "white", bold true, font_size 11
