@@ -1,6 +1,8 @@
 /**
  * tsifl VS Code Extension
  * Provides an AI chat sidebar with full VS Code context awareness.
+ * Supports: code explanation, error fixing, refactoring, test generation,
+ * file operations, terminal commands, and cross-app launch.
  */
 
 const vscode = require("vscode");
@@ -8,50 +10,101 @@ const vscode = require("vscode");
 const BACKEND_URL = "https://focused-solace-production-6839.up.railway.app";
 
 let globalPanel = null;
+let providerRef = null;
 
 function activate(context) {
-  // Register the sidebar webview provider
   const provider = new TsiflSidebarProvider(context.extensionUri);
+  providerRef = provider;
+
+  // Register sidebar webview provider
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider("tsifl.chatView", provider)
+    vscode.window.registerWebviewViewProvider("tsifl.chatView", provider, {
+      webviewOptions: { retainContextWhenHidden: true },
+    })
   );
 
-  // Register commands
+  // Open Chat — opens as a panel tab (more reliable than sidebar webview)
   context.subscriptions.push(
     vscode.commands.registerCommand("tsifl.openChat", () => {
-      vscode.commands.executeCommand("tsifl.chatView.focus");
+      openChatPanel(context, provider);
     })
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("tsifl.explainCode", () => {
-      sendContextCommand(provider, "Explain this code");
+      ensurePanelAndSend(context, provider, "Explain this code");
     })
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("tsifl.fixError", () => {
-      sendContextCommand(provider, "Fix the error in this code");
+      ensurePanelAndSend(context, provider, "Fix the error in this code");
     })
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("tsifl.refactor", () => {
-      sendContextCommand(provider, "Refactor this code");
+      ensurePanelAndSend(context, provider, "Refactor this code");
     })
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("tsifl.generateTests", () => {
-      sendContextCommand(provider, "Generate tests for this code");
+      ensurePanelAndSend(context, provider, "Generate tests for this code");
     })
   );
+
+  // Auto-open the panel on first activation if sidebar webview fails
+  setTimeout(() => {
+    if (!provider._view && !globalPanel) {
+      openChatPanel(context, provider);
+    }
+  }, 2500);
 }
 
-function sendContextCommand(provider, prompt) {
-  if (provider._view) {
-    provider._view.webview.postMessage({ type: "sendPrompt", prompt });
+function ensurePanelAndSend(context, provider, prompt) {
+  const webview = globalPanel?.webview || provider._view?.webview;
+  if (webview) {
+    webview.postMessage({ type: "sendPrompt", prompt });
+  } else {
+    // Panel not open yet — open it, then send prompt after it loads
+    openChatPanel(context, provider);
+    setTimeout(() => {
+      const wv = globalPanel?.webview || provider._view?.webview;
+      if (wv) wv.postMessage({ type: "sendPrompt", prompt });
+    }, 1000);
   }
+}
+
+function openChatPanel(context, provider) {
+  if (globalPanel) {
+    globalPanel.reveal(vscode.ViewColumn.Beside);
+    return;
+  }
+  globalPanel = vscode.window.createWebviewPanel(
+    "tsifl.chat",
+    "tsifl",
+    vscode.ViewColumn.Beside,
+    { enableScripts: true, retainContextWhenHidden: true }
+  );
+  globalPanel.webview.html = provider._getHtml(globalPanel.webview);
+
+  // Wire up message handling
+  globalPanel.webview.onDidReceiveMessage(async (message) => {
+    switch (message.type) {
+      case "chat":
+        await provider._handleChat(message, globalPanel.webview);
+        break;
+      case "getContext":
+        await provider._sendContext(globalPanel.webview);
+        break;
+      case "executeAction":
+        await provider._executeAction(message.action, globalPanel.webview);
+        break;
+    }
+  });
+
+  globalPanel.onDidDispose(() => { globalPanel = null; });
 }
 
 class TsiflSidebarProvider {
@@ -70,23 +123,27 @@ class TsiflSidebarProvider {
 
     webviewView.webview.html = this._getHtml(webviewView.webview);
 
-    // Handle messages from the webview
     webviewView.webview.onDidReceiveMessage(async (message) => {
       switch (message.type) {
         case "chat":
-          await this._handleChat(message);
+          await this._handleChat(message, webviewView.webview);
           break;
         case "getContext":
-          await this._sendContext();
+          await this._sendContext(webviewView.webview);
           break;
         case "executeAction":
-          await this._executeAction(message.action);
+          await this._executeAction(message.action, webviewView.webview);
           break;
       }
     });
   }
 
-  async _handleChat(message) {
+  _getWebview(override) {
+    return override || globalPanel?.webview || this._view?.webview;
+  }
+
+  async _handleChat(message, webview) {
+    const wv = this._getWebview(webview);
     try {
       const context = await this._getVSCodeContext();
 
@@ -104,20 +161,20 @@ class TsiflSidebarProvider {
 
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-        this._view.webview.postMessage({ type: "chatResponse", error: err.detail || "Request failed" });
+        wv?.postMessage({ type: "chatResponse", error: err.detail || "Request failed" });
         return;
       }
 
       const result = await resp.json();
-      this._view.webview.postMessage({ type: "chatResponse", result });
+      wv?.postMessage({ type: "chatResponse", result });
 
       // Execute actions
       const actions = result.actions?.length ? result.actions : (result.action?.type ? [result.action] : []);
       for (const action of actions) {
-        await this._executeAction(action);
+        await this._executeAction(action, wv);
       }
     } catch (e) {
-      this._view.webview.postMessage({ type: "chatResponse", error: e.message });
+      wv?.postMessage({ type: "chatResponse", error: e.message });
     }
   }
 
@@ -135,23 +192,20 @@ class TsiflSidebarProvider {
       context.language = doc.languageId;
       context.line_count = doc.lineCount;
 
-      // Get selected text or surrounding context
       const selection = editor.selection;
       if (!selection.isEmpty) {
         context.selection = doc.getText(selection);
       }
 
-      // Get visible range
       const visibleRanges = editor.visibleRanges;
       if (visibleRanges.length > 0) {
         context.visible_text = doc.getText(visibleRanges[0]).substring(0, 3000);
       }
 
-      // Get full file (truncated)
       context.file_content = doc.getText().substring(0, 5000);
     }
 
-    // Get diagnostics (errors/warnings)
+    // Diagnostics
     const diagnostics = [];
     vscode.languages.getDiagnostics().forEach(([uri, diags]) => {
       diags.forEach((d) => {
@@ -167,7 +221,7 @@ class TsiflSidebarProvider {
     });
     context.diagnostics = diagnostics.slice(0, 20);
 
-    // Get git status if available
+    // Git
     try {
       const gitExt = vscode.extensions.getExtension("vscode.git");
       if (gitExt?.isActive) {
@@ -183,48 +237,75 @@ class TsiflSidebarProvider {
     return context;
   }
 
-  async _sendContext() {
+  async _sendContext(webview) {
+    const wv = this._getWebview(webview);
     const context = await this._getVSCodeContext();
-    this._view.webview.postMessage({ type: "context", context });
+    wv?.postMessage({ type: "context", context });
   }
 
-  async _executeAction(action) {
+  async _executeAction(action, webview) {
     const { type, payload } = action;
     if (!type || !payload) return;
+
+    const wv = this._getWebview(webview);
 
     try {
       switch (type) {
         case "insert_code": {
           const editor = vscode.window.activeTextEditor;
           if (editor) {
+            const code = payload.code || payload.text || "";
             await editor.edit((editBuilder) => {
-              editBuilder.insert(editor.selection.active, payload.code || payload.text || "");
+              editBuilder.insert(editor.selection.active, code);
             });
+            wv?.postMessage({ type: "actionComplete", action: type, success: true, message: `Inserted ${code.split('\n').length} lines` });
           }
-          break;
+          return;
         }
 
         case "replace_selection": {
           const editor = vscode.window.activeTextEditor;
-          if (editor && !editor.selection.isEmpty) {
-            await editor.edit((editBuilder) => {
-              editBuilder.replace(editor.selection, payload.code || payload.text || "");
-            });
+          if (editor) {
+            const code = payload.code || payload.text || "";
+            if (!editor.selection.isEmpty) {
+              await editor.edit((editBuilder) => {
+                editBuilder.replace(editor.selection, code);
+              });
+              wv?.postMessage({ type: "actionComplete", action: type, success: true, message: "Selection replaced" });
+            } else {
+              // If no selection, insert at cursor
+              await editor.edit((editBuilder) => {
+                editBuilder.insert(editor.selection.active, code);
+              });
+              wv?.postMessage({ type: "actionComplete", action: type, success: true, message: "Code inserted at cursor" });
+            }
           }
-          break;
+          return;
         }
 
         case "create_file": {
-          const uri = vscode.Uri.file(payload.path);
+          const filePath = payload.path;
+          // Resolve relative paths against workspace
+          let fullPath = filePath;
+          if (!filePath.startsWith("/") && vscode.workspace.workspaceFolders?.length) {
+            fullPath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, filePath).fsPath;
+          }
+          const uri = vscode.Uri.file(fullPath);
           const content = Buffer.from(payload.content || "", "utf8");
           await vscode.workspace.fs.writeFile(uri, content);
           const doc = await vscode.workspace.openTextDocument(uri);
           await vscode.window.showTextDocument(doc);
-          break;
+          wv?.postMessage({ type: "actionComplete", action: type, success: true, message: `Created ${filePath}` });
+          return;
         }
 
         case "edit_file": {
-          const uri = vscode.Uri.file(payload.path);
+          const filePath = payload.path;
+          let fullPath = filePath;
+          if (!filePath.startsWith("/") && vscode.workspace.workspaceFolders?.length) {
+            fullPath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, filePath).fsPath;
+          }
+          const uri = vscode.Uri.file(fullPath);
           const doc = await vscode.workspace.openTextDocument(uri);
           const editor = await vscode.window.showTextDocument(doc);
           if (payload.find && payload.replace !== undefined) {
@@ -236,35 +317,68 @@ class TsiflSidebarProvider {
               await editor.edit((editBuilder) => {
                 editBuilder.replace(new vscode.Range(start, end), payload.replace);
               });
+              wv?.postMessage({ type: "actionComplete", action: type, success: true, message: `Edited ${filePath}` });
+            } else {
+              wv?.postMessage({ type: "actionComplete", action: type, success: false, message: "Text not found in file" });
             }
           }
-          break;
+          return;
         }
 
-        case "run_terminal_command": {
+        case "run_terminal_command":
+        case "run_shell_command": {
           const terminal = vscode.window.activeTerminal || vscode.window.createTerminal("tsifl");
           terminal.show();
           terminal.sendText(payload.command);
-          break;
+          wv?.postMessage({ type: "actionComplete", action: type, success: true, message: `Running: ${payload.command}` });
+          return;
         }
 
         case "open_file": {
-          const uri = vscode.Uri.file(payload.path);
+          const filePath = payload.path;
+          let fullPath = filePath;
+          if (!filePath.startsWith("/") && vscode.workspace.workspaceFolders?.length) {
+            fullPath = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, filePath).fsPath;
+          }
+          const uri = vscode.Uri.file(fullPath);
           const doc = await vscode.workspace.openTextDocument(uri);
           await vscode.window.showTextDocument(doc);
-          break;
+          wv?.postMessage({ type: "actionComplete", action: type, success: true, message: `Opened ${filePath}` });
+          return;
         }
 
         case "show_diff": {
-          // Show before/after in output channel
-          const channel = vscode.window.createOutputChannel("tsifl Diff");
-          channel.clear();
-          channel.appendLine("=== BEFORE ===");
-          channel.appendLine(payload.before || "");
-          channel.appendLine("\n=== AFTER ===");
-          channel.appendLine(payload.after || "");
-          channel.show();
-          break;
+          // Use VS Code's built-in diff editor
+          const beforeUri = vscode.Uri.parse("untitled:Before");
+          const afterUri = vscode.Uri.parse("untitled:After");
+          try {
+            // Create temp documents via output channel as fallback
+            const channel = vscode.window.createOutputChannel("tsifl Diff");
+            channel.clear();
+            channel.appendLine("=== BEFORE ===");
+            channel.appendLine(payload.before || "");
+            channel.appendLine("\n=== AFTER ===");
+            channel.appendLine(payload.after || "");
+            channel.show();
+          } catch (_) {}
+          wv?.postMessage({ type: "actionComplete", action: type, success: true, message: "Diff shown" });
+          return;
+        }
+
+        case "launch_app": {
+          // Request backend to open a local app
+          try {
+            const resp = await fetch(`${BACKEND_URL}/launch-app`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ app_name: payload.app_name }),
+            });
+            const result = await resp.json();
+            wv?.postMessage({ type: "actionComplete", action: type, success: true, message: result.message || "Launched" });
+          } catch (e) {
+            wv?.postMessage({ type: "actionComplete", action: type, success: false, message: e.message });
+          }
+          return;
         }
 
         case "explain_code":
@@ -272,26 +386,15 @@ class TsiflSidebarProvider {
         case "refactor":
         case "generate_tests":
           // These are text responses — handled by chat reply
-          break;
-
-        case "run_shell_command": {
-          const terminal = vscode.window.activeTerminal || vscode.window.createTerminal("tsifl");
-          terminal.show();
-          terminal.sendText(payload.command);
-          break;
-        }
+          return;
 
         default:
           console.log("tsifl: Unknown action type:", type);
       }
 
-      this._view.webview.postMessage({
-        type: "actionComplete",
-        action: type,
-        success: true,
-      });
+      wv?.postMessage({ type: "actionComplete", action: type, success: true });
     } catch (e) {
-      this._view.webview.postMessage({
+      wv?.postMessage({
         type: "actionComplete",
         action: type,
         success: false,
@@ -337,13 +440,15 @@ class TsiflSidebarProvider {
 
     /* Chat */
     #chat-screen { display: none; flex-direction: column; height: 100vh; }
-    #user-bar { font-size: 10px; color: var(--text-muted); padding: 4px 10px; background: var(--surface); border-bottom: 1px solid var(--border); }
+    #user-bar { font-size: 10px; color: var(--text-muted); padding: 4px 10px; background: var(--surface); border-bottom: 1px solid var(--border); cursor: default; }
     #chat-history { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
     #chat-history::-webkit-scrollbar { width: 4px; }
     #chat-history::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
     .msg { padding: 7px 10px; border-radius: 4px; line-height: 1.5; word-wrap: break-word; font-size: 12px; white-space: pre-wrap; }
     .msg.user { background: var(--blue-light); border-left: 2px solid var(--blue); }
     .msg.assistant { background: var(--bg); border-left: 2px solid #86EFAC; }
+    .msg.assistant strong { font-weight: 600; }
+    .msg.assistant code { background: var(--surface); padding: 1px 4px; border-radius: 3px; font-size: 11px; font-family: var(--vscode-editor-font-family, monospace); }
     .msg.action { background: rgba(22,163,74,0.08); border-left: 2px solid var(--green); font-size: 11px; color: var(--green); font-family: monospace; padding: 5px 10px; }
 
     /* Input */
@@ -401,10 +506,49 @@ class TsiflSidebarProvider {
     let pendingImages = [];
     const state = vscode.getState() || {};
 
-    // Restore session
-    if (state.session) {
-      refreshSession(state.session);
+    const BACKEND_AUTH_URL = "https://focused-solace-production-6839.up.railway.app";
+
+    async function syncSessionToBackend(session) {
+      if (!session || !session.access_token) return;
+      try {
+        await fetch(BACKEND_AUTH_URL + "/auth/set-session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            access_token: session.access_token,
+            refresh_token: session.refresh_token,
+            user_id: session.user?.id || "",
+            email: session.user?.email || "",
+          }),
+        });
+      } catch (e) {}
     }
+
+    async function restoreFromBackend() {
+      try {
+        const resp = await fetch(BACKEND_AUTH_URL + "/auth/get-session");
+        const data = await resp.json();
+        if (!data.session || !data.session.access_token) return false;
+        const result = await supabaseAuth("token?grant_type=refresh_token", { refresh_token: data.session.refresh_token });
+        if (result.access_token) {
+          vscode.setState({ session: result });
+          syncSessionToBackend(result);
+          showChat({ id: result.user?.id || data.session.user_id, email: result.user?.email || data.session.email });
+          return true;
+        }
+      } catch (e) {}
+      return false;
+    }
+
+    async function initSession() {
+      if (state.session) {
+        const ok = await refreshSession(state.session);
+        if (ok) return;
+      }
+      const restored = await restoreFromBackend();
+      if (!restored) showLogin();
+    }
+    initSession();
 
     async function supabaseAuth(endpoint, body) {
       const resp = await fetch(SUPABASE_URL + "/auth/v1/" + endpoint, {
@@ -420,11 +564,13 @@ class TsiflSidebarProvider {
         const result = await supabaseAuth("token?grant_type=refresh_token", { refresh_token: session.refresh_token });
         if (result.access_token) {
           vscode.setState({ session: result });
+          syncSessionToBackend(result);
           showChat({ id: result.user?.id || session.user?.id, email: result.user?.email || session.user?.email });
-          return;
+          return true;
         }
       } catch (e) {}
       showLogin();
+      return false;
     }
 
     document.getElementById("login-btn").onclick = async () => {
@@ -432,10 +578,12 @@ class TsiflSidebarProvider {
       const password = document.getElementById("auth-password").value;
       const errEl = document.getElementById("auth-error");
       errEl.textContent = "";
+      errEl.style.color = "var(--red)";
       if (!email || !password) { errEl.textContent = "Enter email and password."; return; }
       const result = await supabaseAuth("token?grant_type=password", { email, password });
       if (result.error || result.error_description) { errEl.textContent = result.error_description || "Sign in failed"; return; }
       vscode.setState({ session: result });
+      syncSessionToBackend(result);
       showChat({ id: result.user.id, email: result.user.email });
     };
 
@@ -444,6 +592,7 @@ class TsiflSidebarProvider {
       const password = document.getElementById("auth-password").value;
       const errEl = document.getElementById("auth-error");
       errEl.textContent = "";
+      errEl.style.color = "var(--red)";
       if (!email || !password) { errEl.textContent = "Enter email and password."; return; }
       if (password.length < 6) { errEl.textContent = "Password must be 6+ characters."; return; }
       const result = await supabaseAuth("signup", { email, password });
@@ -451,6 +600,11 @@ class TsiflSidebarProvider {
       errEl.style.color = "#16A34A";
       errEl.textContent = "Check email to confirm, then sign in.";
     };
+
+    // Password enter to sign in
+    document.getElementById("auth-password").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") document.getElementById("login-btn").click();
+    });
 
     function showLogin() {
       document.getElementById("login-screen").style.display = "flex";
@@ -461,8 +615,17 @@ class TsiflSidebarProvider {
       currentUser = user;
       document.getElementById("login-screen").style.display = "none";
       document.getElementById("chat-screen").style.display = "flex";
-      document.getElementById("user-bar").textContent = user.email;
+      document.getElementById("user-bar").textContent = user.email + " \\u00b7 VS Code";
     }
+
+    // Sign out on double-click user bar
+    document.getElementById("user-bar").addEventListener("dblclick", () => {
+      vscode.setState({});
+      fetch(BACKEND_AUTH_URL + "/auth/clear-session", { method: "POST" }).catch(() => {});
+      currentUser = null;
+      document.getElementById("chat-history").innerHTML = "";
+      showLogin();
+    });
 
     // Image handling
     document.getElementById("attach-btn").onclick = () => document.getElementById("image-input").click();
@@ -528,6 +691,18 @@ class TsiflSidebarProvider {
       vscode.postMessage({ type: "chat", text: msg, userId: currentUser.id, images });
     }
 
+    // Render basic markdown
+    function renderMarkdown(text) {
+      return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\\*\\*(.+?)\\*\\*/g, "<strong>$1</strong>")
+        .replace(/\\*(.+?)\\*/g, "<em>$1</em>")
+        .replace(/\`([^\`]+)\`/g, '<code>$1</code>')
+        .replace(/\\n/g, "<br>");
+    }
+
     // Listen for messages from extension
     window.addEventListener("message", (event) => {
       const msg = event.data;
@@ -536,7 +711,7 @@ class TsiflSidebarProvider {
           if (msg.error) { appendMsg("assistant", "Error: " + msg.error); }
           else {
             if (msg.result.tasks_remaining >= 0) {
-              document.getElementById("user-bar").textContent = currentUser.email + " · " + msg.result.tasks_remaining + " tasks left";
+              document.getElementById("user-bar").textContent = currentUser.email + " \\u00b7 " + msg.result.tasks_remaining + " tasks left";
             }
             appendMsg("assistant", msg.result.reply);
             const actions = msg.result.actions?.length ? msg.result.actions : (msg.result.action?.type ? [msg.result.action] : []);
@@ -548,7 +723,7 @@ class TsiflSidebarProvider {
           document.getElementById("status-bar").textContent = "Ready";
           break;
         case "actionComplete":
-          appendMsg("action", msg.action + ": " + (msg.success ? "done" : "failed — " + (msg.error || "")));
+          appendMsg("action", msg.action + ": " + (msg.success ? (msg.message || "done") : "failed \\u2014 " + (msg.error || "")));
           break;
         case "sendPrompt":
           document.getElementById("user-input").value = msg.prompt;
@@ -561,7 +736,11 @@ class TsiflSidebarProvider {
       const h = document.getElementById("chat-history");
       const d = document.createElement("div");
       d.className = "msg " + role;
-      d.textContent = text || "";
+      if (role === "assistant" && text) {
+        d.innerHTML = renderMarkdown(text);
+      } else {
+        d.textContent = text || "";
+      }
       if (imgCount > 0) {
         const b = document.createElement("div");
         b.className = "image-badge";

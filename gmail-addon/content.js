@@ -1,7 +1,7 @@
 /**
- * tsifl — Content Script (Lightweight)
- * Only captures page context and executes DOM actions.
- * All UI lives in the Side Panel (sidebar.html / panel.js).
+ * tsifl — Content Script
+ * Captures page context, executes DOM actions, and provides full page text for summarization.
+ * Auto-injected on all http/https pages via manifest content_scripts.
  */
 
 if (!window.__tsifl_content_loaded) {
@@ -80,20 +80,81 @@ if (!window.__tsifl_content_loaded) {
     const ctx = {};
     const meta = document.querySelector('meta[name="description"]')?.content;
     if (meta) ctx.meta_description = meta;
+    // Get structured page content for context
     const main = document.querySelector('main, article, [role="main"]');
-    ctx.page_text = (main || document.body).textContent?.trim()?.slice(0, 3000);
+    ctx.page_text = (main || document.body).textContent?.trim()?.replace(/\s+/g, ' ')?.slice(0, 3000);
     return ctx;
   }
 
-  // Handle DOM actions relayed from background.js
+  // Full page text extraction for summarization
+  function getFullPageText() {
+    // Try to get the most meaningful content
+    const selectors = [
+      'article',
+      'main',
+      '[role="main"]',
+      '.post-content',
+      '.article-content',
+      '.entry-content',
+      '.content',
+      '#content',
+      '.story-body',
+      '.article-body',
+    ];
+
+    let contentEl = null;
+    for (const sel of selectors) {
+      contentEl = document.querySelector(sel);
+      if (contentEl && contentEl.textContent.trim().length > 200) break;
+    }
+
+    if (!contentEl) contentEl = document.body;
+
+    // Extract text with some structure preserved
+    const text = extractStructuredText(contentEl);
+    return text.slice(0, 15000); // Up to 15K chars for summarization
+  }
+
+  function extractStructuredText(el) {
+    const parts = [];
+    const blocks = el.querySelectorAll('h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, td, th, figcaption');
+
+    if (blocks.length > 0) {
+      for (const block of blocks) {
+        const tag = block.tagName.toLowerCase();
+        const text = block.textContent?.trim();
+        if (!text) continue;
+
+        if (tag.startsWith('h')) {
+          parts.push(`\n## ${text}\n`);
+        } else if (tag === 'li') {
+          parts.push(`- ${text}`);
+        } else if (tag === 'blockquote') {
+          parts.push(`> ${text}`);
+        } else {
+          parts.push(text);
+        }
+      }
+    }
+
+    // Fallback to raw text if structured extraction failed
+    if (parts.length < 3) {
+      return el.textContent?.trim()?.replace(/\s+/g, ' ') || "";
+    }
+
+    return parts.join('\n');
+  }
+
+  // Handle DOM actions
   function handleDomAction(type, payload) {
     switch (type) {
       case "scroll_to": {
         if (payload.selector) {
-          document.querySelector(payload.selector)?.scrollIntoView({ behavior: "smooth" });
-        } else {
-          window.scrollTo({ top: payload.y || 0, behavior: "smooth" });
+          const el = document.querySelector(payload.selector);
+          if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" }); return { success: true, message: "Scrolled" }; }
+          return { success: false, message: `Element not found: ${payload.selector}` };
         }
+        window.scrollTo({ top: payload.y || 0, behavior: "smooth" });
         return { success: true, message: "Scrolled" };
       }
       case "click_element": {
@@ -104,22 +165,25 @@ if (!window.__tsifl_content_loaded) {
       case "fill_input": {
         const input = document.querySelector(payload.selector);
         if (input) {
+          input.focus();
           input.value = payload.value;
           input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
           return { success: true, message: `Filled ${payload.selector}` };
         }
         return { success: false, message: `Input not found: ${payload.selector}` };
       }
       case "extract_text": {
         const target = payload.selector ? document.querySelector(payload.selector) : document.body;
-        return { success: true, message: target?.textContent?.trim()?.slice(0, 5000) || "" };
+        const text = target?.textContent?.trim()?.slice(0, 5000) || "";
+        return { success: true, message: text, text };
       }
       default:
         return { success: false, message: `Unknown DOM action: ${type}` };
     }
   }
 
-  // Listen for messages from background.js
+  // Listen for messages
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.action === "capture_context") {
       sendResponse(getContext());
@@ -127,6 +191,10 @@ if (!window.__tsifl_content_loaded) {
     }
     if (msg.action === "execute_dom_action") {
       sendResponse(handleDomAction(msg.type, msg.payload));
+      return;
+    }
+    if (msg.action === "get_full_page_text") {
+      sendResponse({ text: getFullPageText() });
       return;
     }
   });

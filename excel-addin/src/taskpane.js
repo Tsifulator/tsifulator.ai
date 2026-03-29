@@ -7,11 +7,13 @@ import "./taskpane.css";
 import { getCurrentUser, signIn, signUp, signOut } from "./auth.js";
 
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
+const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v24";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v40";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
+let pendingImages      = [];     // base64 images queued for next message
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 
@@ -59,6 +61,49 @@ function showChatScreen(user) {
   document.getElementById("user-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
   });
+
+  // Image attachment — file picker
+  document.getElementById("attach-btn").addEventListener("click", () => {
+    document.getElementById("image-input").click();
+  });
+  document.getElementById("image-input").addEventListener("change", (e) => {
+    handleImageSelect(e);
+  });
+
+  // Image attachment — paste from clipboard
+  document.getElementById("user-input").addEventListener("paste", handleImagePaste);
+
+  // Image attachment — drag & drop onto input area
+  const inputArea = document.getElementById("input-area");
+  inputArea.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    inputArea.style.outline = "2px dashed var(--blue)";
+    inputArea.style.outlineOffset = "-2px";
+    inputArea.style.background = "var(--blue-light)";
+  });
+  inputArea.addEventListener("dragleave", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    inputArea.style.outline = "";
+    inputArea.style.outlineOffset = "";
+    inputArea.style.background = "";
+  });
+  inputArea.addEventListener("drop", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    inputArea.style.outline = "";
+    inputArea.style.outlineOffset = "";
+    inputArea.style.background = "";
+    const files = Array.from(e.dataTransfer?.files || []);
+    let count = 0;
+    for (const file of files) {
+      if (!file.type.startsWith("image/")) continue;
+      readImageAsBase64(file);
+      count++;
+    }
+    if (count === 0) setStatus("No image files found in drop");
+  });
   document.getElementById("logout-btn").addEventListener("click", async () => {
     await signOut();
     CURRENT_USER = null;
@@ -99,6 +144,122 @@ async function handleSignUp() {
   errEl.textContent = "Account created! Check your email to confirm, then sign in.";
 }
 
+// ── Image Handling ────────────────────────────────────────────────────────────
+
+function handleImageSelect(e) {
+  const files = Array.from(e.target.files);
+  for (const file of files) {
+    if (!file.type.startsWith("image/")) continue;
+    readImageAsBase64(file);
+  }
+  e.target.value = "";  // reset so same file can be re-selected
+}
+
+function handleImagePaste(e) {
+  const items = Array.from(e.clipboardData?.items || []);
+  for (const item of items) {
+    if (!item.type.startsWith("image/")) continue;
+    const file = item.getAsFile();
+    if (file) readImageAsBase64(file);
+  }
+}
+
+function readImageAsBase64(file) {
+  setStatus(`📎 reading ${file.name} (${file.type}, ${Math.round(file.size/1024)}KB)...`);
+  const reader = new FileReader();
+  reader.onload = () => {
+    const base64 = reader.result;  // data:image/png;base64,...
+    const mediaType = file.type || "image/png";
+    const data = base64.split(",")[1];  // strip the data:... prefix
+    pendingImages.push({ media_type: mediaType, data });
+    setStatus(`✅ image captured · ${data.length} chars base64 · ${pendingImages.length} pending`);
+    updateImagePreview();
+  };
+  reader.onerror = () => {
+    setStatus(`❌ FileReader error: ${reader.error}`);
+  };
+  reader.readAsDataURL(file);
+}
+
+/** Convert base64 string to a blob URL for safe rendering in the webview */
+function base64ToBlobUrl(base64, mediaType) {
+  const byteChars = atob(base64);
+  const byteArray = new Uint8Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i++) byteArray[i] = byteChars.charCodeAt(i);
+  const blob = new Blob([byteArray], { type: mediaType });
+  return URL.createObjectURL(blob);
+}
+
+function updateImagePreview() {
+  const bar = document.getElementById("image-preview-bar");
+  const attachBtn = document.getElementById("attach-btn");
+  bar.innerHTML = "";
+
+  if (pendingImages.length === 0) {
+    bar.style.display = "none";
+    attachBtn.textContent = "+";
+    attachBtn.title = "Attach image";
+    return;
+  }
+
+  // Update attach button to show count
+  attachBtn.textContent = `${pendingImages.length}`;
+  attachBtn.title = `${pendingImages.length} image${pendingImages.length > 1 ? "s" : ""} attached — click to add more`;
+  setStatus(`${pendingImages.length} image${pendingImages.length > 1 ? "s" : ""} attached`);
+
+  bar.style.display = "flex";
+  pendingImages.forEach((img, i) => {
+    const wrapper = document.createElement("div");
+    wrapper.className = "image-preview-item";
+
+    // Render to canvas (bypasses CSP restrictions on data:/blob: img src)
+    renderImageToCanvas(img.data, img.media_type, 48, 48).then(canvas => {
+      if (canvas) {
+        canvas.style.borderRadius = "4px";
+        canvas.style.border = "1px solid var(--border)";
+        wrapper.insertBefore(canvas, wrapper.firstChild);
+      }
+    });
+
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "remove-img";
+    removeBtn.textContent = "x";
+    removeBtn.addEventListener("click", () => {
+      pendingImages.splice(i, 1);
+      updateImagePreview();
+    });
+
+    wrapper.appendChild(removeBtn);
+    bar.appendChild(wrapper);
+  });
+}
+
+/** Render base64 image data onto a canvas element (bypasses all CSP img-src restrictions) */
+async function renderImageToCanvas(base64Data, mediaType, maxW, maxH) {
+  try {
+    const byteChars = atob(base64Data);
+    const byteArray = new Uint8Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) byteArray[i] = byteChars.charCodeAt(i);
+    const blob = new Blob([byteArray], { type: mediaType || "image/png" });
+    const bitmap = await createImageBitmap(blob);
+
+    let w = bitmap.width, h = bitmap.height;
+    const scale = Math.min(maxW / w, maxH / h, 1);
+    w = Math.round(w * scale);
+    h = Math.round(h * scale);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, w, h);
+    bitmap.close();
+    return canvas;
+  } catch (e) {
+    console.warn("renderImageToCanvas failed:", e);
+    return null;
+  }
+}
+
 // ── Chat ──────────────────────────────────────────────────────────────────────
 
 async function handleSubmit() {
@@ -107,9 +268,12 @@ async function handleSubmit() {
   if (!message || !CURRENT_USER) return;
 
   lastNavigatedSheet = null;   // reset cross-action sheet tracking for this request
+  const images = [...pendingImages];  // capture attached images
+  pendingImages = [];
+  updateImagePreview();
   input.value = "";
   setSubmitEnabled(false);
-  appendMessage("user", message);
+  appendMessage("user", message, images);
   setStatus("Reading workbook...");
 
   try {
@@ -123,6 +287,7 @@ async function handleSubmit() {
         user_id: CURRENT_USER.id,
         message: message,
         context: excelContext,
+        images:  images.length > 0 ? images : undefined,
       }),
     });
 
@@ -258,6 +423,18 @@ function colLetterToIndex(col) {
   let n = 0;
   for (const c of col.toUpperCase()) n = n * 26 + c.charCodeAt(0) - 64;
   return n - 1;
+}
+
+/** Convert 0-based index to column letter: 0 → "A", 25 → "Z", 26 → "AA" */
+function indexToColLetter(idx) {
+  let s = "";
+  idx += 1;
+  while (idx > 0) {
+    const rem = (idx - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    idx = Math.floor((idx - 1) / 26);
+  }
+  return s;
 }
 
 /** Get column letter from a cell address like "B4" → "B" */
@@ -601,6 +778,150 @@ async function executeAction(action) {
     savePreferences(payload);
     // No Excel run needed — just localStorage
   }
+
+  // ── import_csv ──────────────────────────────────────────────────────────────
+  // Reads a CSV file from the server filesystem and writes it into Excel.
+  // Creates named ranges for each column so formulas can use =SUM(Revenue) etc.
+  // payload: { path, sheet?, start_cell?, delimiter?, table_name? }
+  else if (type === "import_csv") {
+    // 1. Fetch CSV data — try remote backend first, then local fallback
+    const fetchBody = JSON.stringify({
+      path: payload.path,
+      delimiter: payload.delimiter || ",",
+    });
+    const fetchOpts = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: fetchBody,
+    };
+
+    let csvData;
+    let resp = await fetch(`${BACKEND_URL}/files/read-csv`, fetchOpts).catch(() => null);
+
+    if (resp && resp.ok) {
+      csvData = await resp.json();
+    } else {
+      // Remote failed (file not on Railway) — try local backend (file on user's machine)
+      let localResp;
+      try {
+        localResp = await fetch(`${LOCAL_URL}/files/read-csv`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: fetchBody,
+        });
+      } catch (_) { localResp = null; }
+
+      if (localResp && localResp.ok) {
+        csvData = await localResp.json();
+      } else {
+        const errDetail = resp ? (await resp.json().catch(() => ({}))).detail : "Remote backend unreachable";
+        const localDetail = localResp ? (await localResp.json().catch(() => ({}))).detail : "Local backend not running (start with: cd backend && python -m uvicorn main:app --reload)";
+        throw new Error(`import_csv: File not found. Remote: ${errDetail}. Local: ${localDetail}`);
+      }
+    }
+    const data2D = csvData.data;
+
+    if (!data2D || data2D.length === 0) {
+      throw new Error("import_csv: CSV file is empty");
+    }
+
+    // Pre-compute everything outside Excel.run
+    const targetSheetName = payload.sheet || "Data";
+    const startCell = payload.start_cell || "A1";
+    const numRows = data2D.length;
+    const numCols = Math.max(...data2D.map(r => r.length));
+    const padded = data2D.map(r => {
+      const row = [...r];
+      while (row.length < numCols) row.push("");
+      return row;
+    });
+    const startCol = startCell.replace(/[0-9]/g, "");
+    const startRowNum = parseInt(startCell.replace(/[A-Za-z]/g, ""), 10);
+    const endColIdx = colLetterToIndex(startCol) + numCols - 1;
+    const endCol = indexToColLetter(endColIdx);
+    const endRow = startRowNum + numRows - 1;
+    const rangeAddr = `${startCol}${startRowNum}:${endCol}${endRow}`;
+    const headers = data2D[0].map(h => String(h).trim());
+
+    // 2. Write data into Excel (isolated Excel.run)
+    await Excel.run(async (ctx) => {
+      const ws = ctx.workbook.worksheets.getItemOrNullObject(targetSheetName);
+      ws.load("isNullObject");
+      await ctx.sync();
+
+      let sheet;
+      if (ws.isNullObject) {
+        sheet = ctx.workbook.worksheets.add(targetSheetName);
+      } else {
+        sheet = ctx.workbook.worksheets.getItem(targetSheetName);
+      }
+      sheet.activate();
+      sheet.getRange(rangeAddr).values = padded;
+      await ctx.sync();
+    });
+
+    // 3. Create named ranges for each column header — single Excel.run with per-name isolation
+    const EXCEL_RESERVED = new Set([
+      "DATE","YEAR","MONTH","DAY","TIME","HOUR","MINUTE","SECOND","NOW","TODAY",
+      "IF","OR","AND","NOT","TRUE","FALSE","SUM","AVERAGE","COUNT","MAX","MIN",
+      "INDEX","MATCH","VLOOKUP","HLOOKUP","OFFSET","INDIRECT","ROW","COLUMN",
+      "MOD","INT","ROUND","ABS","SIGN","LOG","LN","EXP","SQRT","PI","RAND",
+      "LEFT","RIGHT","MID","LEN","TRIM","UPPER","LOWER","FIND","SEARCH","TEXT",
+      "VALUE","TYPE","ISNUMBER","ISTEXT","ISERROR","ISBLANK","NA","CHOOSE",
+    ]);
+    const dataStartRow = startRowNum + 1;
+
+    await Excel.run(async (ctx) => {
+      const sheet = ctx.workbook.worksheets.getItem(targetSheetName);
+
+      for (let i = 0; i < headers.length; i++) {
+        const header = headers[i];
+        if (!header) continue;
+
+        let safeName = header.replace(/[^a-zA-Z0-9_]/g, "_").replace(/^[0-9]/, "_$&");
+        if (!safeName) continue;
+        if (EXCEL_RESERVED.has(safeName.toUpperCase())) safeName = "col_" + safeName;
+
+        const colLetter = indexToColLetter(colLetterToIndex(startCol) + i);
+        const colRange = sheet.getRange(`${colLetter}${dataStartRow}:${colLetter}${endRow}`);
+
+        try {
+          const existing = ctx.workbook.names.getItemOrNullObject(safeName);
+          existing.load("isNullObject");
+          await ctx.sync();
+          if (!existing.isNullObject) existing.delete();
+          ctx.workbook.names.add(safeName, colRange);
+          await ctx.sync();
+        } catch (e) {
+          console.warn(`Named range "${safeName}" skipped: ${e.message}`);
+        }
+      }
+    });
+
+    // 4. Autofit (separate Excel.run)
+    await Excel.run(async (ctx) => {
+      const sheet = ctx.workbook.worksheets.getItem(targetSheetName);
+      sheet.getUsedRange().format.autofitColumns();
+      await ctx.sync();
+    });
+
+    lastNavigatedSheet = targetSheetName;
+  }
+
+  // ── launch_app ──────────────────────────────────────────────────────────────
+  else if (type === "launch_app") {
+    try {
+      const resp = await fetch(`${BACKEND_URL}/launch-app`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ app_name: payload.app_name }),
+      });
+      const result = await resp.json();
+      appendMessage("action", `launch_app: ${result.message || "Requested"}`);
+    } catch (e) {
+      appendMessage("action", `launch_app: ${e.message}`);
+    }
+  }
 }
 
 // ── Format helper (shared by write_cell, write_range, format_range) ──────────
@@ -658,11 +979,47 @@ async function saveUserConfig(user) {
 
 // ── UI Helpers ────────────────────────────────────────────────────────────────
 
-function appendMessage(role, text) {
+function appendMessage(role, text, images) {
   const history = document.getElementById("chat-history");
   const div     = document.createElement("div");
   div.className   = `message ${role}`;
-  div.textContent = text;
+
+  // Add text as a text node
+  const textNode = document.createElement("span");
+  textNode.textContent = text;
+  div.appendChild(textNode);
+
+  // Show image thumbnails in user messages (like Claude's inline preview)
+  if (images && images.length > 0) {
+    for (const img of images) {
+      const container = document.createElement("div");
+      container.style.cssText = "margin-top:8px;";
+      div.appendChild(container);
+
+      // Render to canvas (bypasses CSP restrictions on img src in Office.js webview)
+      renderImageToCanvas(img.data, img.media_type, 280, 180).then(canvas => {
+        if (canvas) {
+          canvas.style.borderRadius = "8px";
+          canvas.style.border = "1px solid var(--border)";
+          canvas.style.display = "block";
+          canvas.style.maxWidth = "100%";
+          canvas.style.boxShadow = "0 1px 3px rgba(0,0,0,0.08)";
+          container.appendChild(canvas);
+        } else {
+          // Fallback: show badge if canvas fails
+          const badge = document.createElement("div");
+          badge.className = "image-badge";
+          badge.textContent = `📷 Image attached`;
+          container.appendChild(badge);
+        }
+      }).catch(() => {
+        const badge = document.createElement("div");
+        badge.className = "image-badge";
+        badge.textContent = `📷 Image attached`;
+        container.appendChild(badge);
+      });
+    }
+  }
   history.appendChild(div);
   history.scrollTop = history.scrollHeight;
 }

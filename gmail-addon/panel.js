@@ -1,7 +1,7 @@
 /**
  * tsifl — Side Panel Script
  * Handles auth, chat, images, and action execution.
- * Runs inside Chrome's native Side Panel.
+ * All browser actions are routed through background.js for reliability.
  */
 
 const BACKEND_URL = "https://focused-solace-production-6839.up.railway.app";
@@ -81,6 +81,7 @@ async function handleSignIn() {
   const password = document.getElementById("tsifl-auth-password").value;
   const errEl = document.getElementById("tsifl-auth-error");
   errEl.textContent = "";
+  errEl.style.color = "#DC2626";
   if (!email || !password) { errEl.textContent = "Enter email and password."; return; }
 
   const result = await supabaseAuth("token?grant_type=password", { email, password });
@@ -98,6 +99,7 @@ async function handleSignUp() {
   const password = document.getElementById("tsifl-auth-password").value;
   const errEl = document.getElementById("tsifl-auth-error");
   errEl.textContent = "";
+  errEl.style.color = "#DC2626";
   if (!email || !password) { errEl.textContent = "Enter email and password."; return; }
   if (password.length < 6) { errEl.textContent = "Password must be 6+ characters."; return; }
 
@@ -124,10 +126,27 @@ function showChat(user) {
 
 // ── Context ──────────────────────────────────────────────────────────────
 
-async function getContext() {
+function getContext() {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage({ action: "get_context" }, (response) => {
-      resolve(response?.context || { app: "browser" });
+      if (chrome.runtime.lastError) {
+        resolve({ app: "browser" });
+      } else {
+        resolve(response?.context || { app: "browser" });
+      }
+    });
+  });
+}
+
+// Get full page text for summarization
+function getPageText() {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ action: "get_page_text" }, (response) => {
+      if (chrome.runtime.lastError) {
+        resolve("");
+      } else {
+        resolve(response?.text || "");
+      }
     });
   });
 }
@@ -154,7 +173,7 @@ function updateImagePreview() {
   bar.innerHTML = pendingImages.map((img, i) =>
     `<div class="tsifl-image-preview-item">
       <img src="${img.preview}"/>
-      <button class="tsifl-remove-img" data-i="${i}">×</button>
+      <button class="tsifl-remove-img" data-i="${i}">\u00d7</button>
     </div>`
   ).join("");
   bar.querySelectorAll(".tsifl-remove-img").forEach(b =>
@@ -163,6 +182,18 @@ function updateImagePreview() {
 }
 
 // ── Chat ─────────────────────────────────────────────────────────────────
+
+// Detect if user is asking for a page summary
+function isSummarizationRequest(msg) {
+  const lower = msg.toLowerCase();
+  const triggers = [
+    "summarize", "summary", "summarise", "main points", "key points", "key takeaways",
+    "tldr", "tl;dr", "what does this page say", "what is this page about", "what is this article about",
+    "explain this page", "explain this article", "break down this article", "overview of this",
+    "give me the gist", "what's this about", "digest this",
+  ];
+  return triggers.some(t => lower.includes(t));
+}
 
 async function handleSubmit() {
   const input = document.getElementById("tsifl-user-input");
@@ -182,12 +213,20 @@ async function handleSubmit() {
   try {
     const context = await getContext();
 
+    // If this looks like a summarization request, capture full page text
+    if (isSummarizationRequest(msg)) {
+      const pageText = await getPageText();
+      if (pageText) {
+        context.full_page_text = pageText;
+      }
+    }
+
     // Update site badge
     const badge = document.getElementById("tsifl-site-badge");
     const siteLabels = { gmail: "Gmail", google_sheets: "Sheets", google_docs: "Docs", google_slides: "Slides", browser: "Browser" };
     if (badge) badge.textContent = siteLabels[context.app] || "Browser";
     const userBar = document.getElementById("tsifl-user-bar");
-    if (userBar && currentUser) userBar.textContent = `${currentUser.email} · ${siteLabels[context.app] || "Browser"}`;
+    if (userBar && currentUser) userBar.textContent = `${currentUser.email} \u00b7 ${siteLabels[context.app] || "Browser"}`;
 
     const resp = await fetch(`${BACKEND_URL}/chat/`, {
       method: "POST",
@@ -249,34 +288,57 @@ async function executeAction(action) {
       const result = await resp.json();
       appendMessage("action", `${type}: ${result.status || "Done"}`);
     } catch (e) {
-      appendMessage("action", `${type}: Failed — ${e.message}`);
+      appendMessage("action", `${type}: Failed \u2014 ${e.message}`);
     }
     return;
   }
 
-  // Browser actions — delegate to background.js which uses Chrome APIs
+  // All browser/DOM actions — route through background service worker for reliability
   const browserActions = [
     "open_url", "open_url_current_tab", "search_web",
     "navigate_back", "navigate_forward",
-    "scroll_to", "click_element", "fill_input", "extract_text"
+    "scroll_to", "click_element", "fill_input", "extract_text",
   ];
 
   if (browserActions.includes(type)) {
     try {
-      const result = await chrome.runtime.sendMessage({
-        action: "execute_browser_action",
-        type,
-        payload,
+      const result = await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          { action: "execute_browser_action", type, payload },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else {
+              resolve(response);
+            }
+          }
+        );
       });
-      appendMessage("action", `${type}: ${result.message || "Done"}`);
+      appendMessage("action", `${type}: ${result?.message || "Done"}`);
     } catch (e) {
-      appendMessage("action", `${type}: Failed — ${e.message}`);
+      appendMessage("action", `${type}: Failed \u2014 ${e.message}`);
     }
     return;
   }
 
-  // Text-only actions (summarize, explain, etc.)
-  appendMessage("action", `${type}: See reply above.`);
+  // launch_app — request backend to open a local app
+  if (type === "launch_app") {
+    try {
+      const resp = await fetch(`${BACKEND_URL}/launch-app`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const result = await resp.json();
+      appendMessage("action", `launch_app: ${result.message || result.status || "Requested"}`);
+    } catch (e) {
+      appendMessage("action", `launch_app: ${e.message}`);
+    }
+    return;
+  }
+
+  // Fallback for unknown action types
+  appendMessage("action", `${type}: Done`);
 }
 
 // ── UI Helpers ───────────────────────────────────────────────────────────
@@ -285,7 +347,14 @@ function appendMessage(role, text, imageCount) {
   const h = document.getElementById("tsifl-chat-history");
   const d = document.createElement("div");
   d.className = `tsifl-msg ${role}`;
-  d.textContent = text || "";
+
+  // Render markdown-like formatting for assistant messages
+  if (role === "assistant" && text) {
+    d.innerHTML = renderMarkdown(text);
+  } else {
+    d.textContent = text || "";
+  }
+
   if (imageCount > 0) {
     const b = document.createElement("div");
     b.className = "tsifl-image-badge";
@@ -294,6 +363,18 @@ function appendMessage(role, text, imageCount) {
   }
   h.appendChild(d);
   h.scrollTop = h.scrollHeight;
+}
+
+function renderMarkdown(text) {
+  // Basic markdown rendering — bold, italic, code, links
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/`([^`]+)`/g, '<code style="background:#F1F5F9;padding:1px 4px;border-radius:3px;font-size:12px;">$1</code>')
+    .replace(/\n/g, "<br>");
 }
 
 function setStatus(text) {

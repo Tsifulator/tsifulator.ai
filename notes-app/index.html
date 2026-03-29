@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>tsifl Notes</title>
+  <style>
+    :root {
+      --blue: #0D5EAF;
+      --blue-hover: #0A4896;
+      --blue-light: #EBF3FB;
+      --bg: #F8FAFC;
+      --surface: #FFFFFF;
+      --border: #E2E8F0;
+      --text: #1E293B;
+      --text-muted: #64748B;
+      --green: #16A34A;
+      --red: #DC2626;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
+
+    /* Layout */
+    #app { display: flex; height: 100vh; }
+
+    /* Login */
+    #login-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100vh; padding: 20px; gap: 10px; }
+    #login-screen h1 { color: var(--blue); font-size: 28px; font-weight: 700; }
+    #login-tagline { color: var(--text-muted); font-size: 13px; margin-bottom: 24px; }
+    #login-form { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 320px; }
+    #login-form input { width: 100%; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-size: 14px; outline: none; }
+    #login-form input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(13,94,175,0.1); }
+    #login-btn { background: var(--blue); color: white; border: none; border-radius: 6px; padding: 10px; font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 4px; }
+    #login-btn:hover { background: var(--blue-hover); }
+    #signup-btn { background: transparent; color: var(--blue); border: 1px solid var(--border); border-radius: 6px; padding: 9px; font-size: 14px; cursor: pointer; }
+    #auth-error { font-size: 12px; color: var(--red); text-align: center; min-height: 16px; }
+
+    /* Sidebar */
+    #sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+    #sidebar-header { padding: 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+    #sidebar-header h2 { color: var(--blue); font-size: 16px; font-weight: 700; }
+    #new-note-btn { background: var(--blue); color: white; border: none; border-radius: 6px; padding: 6px 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    #new-note-btn:hover { background: var(--blue-hover); }
+
+    #search-bar { padding: 8px 16px; }
+    #search-input { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 13px; outline: none; }
+    #search-input:focus { border-color: var(--blue); }
+
+    #folders-list { padding: 8px 16px; }
+    .folder-item { padding: 6px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; color: var(--text-muted); margin-bottom: 2px; }
+    .folder-item:hover, .folder-item.active { background: var(--blue-light); color: var(--blue); font-weight: 500; }
+
+    #notes-list { flex: 1; overflow-y: auto; padding: 0 8px 8px; }
+    #notes-list::-webkit-scrollbar { width: 4px; }
+    #notes-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    .note-item { padding: 10px 12px; border-radius: 6px; cursor: pointer; margin-bottom: 4px; border: 1px solid transparent; }
+    .note-item:hover { background: var(--bg); }
+    .note-item.active { background: var(--blue-light); border-color: rgba(13,94,175,0.2); }
+    .note-item-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .note-item-preview { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .note-item-date { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+    #user-bar { padding: 8px 16px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-muted); cursor: default; }
+
+    /* Editor */
+    #editor { flex: 1; display: flex; flex-direction: column; }
+    #editor-toolbar { padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--surface); display: flex; align-items: center; gap: 8px; }
+    #note-title-input { flex: 1; border: none; font-size: 18px; font-weight: 600; color: var(--text); outline: none; background: transparent; }
+    #note-title-input::placeholder { color: var(--border); }
+    .toolbar-btn { background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+    .toolbar-btn:hover { background: var(--blue-light); color: var(--blue); border-color: var(--blue); }
+    .toolbar-btn.danger { color: var(--red); }
+    .toolbar-btn.danger:hover { background: #FEF2F2; border-color: var(--red); }
+
+    #note-content { flex: 1; padding: 20px; font-size: 14px; line-height: 1.7; outline: none; overflow-y: auto; resize: none; border: none; background: var(--surface); color: var(--text); font-family: inherit; }
+    #note-content::placeholder { color: var(--border); }
+
+    #editor-footer { padding: 8px 20px; border-top: 1px solid var(--border); background: var(--surface); display: flex; align-items: center; gap: 8px; }
+    #ai-input { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 13px; outline: none; font-family: inherit; }
+    #ai-input:focus { border-color: var(--blue); }
+    #ai-send-btn { background: var(--blue); color: white; border: none; border-radius: 6px; padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    #ai-send-btn:hover { background: var(--blue-hover); }
+    #ai-send-btn:disabled { background: var(--border); cursor: not-allowed; }
+
+    #empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; color: var(--text-muted); font-size: 14px; gap: 8px; }
+
+    /* Tags */
+    .tag { display: inline-block; background: var(--blue-light); color: var(--blue); font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 10px; margin-right: 4px; border: 1px solid rgba(13,94,175,0.15); }
+
+    /* AI response area */
+    #ai-response { display: none; padding: 12px 20px; background: #F0FDF4; border-top: 1px solid #BBF7D0; font-size: 13px; line-height: 1.5; max-height: 200px; overflow-y: auto; }
+    #ai-response.visible { display: block; }
+
+    @media (max-width: 640px) {
+      #sidebar { width: 200px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="login-screen">
+    <h1>tsifl Notes</h1>
+    <div id="login-tagline">AI-powered notes for financial analysts</div>
+    <div id="login-form">
+      <input type="email" id="auth-email" placeholder="Email"/>
+      <input type="password" id="auth-password" placeholder="Password"/>
+      <button id="login-btn">Sign In</button>
+      <button id="signup-btn">Create Account</button>
+      <div id="auth-error"></div>
+    </div>
+  </div>
+
+  <div id="app" style="display:none;">
+    <div id="sidebar">
+      <div id="sidebar-header">
+        <h2>tsifl Notes</h2>
+        <button id="new-note-btn">+ New</button>
+      </div>
+      <div id="search-bar">
+        <input id="search-input" placeholder="Search notes..." />
+      </div>
+      <div id="folders-list"></div>
+      <div id="notes-list"></div>
+      <div id="user-bar"></div>
+    </div>
+
+    <div id="editor">
+      <div id="empty-state">
+        <div style="font-size:24px;color:var(--blue);font-weight:700;">tsifl Notes</div>
+        <div>Select a note or create a new one</div>
+        <div style="font-size:12px;">Use AI to summarize, extract action items, or generate content</div>
+      </div>
+      <div id="editor-toolbar" style="display:none;">
+        <input id="note-title-input" placeholder="Note title..." />
+        <button class="toolbar-btn" id="ai-summarize-btn">Summarize</button>
+        <button class="toolbar-btn" id="ai-actions-btn">Action Items</button>
+        <button class="toolbar-btn danger" id="delete-note-btn">Delete</button>
+      </div>
+      <textarea id="note-content" style="display:none;" placeholder="Start writing..."></textarea>
+      <div id="ai-response"></div>
+      <div id="editor-footer" style="display:none;">
+        <input id="ai-input" placeholder="Ask AI about this note..." />
+        <button id="ai-send-btn">Ask</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const BACKEND_URL = "https://focused-solace-production-6839.up.railway.app";
+    const SUPABASE_URL = "https://dvynmzeyttwlmvunicqz.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR2eW5temV5dHR3bG12dW5pY3F6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2NTIwMTIsImV4cCI6MjA5MDIyODAxMn0.9j_f-2f1VswxWfqiuXy4bPnUi1qLk9nAeTDlodUBUZw";
+
+    let currentUser = null;
+    let notes = [];
+    let activeNoteId = null;
+    let activeFolder = null;
+    let saveTimeout = null;
+
+    // ── Auth ──────────────────────────────────────────────────────────────
+
+    async function supabaseAuth(endpoint, body) {
+      const resp = await fetch(`${SUPABASE_URL}/auth/v1/${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "apikey": SUPABASE_ANON_KEY },
+        body: JSON.stringify(body),
+      });
+      return resp.json();
+    }
+
+    async function syncSession(session) {
+      if (!session?.access_token) return;
+      try {
+        await fetch(`${BACKEND_URL}/auth/set-session`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            access_token: session.access_token,
+            refresh_token: session.refresh_token,
+            user_id: session.user?.id || "",
+            email: session.user?.email || "",
+          }),
+        });
+      } catch (_) {}
+    }
+
+    async function initAuth() {
+      const saved = localStorage.getItem("tsifl_notes_session");
+      if (saved) {
+        try {
+          const session = JSON.parse(saved);
+          const result = await supabaseAuth("token?grant_type=refresh_token", { refresh_token: session.refresh_token });
+          if (result.access_token) {
+            localStorage.setItem("tsifl_notes_session", JSON.stringify(result));
+            syncSession(result);
+            showApp({ id: result.user?.id || session.user?.id, email: result.user?.email || session.user?.email });
+            return;
+          }
+        } catch (_) {}
+      }
+      // Try backend shared session
+      try {
+        const resp = await fetch(`${BACKEND_URL}/auth/get-session`);
+        const data = await resp.json();
+        if (data.session?.access_token) {
+          const result = await supabaseAuth("token?grant_type=refresh_token", { refresh_token: data.session.refresh_token });
+          if (result.access_token) {
+            localStorage.setItem("tsifl_notes_session", JSON.stringify(result));
+            syncSession(result);
+            showApp({ id: result.user?.id || data.session.user_id, email: result.user?.email || data.session.email });
+            return;
+          }
+        }
+      } catch (_) {}
+    }
+
+    document.getElementById("login-btn").onclick = async () => {
+      const email = document.getElementById("auth-email").value.trim();
+      const password = document.getElementById("auth-password").value;
+      const errEl = document.getElementById("auth-error");
+      errEl.textContent = ""; errEl.style.color = "#DC2626";
+      if (!email || !password) { errEl.textContent = "Enter email and password."; return; }
+      const result = await supabaseAuth("token?grant_type=password", { email, password });
+      if (result.error || result.error_description) { errEl.textContent = result.error_description || "Sign in failed"; return; }
+      localStorage.setItem("tsifl_notes_session", JSON.stringify(result));
+      syncSession(result);
+      showApp({ id: result.user.id, email: result.user.email });
+    };
+
+    document.getElementById("signup-btn").onclick = async () => {
+      const email = document.getElementById("auth-email").value.trim();
+      const password = document.getElementById("auth-password").value;
+      const errEl = document.getElementById("auth-error");
+      errEl.textContent = ""; errEl.style.color = "#DC2626";
+      if (!email || !password) { errEl.textContent = "Enter email and password."; return; }
+      if (password.length < 6) { errEl.textContent = "Password must be 6+ characters."; return; }
+      const result = await supabaseAuth("signup", { email, password });
+      if (result.error) { errEl.textContent = result.error_description || "Sign up failed"; return; }
+      errEl.style.color = "#16A34A";
+      errEl.textContent = "Check email to confirm, then sign in.";
+    };
+
+    document.getElementById("auth-password").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") document.getElementById("login-btn").click();
+    });
+
+    function showApp(user) {
+      currentUser = user;
+      document.getElementById("login-screen").style.display = "none";
+      document.getElementById("app").style.display = "flex";
+      document.getElementById("user-bar").textContent = user.email;
+      loadNotes();
+    }
+
+    // Sign out
+    document.getElementById("user-bar").addEventListener("dblclick", () => {
+      localStorage.removeItem("tsifl_notes_session");
+      fetch(`${BACKEND_URL}/auth/clear-session`, { method: "POST" }).catch(() => {});
+      currentUser = null;
+      document.getElementById("login-screen").style.display = "flex";
+      document.getElementById("app").style.display = "none";
+    });
+
+    // ── Notes CRUD ────────────────────────────────────────────────────────
+
+    async function loadNotes() {
+      try {
+        let url = `${BACKEND_URL}/notes/?user_id=${currentUser.id}`;
+        if (activeFolder) url += `&folder=${encodeURIComponent(activeFolder)}`;
+        const resp = await fetch(url);
+        const data = await resp.json();
+        notes = data.notes || [];
+        renderNotesList();
+        loadFolders();
+      } catch (_) {
+        notes = [];
+        renderNotesList();
+      }
+    }
+
+    async function loadFolders() {
+      try {
+        const resp = await fetch(`${BACKEND_URL}/notes/folders/list?user_id=${currentUser.id}`);
+        const data = await resp.json();
+        renderFolders(data.folders || ["General"]);
+      } catch (_) {
+        renderFolders(["General"]);
+      }
+    }
+
+    async function createNote() {
+      try {
+        const resp = await fetch(`${BACKEND_URL}/notes/`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            user_id: currentUser.id,
+            title: "Untitled Note",
+            content: "",
+            folder: activeFolder || "General",
+          }),
+        });
+        const note = await resp.json();
+        notes.unshift(note);
+        renderNotesList();
+        selectNote(note.id);
+      } catch (e) {
+        console.error("Create note failed:", e);
+      }
+    }
+
+    async function saveNote() {
+      if (!activeNoteId) return;
+      const title = document.getElementById("note-title-input").value;
+      const content = document.getElementById("note-content").value;
+      try {
+        await fetch(`${BACKEND_URL}/notes/${activeNoteId}?user_id=${currentUser.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title, content }),
+        });
+        // Update local copy
+        const note = notes.find(n => n.id == activeNoteId);
+        if (note) { note.title = title; note.content = content; }
+        renderNotesList();
+      } catch (_) {}
+    }
+
+    async function deleteNote() {
+      if (!activeNoteId) return;
+      if (!confirm("Delete this note?")) return;
+      try {
+        await fetch(`${BACKEND_URL}/notes/${activeNoteId}?user_id=${currentUser.id}`, { method: "DELETE" });
+        notes = notes.filter(n => n.id != activeNoteId);
+        activeNoteId = null;
+        renderNotesList();
+        showEmptyState();
+      } catch (_) {}
+    }
+
+    function selectNote(id) {
+      activeNoteId = id;
+      const note = notes.find(n => n.id == id);
+      if (!note) return;
+
+      document.getElementById("empty-state").style.display = "none";
+      document.getElementById("editor-toolbar").style.display = "flex";
+      document.getElementById("note-content").style.display = "block";
+      document.getElementById("editor-footer").style.display = "flex";
+
+      document.getElementById("note-title-input").value = note.title || "";
+      document.getElementById("note-content").value = note.content || "";
+      document.getElementById("ai-response").className = "";
+
+      renderNotesList();
+    }
+
+    function showEmptyState() {
+      document.getElementById("empty-state").style.display = "flex";
+      document.getElementById("editor-toolbar").style.display = "none";
+      document.getElementById("note-content").style.display = "none";
+      document.getElementById("editor-footer").style.display = "none";
+      document.getElementById("ai-response").className = "";
+    }
+
+    // ── Rendering ─────────────────────────────────────────────────────────
+
+    function renderNotesList() {
+      const list = document.getElementById("notes-list");
+      const search = document.getElementById("search-input").value.toLowerCase();
+      let filtered = notes;
+      if (search) {
+        filtered = notes.filter(n => (n.title + " " + n.content).toLowerCase().includes(search));
+      }
+      list.innerHTML = filtered.map(n => {
+        const preview = (n.content || "").replace(/\n/g, " ").slice(0, 60);
+        const date = n.updated_at ? new Date(n.updated_at).toLocaleDateString() : "";
+        const active = n.id == activeNoteId ? " active" : "";
+        return `<div class="note-item${active}" data-id="${n.id}">
+          <div class="note-item-title">${escapeHtml(n.title || "Untitled")}</div>
+          <div class="note-item-preview">${escapeHtml(preview)}</div>
+          <div class="note-item-date">${date}</div>
+        </div>`;
+      }).join("");
+
+      list.querySelectorAll(".note-item").forEach(el => {
+        el.onclick = () => selectNote(el.dataset.id);
+      });
+    }
+
+    function renderFolders(folders) {
+      const el = document.getElementById("folders-list");
+      el.innerHTML = `<div class="folder-item${!activeFolder ? ' active' : ''}" data-folder="">All Notes</div>` +
+        folders.map(f => `<div class="folder-item${activeFolder === f ? ' active' : ''}" data-folder="${escapeHtml(f)}">${escapeHtml(f)}</div>`).join("");
+      el.querySelectorAll(".folder-item").forEach(item => {
+        item.onclick = () => {
+          activeFolder = item.dataset.folder || null;
+          loadNotes();
+        };
+      });
+    }
+
+    function escapeHtml(text) {
+      const d = document.createElement("div");
+      d.textContent = text;
+      return d.innerHTML;
+    }
+
+    // ── AI Integration ────────────────────────────────────────────────────
+
+    async function askAI(prompt) {
+      const content = document.getElementById("note-content").value;
+      const title = document.getElementById("note-title-input").value;
+
+      document.getElementById("ai-send-btn").disabled = true;
+      document.getElementById("ai-response").className = "visible";
+      document.getElementById("ai-response").textContent = "Thinking...";
+
+      try {
+        const resp = await fetch(`${BACKEND_URL}/chat/`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            user_id: currentUser.id,
+            message: prompt,
+            context: {
+              app: "notes",
+              note_title: title,
+              note_content: content,
+            },
+            session_id: `notes-${Date.now()}`,
+          }),
+        });
+        const result = await resp.json();
+        document.getElementById("ai-response").textContent = result.reply || "No response";
+      } catch (e) {
+        document.getElementById("ai-response").textContent = "Error: " + e.message;
+      }
+      document.getElementById("ai-send-btn").disabled = false;
+    }
+
+    // ── Events ────────────────────────────────────────────────────────────
+
+    document.getElementById("new-note-btn").onclick = createNote;
+    document.getElementById("delete-note-btn").onclick = deleteNote;
+
+    document.getElementById("ai-summarize-btn").onclick = () => askAI("Summarize this note concisely. Return a TL;DR and key points.");
+    document.getElementById("ai-actions-btn").onclick = () => askAI("Extract all action items, tasks, and to-dos from this note. Return as a numbered list.");
+
+    document.getElementById("ai-send-btn").onclick = () => {
+      const input = document.getElementById("ai-input");
+      const msg = input.value.trim();
+      if (!msg) return;
+      input.value = "";
+      askAI(msg);
+    };
+
+    document.getElementById("ai-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); document.getElementById("ai-send-btn").click(); }
+    });
+
+    // Auto-save on typing
+    document.getElementById("note-content").addEventListener("input", () => {
+      clearTimeout(saveTimeout);
+      saveTimeout = setTimeout(saveNote, 1000);
+    });
+    document.getElementById("note-title-input").addEventListener("input", () => {
+      clearTimeout(saveTimeout);
+      saveTimeout = setTimeout(saveNote, 1000);
+    });
+
+    // Search
+    document.getElementById("search-input").addEventListener("input", renderNotesList);
+
+    // ── Init ──────────────────────────────────────────────────────────────
+    initAuth();
+  </script>
+</body>
+</html>

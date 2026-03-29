@@ -2,7 +2,7 @@
   "name": "tsifl",
   "displayName": "tsifl — AI for Financial Analysts",
   "description": "Agentic AI Sandbox for Financial Analysts inside VS Code",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "publisher": "tsifulator",
   "engines": {
     "vscode": "^1.85.0"
@@ -54,6 +54,7 @@
     "menus": {
       "editor/context": [
         { "command": "tsifl.explainCode", "group": "tsifl" },
+        { "command": "tsifl.fixError", "group": "tsifl" },
         { "command": "tsifl.refactor", "group": "tsifl" },
         { "command": "tsifl.generateTests", "group": "tsifl" }
       ]

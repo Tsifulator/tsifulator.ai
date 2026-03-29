@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Install tsifl — Chrome Extension</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #1E293B;
+      background: #F8FAFC;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 60px 20px;
+    }
+    .container {
+      max-width: 640px;
+      width: 100%;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+    .header h1 {
+      color: #0D5EAF;
+      font-size: 32px;
+      font-weight: 700;
+    }
+    .header p {
+      color: #64748B;
+      font-size: 16px;
+      margin-top: 8px;
+    }
+    .card {
+      background: #FFFFFF;
+      border: 1px solid #E2E8F0;
+      border-radius: 12px;
+      padding: 32px;
+      margin-bottom: 24px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .card h2 {
+      font-size: 18px;
+      color: #0D5EAF;
+      margin-bottom: 20px;
+    }
+    .step {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .step-num {
+      flex-shrink: 0;
+      width: 32px;
+      height: 32px;
+      background: #0D5EAF;
+      color: white;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .step-content {
+      flex: 1;
+    }
+    .step-content h3 {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .step-content p {
+      font-size: 14px;
+      color: #475569;
+      line-height: 1.5;
+    }
+    code {
+      background: #F1F5F9;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 13px;
+      color: #0D5EAF;
+    }
+    .download-btn {
+      display: inline-block;
+      background: #0D5EAF;
+      color: white;
+      padding: 14px 28px;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      text-decoration: none;
+      margin-top: 16px;
+      text-align: center;
+      width: 100%;
+      cursor: pointer;
+      border: none;
+    }
+    .download-btn:hover { background: #0A4896; }
+    .shortcut {
+      display: inline-block;
+      background: #F1F5F9;
+      border: 1px solid #E2E8F0;
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-family: monospace;
+      font-size: 13px;
+      font-weight: 600;
+      color: #0D5EAF;
+    }
+    .features {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .feature {
+      background: #F8FAFC;
+      border: 1px solid #E2E8F0;
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 13px;
+    }
+    .feature strong {
+      display: block;
+      margin-bottom: 2px;
+      color: #0D5EAF;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>tsifl</h1>
+      <p>AI Assistant for Financial Analysts — works on any webpage</p>
+    </div>
+
+    <div class="card">
+      <h2>Quick Install (Developer Mode)</h2>
+
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-content">
+          <h3>Download the extension</h3>
+          <p>Click the button below to download the extension package.</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-content">
+          <h3>Open Chrome Extensions</h3>
+          <p>Navigate to <code>chrome://extensions</code> in Chrome, or go to Menu &rarr; Extensions &rarr; Manage Extensions.</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-content">
+          <h3>Enable Developer Mode</h3>
+          <p>Toggle the <strong>Developer mode</strong> switch in the top-right corner.</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-content">
+          <h3>Load the extension</h3>
+          <p>Click <strong>Load unpacked</strong> and select the unzipped <code>tsifl-extension</code> folder.</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">5</div>
+        <div class="step-content">
+          <h3>Pin it</h3>
+          <p>Click the puzzle icon in Chrome's toolbar and pin <strong>tsifl</strong> for quick access.</p>
+        </div>
+      </div>
+
+      <button class="download-btn" onclick="downloadExtension()">Download tsifl Extension</button>
+    </div>
+
+    <div class="card">
+      <h2>Usage</h2>
+      <p style="margin-bottom:12px;">Click the tsifl icon in your toolbar, or use the keyboard shortcut:</p>
+      <p><span class="shortcut">Cmd+Shift+T</span> (Mac) &nbsp; <span class="shortcut">Ctrl+Shift+T</span> (Windows/Linux)</p>
+      <p style="margin-top:12px; color:#475569; font-size:14px;">The AI sidebar opens alongside any webpage. It automatically detects Gmail, Google Sheets, Docs, and Slides for context-aware assistance.</p>
+
+      <div class="features">
+        <div class="feature"><strong>Chat</strong>Ask anything, get AI answers</div>
+        <div class="feature"><strong>Actions</strong>Open URLs, search, navigate</div>
+        <div class="feature"><strong>Summarize</strong>Summarize any page or article</div>
+        <div class="feature"><strong>Gmail</strong>Draft, send, search emails</div>
+        <div class="feature"><strong>Sheets</strong>Formula help, data analysis</div>
+        <div class="feature"><strong>Images</strong>Paste or upload for analysis</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function downloadExtension() {
+      // Create a zip of the extension files for easy download
+      alert("To install tsifl:\\n\\n1. Clone or download the repo from GitHub\\n2. Open chrome://extensions\\n3. Enable Developer Mode\\n4. Click 'Load unpacked'\\n5. Select the gmail-addon/ folder\\n\\nThe extension will appear in your toolbar!");
+    }
+  </script>
+</body>
+</html>

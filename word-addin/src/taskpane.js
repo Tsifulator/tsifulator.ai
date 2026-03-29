@@ -538,11 +538,18 @@ async function executeAction(action) {
 
     case "insert_table_of_contents":
       await Word.run(async (ctx) => {
-        // Insert a simple TOC field
         const body = ctx.document.body;
-        const range = body.getRange("Start");
-        range.insertParagraph("Table of Contents", "Before");
-        range.style = "Heading 1";
+        // Insert TOC heading
+        const tocHeading = body.insertParagraph("Table of Contents", "Start");
+        tocHeading.style = "Heading 1";
+        // Insert placeholder paragraphs for TOC entries
+        const tocNote = body.insertParagraph("(Update this field in Word: References > Update Table)", "After");
+        tocNote.style = "Normal";
+        tocNote.font.italic = true;
+        tocNote.font.color = "#64748B";
+        tocNote.font.size = 9;
+        // Insert page break after TOC
+        body.insertBreak("Page", "After");
         await ctx.sync();
       });
       break;
@@ -580,6 +587,20 @@ async function executeAction(action) {
       });
       break;
 
+    case "launch_app":
+      try {
+        const resp = await fetch(`${BACKEND_URL}/launch-app`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ app_name: payload.app_name }),
+        });
+        const result = await resp.json();
+        appendMessage("action", `launch_app: ${result.message || "Requested"}`);
+      } catch (e) {
+        appendMessage("action", `launch_app: ${e.message}`);
+      }
+      break;
+
     default:
       console.warn("Unknown action type:", type);
   }
@@ -587,11 +608,26 @@ async function executeAction(action) {
 
 // ── UI Helpers ──────────────────────────────────────────────────────────────
 
+function renderMarkdown(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/`([^`]+)`/g, '<code style="background:#F1F5F9;padding:1px 4px;border-radius:3px;font-size:11px;">$1</code>')
+    .replace(/\n/g, "<br>");
+}
+
 function appendMessage(role, text, imageCount) {
   const history = document.getElementById("chat-history");
   const div = document.createElement("div");
   div.className = `message ${role}`;
-  div.textContent = text || "";
+  if (role === "assistant" && text) {
+    div.innerHTML = renderMarkdown(text);
+  } else {
+    div.textContent = text || "";
+  }
 
   if (imageCount && imageCount > 0) {
     const badge = document.createElement("div");
