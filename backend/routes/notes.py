@@ -146,3 +146,48 @@ async def delete_note(note_id: str, user_id: str):
         del _notes_store[note_id]
         return {"status": "deleted"}
     raise HTTPException(status_code=404, detail="Note not found")
+
+
+class NoteAIRequest(BaseModel):
+    user_id: str
+    action: str  # "summarize", "expand", "rewrite", "action_items", "ask"
+    question: Optional[str] = ""  # For "ask" action
+
+
+@router.post("/{note_id}/ai")
+async def ai_action_on_note(note_id: str, request: NoteAIRequest):
+    """Run AI on a note: summarize, expand, rewrite, extract action items, or ask a question."""
+    # Get the note
+    note = None
+    if supabase:
+        try:
+            result = supabase.table("notes").select("*").eq("id", note_id).eq("user_id", request.user_id).single().execute()
+            note = result.data
+        except Exception:
+            pass
+    if not note:
+        note = _notes_store.get(note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+
+    # Build prompt based on action
+    prompts = {
+        "summarize": f"Summarize this note concisely. Provide a TL;DR and key points as bullets.\n\nTitle: {note.get('title', '')}\n\n{note.get('content', '')}",
+        "expand": f"Expand on this note with more detail, examples, and analysis. Keep the same structure but add depth.\n\nTitle: {note.get('title', '')}\n\n{note.get('content', '')}",
+        "rewrite": f"Rewrite this note to be clearer, more professional, and better organized.\n\nTitle: {note.get('title', '')}\n\n{note.get('content', '')}",
+        "action_items": f"Extract ALL action items, tasks, and to-dos from this note. Return as a numbered list with owner and deadline if mentioned.\n\nTitle: {note.get('title', '')}\n\n{note.get('content', '')}",
+        "ask": f"{request.question}\n\nContext — Note title: {note.get('title', '')}\nNote content: {note.get('content', '')}",
+    }
+
+    prompt = prompts.get(request.action, prompts.get("ask", request.question or "Summarize this note."))
+
+    try:
+        from services.claude import get_claude_response
+        result = await get_claude_response(
+            message=prompt,
+            context={"app": "notes", "note_title": note.get("title", ""), "note_content": note.get("content", "")},
+            session_id=f"notes-ai-{note_id}",
+        )
+        return {"result": result.get("reply", "No response"), "action": request.action}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI error: {str(e)}")
