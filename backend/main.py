@@ -87,12 +87,25 @@ APP_NAMES = {
 
 @app.post("/launch-app")
 async def launch_app(request: LaunchAppRequest):
+    import platform
     app_key = request.app_name.lower().strip()
     app_name = APP_NAMES.get(app_key)
     if not app_name:
         return {"status": "error", "message": f"Unknown app: {request.app_name}. Available: {', '.join(set(APP_NAMES.values()))}"}
-    try:
-        subprocess.Popen(["open", "-a", app_name])
-        return {"status": "ok", "message": f"Launching {app_name}"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+
+    system = platform.system()
+    if system == "Darwin":
+        try:
+            subprocess.Popen(["open", "-a", app_name])
+            return {"status": "ok", "message": f"Launching {app_name}"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+    elif system == "Windows":
+        try:
+            subprocess.Popen(["start", "", app_name], shell=True)
+            return {"status": "ok", "message": f"Launching {app_name}"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+    else:
+        # Linux/server — can't launch desktop apps
+        return {"status": "info", "message": f"Launch requested for {app_name} — run locally to use this feature"}
