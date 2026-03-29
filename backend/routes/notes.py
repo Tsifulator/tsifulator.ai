@@ -62,6 +62,15 @@ async def list_notes(user_id: str, folder: Optional[str] = None, search: Optiona
     return {"notes": notes}
 
 
+@router.get("/folders/list")
+async def list_folders(user_id: str):
+    notes = _get_notes_for_user(user_id)
+    folders = list(set(n.get("folder", "General") for n in notes))
+    if "General" not in folders:
+        folders.insert(0, "General")
+    return {"folders": sorted(folders)}
+
+
 @router.get("/{note_id}")
 async def get_note(note_id: str, user_id: str):
     if supabase:
@@ -137,12 +146,3 @@ async def delete_note(note_id: str, user_id: str):
         del _notes_store[note_id]
         return {"status": "deleted"}
     raise HTTPException(status_code=404, detail="Note not found")
-
-
-@router.get("/folders/list")
-async def list_folders(user_id: str):
-    notes = _get_notes_for_user(user_id)
-    folders = list(set(n.get("folder", "General") for n in notes))
-    if "General" not in folders:
-        folders.insert(0, "General")
-    return {"folders": sorted(folders)}

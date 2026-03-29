@@ -62,31 +62,31 @@ from pydantic import BaseModel
 class LaunchAppRequest(BaseModel):
     app_name: str
 
-APP_COMMANDS = {
-    "microsoft excel": "open -a 'Microsoft Excel'",
-    "excel": "open -a 'Microsoft Excel'",
-    "microsoft powerpoint": "open -a 'Microsoft PowerPoint'",
-    "powerpoint": "open -a 'Microsoft PowerPoint'",
-    "microsoft word": "open -a 'Microsoft Word'",
-    "word": "open -a 'Microsoft Word'",
-    "visual studio code": "open -a 'Visual Studio Code'",
-    "vscode": "open -a 'Visual Studio Code'",
-    "vs code": "open -a 'Visual Studio Code'",
-    "notes": "open -a 'Notes'",
-    "terminal": "open -a 'Terminal'",
-    "safari": "open -a 'Safari'",
-    "chrome": "open -a 'Google Chrome'",
-    "finder": "open -a 'Finder'",
+APP_NAMES = {
+    "microsoft excel": "Microsoft Excel",
+    "excel": "Microsoft Excel",
+    "microsoft powerpoint": "Microsoft PowerPoint",
+    "powerpoint": "Microsoft PowerPoint",
+    "microsoft word": "Microsoft Word",
+    "word": "Microsoft Word",
+    "visual studio code": "Visual Studio Code",
+    "vscode": "Visual Studio Code",
+    "vs code": "Visual Studio Code",
+    "notes": "Notes",
+    "terminal": "Terminal",
+    "safari": "Safari",
+    "chrome": "Google Chrome",
+    "finder": "Finder",
 }
 
 @app.post("/launch-app")
 async def launch_app(request: LaunchAppRequest):
     app_key = request.app_name.lower().strip()
-    command = APP_COMMANDS.get(app_key)
-    if not command:
-        return {"status": "error", "message": f"Unknown app: {request.app_name}. Available: {', '.join(set(APP_COMMANDS.values()))}"}
+    app_name = APP_NAMES.get(app_key)
+    if not app_name:
+        return {"status": "error", "message": f"Unknown app: {request.app_name}. Available: {', '.join(set(APP_NAMES.values()))}"}
     try:
-        subprocess.Popen(command, shell=True)
-        return {"status": "ok", "message": f"Launching {request.app_name}"}
+        subprocess.Popen(["open", "-a", app_name])
+        return {"status": "ok", "message": f"Launching {app_name}"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
