@@ -147,17 +147,24 @@ class TsiflSidebarProvider {
     try {
       const context = await this._getVSCodeContext();
 
+      const chatBody = JSON.stringify({
+        user_id: message.userId,
+        message: message.text,
+        context,
+        session_id: `vscode-${Date.now()}`,
+        images: message.images || [],
+      });
+
+      // Fetch with timeout (90s)
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 90000);
       const resp = await fetch(`${BACKEND_URL}/chat/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: message.userId,
-          message: message.text,
-          context,
-          session_id: `vscode-${Date.now()}`,
-          images: message.images || [],
-        }),
+        body: chatBody,
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
 
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({ detail: resp.statusText }));

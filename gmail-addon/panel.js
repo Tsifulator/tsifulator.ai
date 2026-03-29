@@ -228,20 +228,39 @@ async function handleSubmit() {
     const userBar = document.getElementById("tsifl-user-bar");
     if (userBar && currentUser) userBar.textContent = `${currentUser.email} \u00b7 ${siteLabels[context.app] || "Browser"}`;
 
-    const resp = await fetch(`${BACKEND_URL}/chat/`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        user_id: currentUser.id,
-        message: msg,
-        context,
-        session_id: sessionId,
-        images,
-      }),
+    const chatBody = JSON.stringify({
+      user_id: currentUser.id,
+      message: msg,
+      context,
+      session_id: sessionId,
+      images,
     });
 
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    // Fetch with timeout and single retry
+    let resp;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 90000); // 90s timeout
+        resp = await fetch(`${BACKEND_URL}/chat/`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: chatBody,
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (resp.ok) break;
+      } catch (e) {
+        if (attempt === 0 && e.name === "AbortError") {
+          setStatus("Retrying...");
+          continue;
+        }
+        throw e;
+      }
+    }
+
+    if (!resp || !resp.ok) {
+      const err = resp ? await resp.json().catch(() => ({ detail: resp.statusText })) : { detail: "Request timed out" };
       appendMessage("assistant", `Error: ${err.detail || "Request failed"}`);
       setSubmitEnabled(true);
       setStatus("Ready");
