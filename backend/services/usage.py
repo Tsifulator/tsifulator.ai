@@ -17,6 +17,11 @@ async def check_and_increment_usage(user_id: str) -> dict:
     Check if user is under their limit, then increment their count.
     Returns: {"allowed": bool, "remaining": int, "used": int}
     """
+    # DEV MODE: bypass limits during active development
+    # TODO: re-enable once billing is wired up
+    if os.getenv("ENV", "production") != "production" or os.getenv("DEV_BYPASS_LIMITS", "true") == "true":
+        return {"allowed": True, "remaining": 999, "used": 0}
+
     if user_id not in _usage_store:
         _usage_store[user_id] = {"used": 0, "tier": "starter"}
 
