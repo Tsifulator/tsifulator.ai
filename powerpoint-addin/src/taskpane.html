@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>tsifl</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+</head>
+<body>
+  <div id="app">
+
+    <!-- ── LOGIN SCREEN ── -->
+    <div id="login-screen">
+      <img id="login-logo" src="/assets/tsifl-wordmark.png" alt="tsifl" />
+      <div id="login-tagline">Agentic Sandbox for Financial Analysts</div>
+
+      <div id="login-form">
+        <input type="email"    id="auth-email"    placeholder="Email" autocomplete="email"/>
+        <input type="password" id="auth-password" placeholder="Password" autocomplete="current-password"/>
+        <button id="login-btn">Sign In</button>
+        <button id="signup-btn" class="secondary">Create Account</button>
+        <div id="auth-error"></div>
+      </div>
+    </div>
+
+    <!-- ── MAIN CHAT SCREEN (shown after login) ── -->
+    <div id="chat-screen" style="display:none;">
+
+      <div id="header">
+        <img id="logo-img" src="/assets/tsifl-wordmark.png" alt="tsifl" />
+        <div id="header-right">
+          <span id="tasks-remaining"></span>
+          <button id="logout-btn" title="Sign out">↩</button>
+        </div>
+      </div>
+
+      <div id="user-bar"></div>
+
+      <div id="chat-history"></div>
+
+      <div id="input-area">
+        <div id="image-preview-bar" style="display:none;"></div>
+        <textarea
+          id="user-input"
+          placeholder="Create slides, add charts, design presentations..."
+          rows="3"
+        ></textarea>
+        <div id="input-actions">
+          <input type="file" id="image-input" accept="image/*" multiple style="display:none;" />
+          <button id="attach-btn" title="Attach image">+</button>
+          <button id="submit-btn">Send</button>
+        </div>
+      </div>
+
+      <div id="status-bar">Ready</div>
+    </div>
+
+  </div>
+  <script src="taskpane.js"></script>
+</body>
+</html>
