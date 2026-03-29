@@ -52,16 +52,11 @@ async def chat(request: ChatRequest):
             detail="Monthly task limit reached. Upgrade to Pro for unlimited tasks."
         )
 
-    # 2. Pull conversation history.
-    # Fetch enough messages to always include the original task description, even after many retries.
-    # Then trim to: first 2 messages (original task + first reply) + last 2 messages (most recent context).
-    # This prevents Claude losing the task after the 10-message window scrolls past message 1.
-    raw_history = await get_recent_history(request.user_id, limit=40)
-    if len(raw_history) > 4:
-        # Keep original task exchange + most recent exchange only
-        history = raw_history[:2] + raw_history[-2:]
-    else:
-        history = raw_history
+    # 2. Skip history for now — the workbook context contains everything Claude needs.
+    # After 19+ test rounds, the accumulated history teaches Claude to return 2-3 actions
+    # instead of the full 40+ required. Fresh context = fresh execution.
+    # TODO: re-enable history with session-scoped isolation once WearEver task is reliable.
+    history = []
 
     # 3. Save the user's message
     app = request.context.get("app", "excel")

@@ -262,7 +262,7 @@ async def get_claude_response(message: str, context: dict,
         max_tokens  = 16384,
         system      = SYSTEM_PROMPT,
         tools       = TOOLS,
-        tool_choice = {"type": "auto"},  # Call tool when acting, plain text for questions
+        tool_choice = {"type": "tool", "name": "execute_actions"},  # Force tool call — prevents planning-only replies
         messages    = messages,
     )
 
