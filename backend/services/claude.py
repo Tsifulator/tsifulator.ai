@@ -53,10 +53,11 @@ Also emit navigate_sheet before each group of actions targeting a different shee
 
 ## MULTI-SHEET TASKS
 Follow the user's instructions step by step. For each sheet:
-1. navigate_sheet
+1. navigate_sheet (this also unhides hidden sheets automatically)
 2. All write/fill/format actions for that sheet (each with sheet:"SheetName")
 3. Move to the next sheet
 Do not stop after the first sheet — continue through ALL sheets mentioned in the task.
+Hidden sheets are still valid targets — navigate_sheet will unhide them. Never skip a task just because the target sheet is hidden.
 
 ## OTHER APPS
 - RStudio: run_r_code with library() calls. Terminal: run_shell_command. Gmail: send/draft/search_email.

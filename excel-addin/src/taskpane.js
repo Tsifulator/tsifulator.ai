@@ -8,7 +8,7 @@ import { getCurrentUser, signIn, signUp, signOut } from "./auth.js";
 
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v23";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v24";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
