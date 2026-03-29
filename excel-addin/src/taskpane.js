@@ -979,14 +979,29 @@ async function saveUserConfig(user) {
 
 // ── UI Helpers ────────────────────────────────────────────────────────────────
 
+function renderMarkdown(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/`([^`]+)`/g, '<code style="background:#F1F5F9;padding:1px 4px;border-radius:3px;font-size:11px;">$1</code>')
+    .replace(/\n/g, "<br>");
+}
+
 function appendMessage(role, text, images) {
   const history = document.getElementById("chat-history");
   const div     = document.createElement("div");
   div.className   = `message ${role}`;
 
-  // Add text as a text node
+  // Add text — use markdown for assistant messages
   const textNode = document.createElement("span");
-  textNode.textContent = text;
+  if (role === "assistant" && text) {
+    textNode.innerHTML = renderMarkdown(text);
+  } else {
+    textNode.textContent = text;
+  }
   div.appendChild(textNode);
 
   // Show image thumbnails in user messages (like Claude's inline preview)
