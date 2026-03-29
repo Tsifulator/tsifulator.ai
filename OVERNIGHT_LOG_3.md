@@ -162,4 +162,40 @@
 - `gmail-addon/install.html` — Chrome extension install page
 - `notes-app/index.html` — Complete AI-powered notes web app
 - `backend/routes/notes.py` — Notes API
+- `backend/static/notes.html` — Notes app served from backend (for Railway)
 - `vscode-extension/tsifl-1.1.0.vsix` — Built extension package
+
+---
+
+## Phase 7: Continuous Iteration
+
+### Changes Made:
+
+1. **Security fixes**
+   - Switched `launch-app` from `shell=True` to list-form subprocess (eliminates shell injection risk)
+   - Fixed notes API route ordering (`/folders/list` before `/{note_id}`)
+   - Made `launch-app` platform-aware (macOS/Windows/Linux)
+
+2. **Reliability improvements**
+   - Chrome extension: 90s request timeout + single retry on abort
+   - VS Code extension: 90s request timeout via AbortController
+
+3. **UI polish**
+   - Chrome sidebar: pulse animation for thinking state, message fade-in animations, smooth transitions
+   - Excel add-in: added markdown rendering for assistant messages (consistent with all other add-ins)
+
+4. **Deployment**
+   - Notes app HTML copied to `backend/static/` for Railway serving
+   - Notes app live at: `https://focused-solace-production-6839.up.railway.app/notes-app`
+   - All endpoints tested and verified:
+     - Health check: OK
+     - Notes CRUD: OK
+     - Folders listing: OK
+     - Launch app: OK (returns info message on Linux)
+     - Auth session: OK
+     - Notes web app: OK
+
+### Deployment Status
+- Backend: Deployed to Railway (5 deployments during this session)
+- GitHub: 6 commits pushed to main
+- All endpoints verified working
