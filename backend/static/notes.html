@@ -470,6 +470,24 @@
     // Search
     document.getElementById("search-input").addEventListener("input", renderNotesList);
 
+    // ── Keyboard Shortcuts ──────────────────────────────────────────────
+    document.addEventListener("keydown", (e) => {
+      // Cmd/Ctrl+N — new note
+      if ((e.metaKey || e.ctrlKey) && e.key === "n" && currentUser) {
+        e.preventDefault();
+        createNote();
+      }
+      // Cmd/Ctrl+S — save note
+      if ((e.metaKey || e.ctrlKey) && e.key === "s" && activeNoteId) {
+        e.preventDefault();
+        saveNote();
+      }
+      // Escape — close AI response
+      if (e.key === "Escape") {
+        document.getElementById("ai-response").className = "";
+      }
+    });
+
     // ── Init ──────────────────────────────────────────────────────────────
     initAuth();
   </script>
