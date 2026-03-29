@@ -1,0 +1,69 @@
+{
+  "name": "tsifl",
+  "displayName": "tsifl — AI for Financial Analysts",
+  "description": "Agentic AI Sandbox for Financial Analysts inside VS Code",
+  "version": "1.0.0",
+  "publisher": "tsifulator",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "tsifl-sidebar",
+          "title": "tsifl",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "tsifl-sidebar": [
+        {
+          "type": "webview",
+          "id": "tsifl.chatView",
+          "name": "tsifl Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "tsifl.openChat",
+        "title": "tsifl: Open Chat"
+      },
+      {
+        "command": "tsifl.explainCode",
+        "title": "tsifl: Explain Selected Code"
+      },
+      {
+        "command": "tsifl.fixError",
+        "title": "tsifl: Fix Error"
+      },
+      {
+        "command": "tsifl.refactor",
+        "title": "tsifl: Refactor Selected Code"
+      },
+      {
+        "command": "tsifl.generateTests",
+        "title": "tsifl: Generate Tests"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        { "command": "tsifl.explainCode", "group": "tsifl" },
+        { "command": "tsifl.refactor", "group": "tsifl" },
+        { "command": "tsifl.generateTests", "group": "tsifl" }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "echo 'No compile step needed — plain JS extension'",
+    "package": "npx @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^2.22.0"
+  }
+}

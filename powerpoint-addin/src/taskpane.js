@@ -9,7 +9,7 @@ import { supabase, getCurrentUser, signIn, signUp, signOut } from "./auth.js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const BACKEND_URL = "https://focused-solace-production-6839.up.railway.app";
-const BUILD_VERSION = "v1";
+const BUILD_VERSION = "v2";
 const PREFS_KEY = "tsifl_ppt_preferences";
 
 let CURRENT_USER = null;
@@ -74,7 +74,7 @@ function showChatScreen(user) {
   CURRENT_USER = user;
   document.getElementById("login-screen").style.display = "none";
   document.getElementById("chat-screen").style.display = "flex";
-  document.getElementById("user-bar").textContent = user.email;
+  document.getElementById("user-bar").textContent = `${user.email} · ${BUILD_VERSION}`;
 
   // Save user config to backend
   saveUserConfig(user);
@@ -148,18 +148,70 @@ function addImage(file) {
   reader.readAsDataURL(file);
 }
 
+/** Render base64 image data onto a canvas element (bypasses all CSP img-src restrictions) */
+async function renderImageToCanvas(base64Data, mediaType, maxW, maxH) {
+  try {
+    const byteChars = atob(base64Data);
+    const byteArray = new Uint8Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) byteArray[i] = byteChars.charCodeAt(i);
+    const blob = new Blob([byteArray], { type: mediaType || "image/png" });
+    const bitmap = await createImageBitmap(blob);
+
+    let w = bitmap.width, h = bitmap.height;
+    const scale = Math.min(maxW / w, maxH / h, 1);
+    w = Math.round(w * scale);
+    h = Math.round(h * scale);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, w, h);
+    bitmap.close();
+    return canvas;
+  } catch (e) {
+    console.warn("renderImageToCanvas failed:", e);
+    return null;
+  }
+}
+
 function updateImagePreview() {
   const bar = document.getElementById("image-preview-bar");
-  if (pendingImages.length === 0) { bar.style.display = "none"; bar.innerHTML = ""; return; }
+  const attachBtn = document.getElementById("attach-btn");
+  bar.innerHTML = "";
+
+  if (pendingImages.length === 0) {
+    bar.style.display = "none";
+    attachBtn.textContent = "+";
+    attachBtn.title = "Attach image";
+    return;
+  }
+
+  attachBtn.textContent = `${pendingImages.length}`;
+  attachBtn.title = `${pendingImages.length} image${pendingImages.length > 1 ? "s" : ""} attached — click to add more`;
+
   bar.style.display = "flex";
-  bar.innerHTML = pendingImages.map((img, i) => `
-    <div class="image-preview-item">
-      <img src="${img.preview}" />
-      <button class="remove-img" data-idx="${i}">×</button>
-    </div>
-  `).join("");
-  bar.querySelectorAll(".remove-img").forEach(btn => {
-    btn.onclick = () => { pendingImages.splice(+btn.dataset.idx, 1); updateImagePreview(); };
+  pendingImages.forEach((img, i) => {
+    const wrapper = document.createElement("div");
+    wrapper.className = "image-preview-item";
+
+    renderImageToCanvas(img.data, img.media_type, 48, 48).then(canvas => {
+      if (canvas) {
+        canvas.style.borderRadius = "4px";
+        canvas.style.border = "1px solid var(--border)";
+        wrapper.insertBefore(canvas, wrapper.firstChild);
+      }
+    });
+
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "remove-img";
+    removeBtn.textContent = "x";
+    removeBtn.addEventListener("click", () => {
+      pendingImages.splice(i, 1);
+      updateImagePreview();
+    });
+
+    wrapper.appendChild(removeBtn);
+    bar.appendChild(wrapper);
   });
 }
 

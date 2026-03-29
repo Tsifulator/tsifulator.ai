@@ -17,7 +17,7 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 # ── System Prompt ─────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """
-You are tsifl, an AI assistant embedded inside Excel, RStudio, Terminal, PowerPoint, Word, and Gmail.
+You are tsifl, an AI assistant embedded inside Excel, RStudio, Terminal, PowerPoint, Word, Gmail, VS Code, Google Sheets, Google Docs, Google Slides, and the Browser.
 You read the user's live context and execute real operations via the execute_actions tool.
 
 ## OUTPUT RULES
@@ -242,6 +242,170 @@ Professional email rules: clear subject line, one ask per email, signature block
   Import → import_csv. Save → save_workbook.
 - If you emit run_shell_command in an Excel context, the action WILL FAIL.
 
+## GMAIL PROFESSIONAL TEMPLATES
+- Cold outreach: Short, specific, one clear ask, no fluff. Subject: benefit-oriented.
+- Follow-up: Reference prior interaction, add new value, soft ask.
+- Meeting request: Purpose, proposed times, expected duration.
+- Professional reply: Mirror the sender's tone, address all points, end with clear next step.
+- Summary email: Key points as bullets, action items with owners, deadlines highlighted.
+
+## VS CODE ACTIONS
+When app is "vscode", use these action types:
+- insert_code: {code, position?}. Insert code at cursor position.
+- replace_selection: {code}. Replace currently selected text.
+- create_file: {path, content}. Create a new file with content.
+- edit_file: {path, find, replace}. Find and replace text in a file.
+- run_terminal_command: {command}. Execute in VS Code terminal.
+- open_file: {path}. Open a file in the editor.
+- show_diff: {before, after}. Show before/after comparison.
+- explain_code: (text reply — explain the code in context)
+- fix_error: (read diagnostics, provide fix via insert_code or replace_selection)
+- refactor: (restructure code via replace_selection or edit_file)
+- generate_tests: (create test file via create_file)
+
+### VS Code Principles
+- Detect the language from context (languageId field) and follow its conventions.
+- Use language-specific best practices: Python (PEP 8, type hints), TypeScript (strict types), etc.
+- When fixing errors, read the diagnostics array and address each one.
+- When generating tests, match the project's test framework (jest, pytest, etc.) from file patterns.
+- Terminal commands: be careful with destructive operations. Prefer safe commands.
+- For refactoring: maintain the same public interface, only change internals.
+- ALWAYS use replace_selection when the user has text selected and asks to modify it.
+
+### VS Code Workflow Patterns
+- Debug workflow: read error → explain cause → provide fix → suggest test
+- Refactor pattern: explain current structure → show improved version → apply via replace_selection
+- Test generation: analyze function signatures → generate test cases → create test file
+- Code review: read code → identify issues → suggest improvements inline
+
+## GOOGLE SHEETS ACTIONS
+When app is "google_sheets", use these action types (same as Excel but for Google Sheets):
+- write_cell: {cell, value?, formula?, sheet?, bold?, color?, font_color?, number_format?}
+- write_range: {range, values?, formulas?, sheet?}
+- format_range: {range, sheet?, bold?, italic?, color?, font_color?, font_size?, number_format?, h_align?, wrap_text?, border?}
+- add_sheet: {name}
+- navigate_sheet: {sheet}
+- sort_range: {range, key_column, ascending?, sheet?}
+- add_chart: {sheet, chart_type, data_range, title?, row?, col?}
+- clear_range: {range, sheet?}
+- set_number_format: {range, format, sheet?}
+- freeze_panes: {rows?, columns?}
+- autofit: {sheet?}
+
+### Google Sheets Formula Differences from Excel
+- ARRAYFORMULA() wraps formulas that should expand: =ARRAYFORMULA(B2:B*C2:C)
+- QUERY(): =QUERY(A:D, "SELECT A, SUM(D) GROUP BY A")
+- IMPORTRANGE(): =IMPORTRANGE("spreadsheet_url", "Sheet1!A:D")
+- FILTER(): =FILTER(A2:D, B2:B="North")
+- UNIQUE(): =UNIQUE(A2:A)
+- SORT(): =SORT(A2:D, 2, FALSE) — sort by column 2 descending
+- Google Sheets uses ; as argument separator in some locales
+
+### Google Sheets Templates
+- Same as Excel (DCF, LBO, 3-statement, budget, portfolio) but use Google Sheets formula syntax
+- Use QUERY() for complex aggregations instead of multiple SUMIFS
+- Use ARRAYFORMULA for column-wide formulas instead of fill_down
+
+## GOOGLE DOCS ACTIONS
+When app is "google_docs", use these action types:
+- insert_text: {text, position?}. position: "start" or "end" (default)
+- insert_paragraph: {text, style?, alignment?}. style: "Heading1","Heading2","Heading3","Title","Subtitle","Normal"
+- insert_table: {data (2D array)}
+- format_text: {range_description, bold?, italic?, underline?, font_size?, font_color?, font_name?}
+- find_and_replace: {find_text, replace_text}
+- insert_page_break: {}
+- insert_header: {text}
+- insert_footer: {text}
+
+### Google Docs Templates
+- Memo: Date, To/From, Re, Executive Summary, Analysis, Recommendation, Appendix
+- Report: Title (Title style), TOC placeholder, Executive Summary (Heading1), Analysis sections (Heading2), Conclusion
+- Proposal: Cover page, Scope, Methodology, Timeline, Budget, Team, Terms
+- Term sheet: Parties, Valuation, Investment, Liquidation Preference, Board Composition, Vesting
+- NDA: Parties, Definition of Confidential Information, Obligations, Term, Governing Law
+
+## GOOGLE SLIDES ACTIONS
+When app is "google_slides", use these action types:
+- create_slide: {layout?, title?, content?}. layout: "BLANK","Title Slide","Title and Content","Section Header","Title Only"
+- add_text_box: {slide_index, text, left, top, width, height, font_size?, bold?, color?}
+- add_shape: {slide_index, shape_type, left, top, width, height, fill_color?, text?}
+- add_table: {slide_index, data (2D array)}
+- add_image: {slide_index, image_url, left, top, width, height}
+- delete_slide: {slide_index}
+- set_slide_background: {slide_index, color}
+- modify_slide: {slide_index, changes}
+
+### Google Slides Templates (same design principles as PowerPoint)
+- Pitch deck: Title → Problem → Solution → Market → Business Model → Traction → Team → Ask
+- Board meeting: Exec Summary → Financials → KPIs → Strategy → Outlook
+- Quarterly review: Highlights → Revenue → Expenses → Margins → Comparison → Guidance
+
+## BROWSER ACTIONS
+When app is "browser", the user is on a general webpage. You can:
+- Read the page content from context (page_text, selection, title, url)
+- Answer questions about the page content
+- Summarize the page
+- Extract data, action items, or key points
+- Help with research by analyzing the visible content
+- No direct page manipulation actions — respond with text only.
+When the user has selected text, focus your response on that selection.
+
+## POWERPOINT PROFESSIONAL TEMPLATES
+
+### Pitch Deck (10-12 slides)
+1. Title Slide: Company name, tagline, date
+2. Problem: Market pain point with data
+3. Solution: Product/service overview
+4. Market Size: TAM/SAM/SOM with sources
+5. Business Model: Revenue streams, pricing
+6. Traction: Key metrics, growth chart
+7. Competition: Competitive matrix/positioning
+8. Go-to-Market: Distribution strategy
+9. Team: Key members with backgrounds
+10. Financials: 3-year projection summary
+11. The Ask: Funding amount, use of proceeds
+12. Contact: Contact info, appendix reference
+
+### Board Meeting Deck
+1. Agenda
+2. Executive Summary
+3. Financial Performance (P&L summary)
+4. Revenue Deep Dive (by segment/geo)
+5. Key Metrics Dashboard
+6. Strategic Initiatives Update
+7. Risk Register
+8. Outlook & Guidance
+9. Discussion Topics
+10. Next Steps
+
+### Investment Memo
+1. Executive Summary
+2. Company Overview
+3. Industry Analysis
+4. Financial Analysis
+5. Valuation
+6. Risks & Mitigants
+7. Recommendation
+
+## WORD PROFESSIONAL TEMPLATES
+
+### Financial Memo
+Structure: Date → To/From/Re → Executive Summary (1 paragraph) → Background → Analysis (with tables) → Recommendation → Next Steps
+
+### Engagement Letter
+Structure: Parties → Scope of Services → Fees → Timeline → Confidentiality → Termination → Signatures
+
+### Due Diligence Report
+Structure: Executive Summary → Company Overview → Financial Analysis → Legal Review → Operational Assessment → Risk Factors → Conclusion → Appendices
+
+## CRITICAL: run_shell_command RESTRICTIONS
+- run_shell_command is ONLY for Terminal app context, or when the user explicitly asks to run a shell command.
+- In Excel context, NEVER use run_shell_command. Every Excel operation has a dedicated action type:
+  Charts → add_chart. Validation → add_data_validation. Formatting → add_conditional_format / format_range.
+  Import → import_csv. Save → save_workbook.
+- If you emit run_shell_command in an Excel context, the action WILL FAIL.
+- In PowerPoint, Word, Gmail, VS Code, Google Sheets/Docs/Slides: NEVER use run_shell_command. Use the dedicated action types for each app.
+
 ## OTHER APPS
 - RStudio: run_r_code with library() calls. Terminal: run_shell_command.
 """
@@ -253,7 +417,7 @@ TOOLS = [
         "name": "execute_actions",
         "description": (
             "Execute one or more actions in the user's active app "
-            "(Excel, RStudio, Terminal, or Gmail). "
+            "(Excel, RStudio, Terminal, Gmail, PowerPoint, Word, VS Code, Google Sheets, Google Docs, Google Slides, or Browser). "
             "Always call this tool — never output JSON as plain text."
         ),
         "input_schema": {
@@ -282,7 +446,11 @@ TOOLS = [
                                     "Word: insert_text, insert_paragraph, insert_table, insert_image, format_text, insert_header, insert_footer, insert_page_break, insert_section_break, apply_style, find_and_replace, insert_table_of_contents, add_comment, set_page_margins. "
                                     "R: run_r_code, install_package. "
                                     "Terminal: run_shell_command, write_file, open_url. "
-                                    "Gmail: send_email, draft_email, reply_email, search_emails, summarize_thread, extract_action_items."
+                                    "Gmail: send_email, draft_email, reply_email, search_emails, summarize_thread, extract_action_items. "
+                                    "VS Code: insert_code, replace_selection, create_file, edit_file, run_terminal_command, open_file, show_diff, explain_code, fix_error, refactor, generate_tests. "
+                                    "Google Sheets: write_cell, write_range, format_range, add_sheet, navigate_sheet, sort_range, add_chart, clear_range, set_number_format, freeze_panes, autofit. "
+                                    "Google Docs: insert_text, insert_paragraph, insert_table, format_text, find_and_replace, insert_page_break, insert_header, insert_footer. "
+                                    "Google Slides: create_slide, add_text_box, add_shape, add_table, add_image, delete_slide, set_slide_background, modify_slide."
                                 )
                             },
                             "payload": {
@@ -346,7 +514,26 @@ TOOLS = [
                                     "reply_email: {thread_id, body}.\n"
                                     "search_emails: {query}.\n"
                                     "summarize_thread: {thread_id}.\n"
-                                    "extract_action_items: {thread_id}."
+                                    "extract_action_items: {thread_id}.\n"
+                                    "VS Code — insert_code: {code, position?}. replace_selection: {code}.\n"
+                                    "create_file: {path, content}. edit_file: {path, find, replace}.\n"
+                                    "run_terminal_command: {command}. open_file: {path}.\n"
+                                    "show_diff: {before, after}.\n"
+                                    "Google Sheets — write_cell: {cell, value?, formula?, sheet?, bold?, color?, number_format?}.\n"
+                                    "write_range: {range, values?, formulas?, sheet?}.\n"
+                                    "format_range: {range, sheet?, bold?, color?, font_color?, font_size?, number_format?, h_align?, border?}.\n"
+                                    "add_sheet: {name}. navigate_sheet: {sheet}. sort_range: {range, key_column, ascending?}.\n"
+                                    "add_chart: {sheet, chart_type, data_range, title?, row?, col?}.\n"
+                                    "clear_range: {range}. set_number_format: {range, format}. freeze_panes: {rows?, columns?}. autofit: {}.\n"
+                                    "Google Docs — insert_text: {text, position?}. insert_paragraph: {text, style?, alignment?}.\n"
+                                    "insert_table: {data (2D)}. format_text: {range_description, bold?, italic?, font_size?, font_color?}.\n"
+                                    "find_and_replace: {find_text, replace_text}. insert_page_break: {}.\n"
+                                    "insert_header: {text}. insert_footer: {text}.\n"
+                                    "Google Slides — create_slide: {layout?, title?, content?}.\n"
+                                    "add_text_box: {slide_index, text, left, top, width, height, font_size?, bold?, color?}.\n"
+                                    "add_shape: {slide_index, shape_type, left, top, width, height, fill_color?, text?}.\n"
+                                    "add_table: {slide_index, data (2D)}. add_image: {slide_index, image_url, left, top, width, height}.\n"
+                                    "delete_slide: {slide_index}. set_slide_background: {slide_index, color}. modify_slide: {slide_index, changes}."
                                 )
                             }
                         }
@@ -591,6 +778,108 @@ def _format_context(context: dict) -> str:
             messages = current_thread.get("messages", [])
             for m in messages[:10]:
                 lines.append(f"  From: {m.get('from', '')} — {m.get('snippet', '')[:100]}")
+    elif app == "vscode":
+        lines = ["[VS CODE CONTEXT]"]
+        lines.append(f"Workspace: {context.get('workspace', '')}")
+        lines.append(f"Current file: {context.get('current_file', 'none')}")
+        lines.append(f"Language: {context.get('language', 'unknown')}")
+        lines.append(f"Lines: {context.get('line_count', 0)}")
+        open_files = context.get("open_files", [])
+        if open_files:
+            lines.append(f"Open files: {', '.join(open_files[:10])}")
+        selection = context.get("selection", "")
+        if selection:
+            lines.append(f"\nSelected text:\n{selection[:1000]}")
+        visible = context.get("visible_text", "")
+        if visible and not selection:
+            lines.append(f"\nVisible code:\n{visible[:2000]}")
+        file_content = context.get("file_content", "")
+        if file_content and not visible:
+            lines.append(f"\nFile content:\n{file_content[:3000]}")
+        diagnostics = context.get("diagnostics", [])
+        if diagnostics:
+            lines.append("\nDiagnostics:")
+            for d in diagnostics[:15]:
+                lines.append(f"  {d.get('severity','')}: {d.get('file','').split('/')[-1]}:{d.get('line',0)} — {d.get('message','')}")
+        git_branch = context.get("git_branch", "")
+        if git_branch:
+            lines.append(f"\nGit branch: {git_branch}, {context.get('git_changes', 0)} uncommitted changes")
+
+    elif app == "google_sheets":
+        lines = ["[GOOGLE SHEETS CONTEXT]"]
+        lines.append(f"Spreadsheet: {context.get('spreadsheet_name', '')}")
+        lines.append(f"Active sheet: {context.get('sheet_name', 'Sheet1')}")
+        lines.append(f"All sheets: {', '.join(context.get('all_sheets', []))}")
+        lines.append(f"Active cell: {context.get('active_cell', 'A1')}")
+        lines.append(f"Data range: {context.get('data_range', '')} ({context.get('row_count', 0)} rows × {context.get('col_count', 0)} cols)")
+        data = context.get("data", [])
+        formulas = context.get("formulas", [])
+        if data:
+            lines.append("\n[SHEET DATA]")
+            for r_idx, row in enumerate(data[:40]):
+                for c_idx, val in enumerate(row[:20]):
+                    formula = formulas[r_idx][c_idx] if formulas and r_idx < len(formulas) and c_idx < len(formulas[r_idx]) else ""
+                    display = formula if formula else val
+                    if display not in (None, "", 0):
+                        lines.append(f"  {_col_letter(c_idx)}{r_idx+1}: {repr(display)}")
+        sel_vals = context.get("selection_values", [])
+        if sel_vals:
+            lines.append(f"\nSelection values ({context.get('active_cell', '')}):")
+            for row in sel_vals[:10]:
+                lines.append(f"  {row}")
+
+    elif app == "google_docs":
+        lines = ["[GOOGLE DOCS CONTEXT]"]
+        lines.append(f"Document: {context.get('document_name', '')}")
+        lines.append(f"Paragraphs: {context.get('paragraph_count', 0)}")
+        selection = context.get("selection", "")
+        if selection:
+            lines.append(f"Selected text: {selection[:500]}")
+        cursor_text = context.get("cursor_text", "")
+        if cursor_text:
+            lines.append(f"Cursor at: {cursor_text}")
+        paragraphs = context.get("paragraphs", [])
+        if paragraphs:
+            lines.append("\n[DOCUMENT CONTENT]")
+            for p in paragraphs[:40]:
+                if p.get("type") == "table":
+                    lines.append(f"  [TABLE: {p.get('rows',0)}×{p.get('cols',0)}]")
+                else:
+                    heading = p.get("heading", "NORMAL")
+                    text = p.get("text", "")
+                    if text.strip():
+                        lines.append(f"  [{heading}] {text[:120]}")
+
+    elif app == "google_slides":
+        lines = ["[GOOGLE SLIDES CONTEXT]"]
+        lines.append(f"Presentation: {context.get('presentation_name', '')}")
+        lines.append(f"Total slides: {context.get('slide_count', 0)}")
+        lines.append(f"Current slide: {context.get('current_slide_index', 0)}")
+        selection = context.get("selection", "")
+        if selection:
+            lines.append(f"Selected text: {selection[:300]}")
+        slides = context.get("slides", [])
+        if slides:
+            lines.append("\n[SLIDE MAP]")
+            for s in slides:
+                lines.append(f"  Slide {s.get('index', 0)}: {s.get('title', '(no title)')}")
+                for sh in s.get("shapes", [])[:8]:
+                    lines.append(f"    - {sh.get('type', 'shape')}: {sh.get('text', '')[:60]}")
+
+    elif app == "browser":
+        lines = ["[BROWSER CONTEXT]"]
+        lines.append(f"URL: {context.get('url', '')}")
+        lines.append(f"Title: {context.get('title', '')}")
+        meta = context.get("meta_description", "")
+        if meta:
+            lines.append(f"Description: {meta}")
+        selection = context.get("selection", "")
+        if selection:
+            lines.append(f"\nSelected text:\n{selection[:1500]}")
+        page_text = context.get("page_text", "")
+        if page_text and not selection:
+            lines.append(f"\nPage content:\n{page_text[:2500]}")
+
     else:
         return ""
 

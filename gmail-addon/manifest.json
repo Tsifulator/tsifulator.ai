@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "tsifl — AI for Gmail",
-  "version": "1.0.0",
-  "description": "Agentic AI Sandbox for Financial Analysts — Gmail integration.",
+  "name": "tsifl — AI Assistant",
+  "version": "2.0.0",
+  "description": "Agentic AI Sandbox for Financial Analysts — works on any webpage.",
   "permissions": ["activeTab", "storage"],
   "host_permissions": [
-    "https://mail.google.com/*",
+    "https://*/*",
+    "http://*/*",
     "https://focused-solace-production-6839.up.railway.app/*"
   ],
   "icons": {
@@ -20,9 +21,18 @@
     },
     "default_title": "tsifl"
   },
+  "commands": {
+    "toggle-sidebar": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+T",
+        "mac": "Command+Shift+T"
+      },
+      "description": "Toggle tsifl sidebar"
+    }
+  },
   "content_scripts": [
     {
-      "matches": ["https://mail.google.com/*"],
+      "matches": ["<all_urls>"],
       "css": ["sidebar.css"],
       "js": ["content.js"],
       "run_at": "document_idle"
@@ -34,7 +44,7 @@
   "web_accessible_resources": [
     {
       "resources": ["sidebar.html", "icons/*"],
-      "matches": ["https://mail.google.com/*"]
+      "matches": ["<all_urls>"]
     }
   ]
 }
