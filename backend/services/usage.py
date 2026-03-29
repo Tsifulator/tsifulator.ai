@@ -10,7 +10,7 @@ import os
 # In-memory store for development. Replace with Supabase in production.
 _usage_store: dict = {}
 
-STARTER_LIMIT = int(os.getenv("STARTER_TASK_LIMIT", 40))
+STARTER_LIMIT = int(os.getenv("STARTER_TASK_LIMIT", 500))
 
 async def check_and_increment_usage(user_id: str) -> dict:
     """
