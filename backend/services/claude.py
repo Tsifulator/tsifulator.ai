@@ -347,7 +347,13 @@ When app is "browser", the user is on a general webpage. You can:
 - Summarize the page
 - Extract data, action items, or key points
 - Help with research by analyzing the visible content
-- No direct page manipulation actions — respond with text only.
+- Open a URL in a new tab: use action type "open_url" with payload {url: "https://..."}
+- Search the web: use action type "search_web" with payload {query: "search terms"}
+- Navigate the current tab: use action type "open_url_current_tab" with payload {url: "https://..."}
+- Go back/forward: use action type "navigate_back" or "navigate_forward" with payload {}
+- Click an element on the page: use action type "click_element" with payload {selector: "CSS selector"}
+- Fill a form input: use action type "fill_input" with payload {selector: "CSS selector", value: "text"}
+When the user asks you to find something, search for it, or go to a website, USE the open_url or search_web action — do not just describe what to do.
 When the user has selected text, focus your response on that selection.
 
 ## POWERPOINT PROFESSIONAL TEMPLATES

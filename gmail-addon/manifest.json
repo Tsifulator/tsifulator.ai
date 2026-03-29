@@ -1,13 +1,13 @@
 {
   "manifest_version": 3,
   "name": "tsifl — AI Assistant",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Agentic AI Sandbox for Financial Analysts — works on any webpage.",
-  "permissions": ["activeTab", "storage"],
+  "minimum_chrome_version": "114",
+  "permissions": ["activeTab", "storage", "sidePanel", "scripting", "tabs"],
   "host_permissions": [
     "https://*/*",
-    "http://*/*",
-    "https://focused-solace-production-6839.up.railway.app/*"
+    "http://*/*"
   ],
   "icons": {
     "16": "icons/icon-16.png",
@@ -30,20 +30,15 @@
       "description": "Toggle tsifl sidebar"
     }
   },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "css": ["sidebar.css"],
-      "js": ["content.js"],
-      "run_at": "document_idle"
-    }
-  ],
+  "side_panel": {
+    "default_path": "sidebar.html"
+  },
   "background": {
     "service_worker": "background.js"
   },
   "web_accessible_resources": [
     {
-      "resources": ["sidebar.html", "icons/*"],
+      "resources": ["icons/*"],
       "matches": ["<all_urls>"]
     }
   ]

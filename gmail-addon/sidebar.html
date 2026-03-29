@@ -1,11 +1,50 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>tsifl — Gmail</title>
-  <link rel="stylesheet" href="sidebar.css" />
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>tsifl</title>
+  <link rel="stylesheet" href="sidebar.css"/>
 </head>
 <body>
-  <p>The tsifl sidebar is injected directly into Gmail via content script. This file is for reference only.</p>
+  <div id="tsifl-sidebar">
+    <div id="tsifl-header">
+      <div id="tsifl-drag-handle">
+        <strong style="color:#0D5EAF; font-size:15px;">tsifl</strong>
+        <span id="tsifl-site-badge">Browser</span>
+      </div>
+      <div id="tsifl-header-right">
+        <span id="tsifl-tasks-remaining"></span>
+      </div>
+    </div>
+
+    <div id="tsifl-login">
+      <h2 style="color:#0D5EAF; font-size:18px; margin-bottom:4px;">tsifl</h2>
+      <div id="tsifl-login-tagline">AI for Financial Analysts</div>
+      <div id="tsifl-login-form">
+        <input type="email" id="tsifl-auth-email" placeholder="Email"/>
+        <input type="password" id="tsifl-auth-password" placeholder="Password"/>
+        <button id="tsifl-login-btn">Sign In</button>
+        <button id="tsifl-signup-btn">Create Account</button>
+        <div id="tsifl-auth-error"></div>
+      </div>
+    </div>
+
+    <div id="tsifl-chat-area">
+      <div id="tsifl-user-bar"></div>
+      <div id="tsifl-chat-history"></div>
+      <div id="tsifl-input-area">
+        <div id="tsifl-image-preview-bar"></div>
+        <textarea id="tsifl-user-input" placeholder="Ask anything..." rows="3"></textarea>
+        <div id="tsifl-input-actions">
+          <input type="file" id="tsifl-image-input" accept="image/*" multiple style="display:none;"/>
+          <button id="tsifl-attach-btn" title="Attach image">+</button>
+          <button id="tsifl-submit-btn">Send</button>
+        </div>
+      </div>
+      <div id="tsifl-status-bar">Ready</div>
+    </div>
+  </div>
+  <script src="panel.js"></script>
 </body>
 </html>
