@@ -682,11 +682,18 @@ async def get_claude_response(message: str, context: dict,
 
     messages.append({"role": "user", "content": user_content})
 
-    # For browser summarization and notes, allow text-only responses (no forced tool call)
+    # For certain contexts, allow text-only responses (no forced tool call)
     app_name = context.get("app", "")
     is_browser_summary = app_name == "browser" and bool(context.get("full_page_text", ""))
     is_notes = app_name == "notes"
-    force_tool = not (is_browser_summary or is_notes)
+    # Detect questions that don't need actions
+    msg_lower = message.lower().strip()
+    is_question = any(msg_lower.startswith(q) for q in [
+        "what", "how", "why", "when", "where", "who", "can you", "do you",
+        "tell me", "explain", "help", "describe", "summarize", "summary",
+    ])
+    is_browser_question = app_name == "browser" and is_question
+    force_tool = not (is_browser_summary or is_notes or is_browser_question)
 
     response = client.messages.create(
         model       = "claude-sonnet-4-5",
