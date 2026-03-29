@@ -128,7 +128,9 @@ function showChat(user) {
 
 function getContext() {
   return new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve({ app: "browser" }), 5000);
     chrome.runtime.sendMessage({ action: "get_context" }, (response) => {
+      clearTimeout(timeout);
       if (chrome.runtime.lastError) {
         resolve({ app: "browser" });
       } else {
@@ -141,7 +143,9 @@ function getContext() {
 // Get full page text for summarization
 function getPageText() {
   return new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve(""), 5000);
     chrome.runtime.sendMessage({ action: "get_page_text" }, (response) => {
+      clearTimeout(timeout);
       if (chrome.runtime.lastError) {
         resolve("");
       } else {
