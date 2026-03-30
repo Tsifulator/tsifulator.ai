@@ -17,7 +17,7 @@
     .btn-p{background:var(--blue);color:#fff;border:none;border-radius:6px;padding:10px;font-size:14px;font-weight:600;cursor:pointer;}
     .btn-p:hover{background:var(--bh);}
     .btn-s{background:transparent;color:var(--blue);border:1px solid var(--bd);border-radius:6px;padding:9px;font-size:14px;cursor:pointer;}
-    #auth-error{font-size:12px;color:var(--rd);text-align:center;min-height:16px;}
+    #auth-error{font-size:12px;text-align:center;min-height:16px;color:var(--rd);}
     #app{display:none;height:100vh;flex-direction:row;}
     @media(max-width:640px){#app{flex-direction:column!important;}#sidebar{width:100%!important;max-height:40vh;border-right:none!important;border-bottom:1px solid var(--bd);}}
     #sidebar{width:280px;background:var(--sf);border-right:1px solid var(--bd);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;}
@@ -26,35 +26,28 @@
     .sh .nb{background:var(--blue);color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;}
     .ss{padding:8px 16px;}
     .ss input{width:100%;background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:7px 10px;font-size:13px;outline:none;}
-    .ss input:focus{border-color:var(--blue);}
     .sf{padding:4px 12px;display:flex;gap:4px;flex-wrap:wrap;}
     .fd{padding:4px 10px;border-radius:12px;font-size:11px;cursor:pointer;color:var(--mu);background:var(--bg);border:1px solid var(--bd);}
     .fd.a{background:var(--bl);color:var(--blue);border-color:rgba(13,94,175,0.3);font-weight:600;}
     #nl{flex:1;overflow-y:auto;padding:4px 8px;}
-    #nl::-webkit-scrollbar{width:4px;}
-    #nl::-webkit-scrollbar-thumb{background:var(--bd);border-radius:4px;}
     .nc{padding:10px 12px;border-radius:6px;cursor:pointer;margin-bottom:2px;border:1px solid transparent;}
     .nc:hover{background:var(--bg);}
     .nc.a{background:var(--bl);border-color:rgba(13,94,175,0.2);}
     .nc .t{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
     .nc .p{font-size:11px;color:var(--mu);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;}
     .nc .d{font-size:10px;color:var(--mu);margin-top:2px;}
-    .su{padding:8px 16px;border-top:1px solid var(--bd);font-size:11px;color:var(--mu);cursor:default;}
+    .su{padding:8px 16px;border-top:1px solid var(--bd);font-size:11px;color:var(--mu);}
     #editor{flex:1;display:flex;flex-direction:column;background:var(--sf);}
     #empty{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;color:var(--mu);gap:8px;}
-    #empty .lg{font-size:24px;color:var(--blue);font-weight:700;}
     .et{padding:10px 20px;border-bottom:1px solid var(--bd);display:none;align-items:center;gap:8px;flex-wrap:wrap;}
     .et input{flex:1;min-width:120px;border:none;font-size:18px;font-weight:600;color:var(--tx);outline:none;background:transparent;}
-    .et input::placeholder{color:var(--bd);}
     .tb{background:var(--bg);color:var(--mu);border:1px solid var(--bd);border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer;white-space:nowrap;}
     .tb:hover{background:var(--bl);color:var(--blue);border-color:var(--blue);}
     .tb.dg:hover{background:#FEF2F2;color:var(--rd);border-color:var(--rd);}
     #nb{flex:1;padding:20px;font-size:14px;line-height:1.7;outline:none;overflow-y:auto;resize:none;border:none;background:var(--sf);color:var(--tx);font-family:inherit;display:none;}
-    #nb::placeholder{color:#CBD5E1;}
     #ar{display:none;padding:12px 20px;background:#F0FDF4;border-top:1px solid #BBF7D0;font-size:13px;line-height:1.6;max-height:220px;overflow-y:auto;white-space:pre-wrap;}
     .ef{padding:8px 20px;border-top:1px solid var(--bd);display:none;align-items:center;gap:6px;}
     .ef input{flex:1;background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:7px 10px;font-size:13px;outline:none;}
-    .ef input:focus{border-color:var(--blue);}
     .ef button{background:var(--blue);color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer;}
     .ef button:disabled{background:var(--bd);cursor:not-allowed;}
   </style>
@@ -80,7 +73,7 @@
       <div class="su" id="ub"></div>
     </div>
     <div id="editor">
-      <div id="empty"><div class="lg">tsifl Notes</div><div>Select a note or create a new one</div><div style="font-size:12px;">Cmd+N to create, Cmd+S to save</div></div>
+      <div id="empty"><div style="font-size:24px;color:#0D5EAF;font-weight:700;">tsifl Notes</div><div>Select a note or create a new one</div><div style="font-size:12px;">Cmd+N to create, Cmd+S to save</div></div>
       <div class="et" id="tbar">
         <input id="nt" placeholder="Note title..."/>
         <button class="tb" data-ai="summarize">Summarize</button>
@@ -98,43 +91,299 @@
     </div>
   </div>
 <script>
-const API="https://focused-solace-production-6839.up.railway.app";
-const SU="https://dvynmzeyttwlmvunicqz.supabase.co";
-const SK="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR2eW5temV5dHR3bG12dW5pY3F6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2NTIwMTIsImV4cCI6MjA5MDIyODAxMn0.9j_f-2f1VswxWfqiuXy4bPnUi1qLk9nAeTDlodUBUZw";
-let U=null,N=[],AI=null,AF=null,ST=null;
-async function sa(ep,b){const r=await fetch(`${SU}/auth/v1/${ep}`,{method:"POST",headers:{"Content-Type":"application/json",apikey:SK},body:JSON.stringify(b)});return r.json();}
-async function ss(s){if(!s?.access_token)return;try{await fetch(`${API}/auth/set-session`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({access_token:s.access_token,refresh_token:s.refresh_token,user_id:s.user?.id||"",email:s.user?.email||""})});}catch(e){}}
-async function init(){
-  const sv=localStorage.getItem("tsifl_ns");
-  if(sv){try{const s=JSON.parse(sv),r=await sa("token?grant_type=refresh_token",{refresh_token:s.refresh_token});if(r.access_token){localStorage.setItem("tsifl_ns",JSON.stringify(r));ss(r);return show({id:r.user?.id||s.user?.id,email:r.user?.email||s.user?.email});}}catch(e){}}
-  try{const r=await fetch(`${API}/auth/get-session`),d=await r.json();if(d.session?.refresh_token){const r2=await sa("token?grant_type=refresh_token",{refresh_token:d.session.refresh_token});if(r2.access_token){localStorage.setItem("tsifl_ns",JSON.stringify(r2));ss(r2);return show({id:r2.user?.id||d.session.user_id,email:r2.user?.email||d.session.email});}}}catch(e){}
-}
-function show(u){U=u;document.getElementById("login").style.display="none";document.getElementById("app").style.display="flex";document.getElementById("ub").textContent=u.email;ln();}
-document.getElementById("si").onclick=async()=>{const e=document.getElementById("em").value.trim(),p=document.getElementById("pw").value,er=document.getElementById("auth-error");er.textContent="";er.style.color="#DC2626";if(!e||!p){er.textContent="Enter email and password.";return;}try{const r=await sa("token?grant_type=password",{email:e,password:p});if(r.error||r.error_description){er.textContent=r.error_description||r.error||"Failed";return;}localStorage.setItem("tsifl_ns",JSON.stringify(r));ss(r);show({id:r.user.id,email:r.user.email});}catch(x){er.textContent="Network error";}};
-document.getElementById("su").onclick=async()=>{const e=document.getElementById("em").value.trim(),p=document.getElementById("pw").value,er=document.getElementById("auth-error");er.textContent="";if(!e||!p){er.textContent="Enter email and password.";return;}if(p.length<6){er.textContent="6+ characters.";return;}try{const r=await sa("signup",{email:e,password:p});if(r.error){er.textContent=r.error_description||"Failed";return;}er.style.color="#16A34A";er.textContent="Check email to confirm.";}catch(x){er.textContent="Network error";}};
-document.getElementById("pw").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("si").click();});
-document.getElementById("ub").addEventListener("dblclick",()=>{localStorage.removeItem("tsifl_ns");fetch(`${API}/auth/clear-session`,{method:"POST"}).catch(()=>{});U=null;document.getElementById("login").style.display="flex";document.getElementById("app").style.display="none";});
+const API = "https://focused-solace-production-6839.up.railway.app";
+const SB_URL = "https://dvynmzeyttwlmvunicqz.supabase.co";
+const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR2eW5temV5dHR3bG12dW5pY3F6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2NTIwMTIsImV4cCI6MjA5MDIyODAxMn0.9j_f-2f1VswxWfqiuXy4bPnUi1qLk9nAeTDlodUBUZw";
+let U = null, notes = [], activeId = null, activeFolder = null, saveTimer = null;
 
-async function ln(){try{let u=`${API}/notes/?user_id=${U.id}`;if(AF)u+=`&folder=${encodeURIComponent(AF)}`;const r=await fetch(u),d=await r.json();N=d.notes||[];rl();lf();}catch(e){N=[];rl();}}
-async function lf(){try{const r=await fetch(`${API}/notes/folders/list?user_id=${U.id}`),d=await r.json();rf(d.folders||["General"]);}catch(e){rf(["General"]);}}
-async function cn(){try{const r=await fetch(`${API}/notes/`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:U.id,title:"Untitled Note",content:"",folder:AF||"General"})});const n=await r.json();N.unshift(n);rl();sn(n.id);}catch(e){}}
-async function sv(){if(!AI)return;const t=document.getElementById("nt").value,c=document.getElementById("nb").value;try{await fetch(`${API}/notes/${AI}?user_id=${U.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:t,content:c})});const n=N.find(x=>String(x.id)===String(AI));if(n){n.title=t;n.content=c;}rl();}catch(e){}}
-async function dn(){if(!AI||!confirm("Delete this note?"))return;try{await fetch(`${API}/notes/${AI}?user_id=${U.id}`,{method:"DELETE"});N=N.filter(x=>String(x.id)!==String(AI));AI=null;rl();se();}catch(e){}}
-function sn(id){AI=String(id);const n=N.find(x=>String(x.id)===String(id));if(!n)return;document.getElementById("empty").style.display="none";document.getElementById("tbar").style.display="flex";document.getElementById("nb").style.display="block";document.getElementById("ft").style.display="flex";document.getElementById("ar").style.display="none";document.getElementById("nt").value=n.title||"";document.getElementById("nb").value=n.content||"";rl();}
-function se(){document.getElementById("empty").style.display="flex";document.getElementById("tbar").style.display="none";document.getElementById("nb").style.display="none";document.getElementById("ft").style.display="none";document.getElementById("ar").style.display="none";}
-function esc(t){const d=document.createElement("div");d.textContent=t;return d.innerHTML;}
-function rl(){const l=document.getElementById("nl"),q=document.getElementById("srch").value.toLowerCase();let f=N;if(q)f=N.filter(n=>(n.title+" "+n.content).toLowerCase().includes(q));l.innerHTML=f.map(n=>{const pv=(n.content||"").replace(/\n/g," ").slice(0,60),dt=n.updated_at?new Date(n.updated_at).toLocaleDateString():"",ac=String(n.id)===String(AI)?" a":"";return`<div class="nc${ac}" data-id="${n.id}"><div class="t">${esc(n.title||"Untitled")}</div><div class="p">${esc(pv)}</div><div class="d">${dt}</div></div>`;}).join("");l.querySelectorAll(".nc").forEach(el=>el.onclick=()=>sn(el.dataset.id));}
-function rf(folders){const el=document.getElementById("flds");el.innerHTML=`<div class="fd${!AF?" a":""}" data-f="">All</div>`+folders.map(f=>`<div class="fd${AF===f?" a":""}" data-f="${esc(f)}">${esc(f)}</div>`).join("");el.querySelectorAll(".fd").forEach(i=>i.onclick=()=>{AF=i.dataset.f||null;ln();});}
-async function aa(action,question){if(!AI)return;const ar=document.getElementById("ar");ar.style.display="block";ar.textContent="Thinking...";document.getElementById("ab").disabled=true;try{const r=await fetch(`${API}/notes/${AI}/ai`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:U.id,action,question:question||""})});const d=await r.json();ar.textContent=d.result||d.detail||"No response";}catch(e){ar.textContent="Error: "+e.message;}document.getElementById("ab").disabled=false;}
-document.getElementById("new-btn").onclick=cn;
-document.getElementById("del-btn").onclick=dn;
-document.querySelectorAll("[data-ai]").forEach(b=>b.onclick=()=>aa(b.dataset.ai));
-document.getElementById("ab").onclick=()=>{const q=document.getElementById("aq").value.trim();if(q){document.getElementById("aq").value="";aa("ask",q);}};
-document.getElementById("aq").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();document.getElementById("ab").click();}});
-document.getElementById("nb").addEventListener("input",()=>{clearTimeout(ST);ST=setTimeout(sv,1000);});
-document.getElementById("nt").addEventListener("input",()=>{clearTimeout(ST);ST=setTimeout(sv,1000);});
-document.getElementById("srch").addEventListener("input",rl);
-document.addEventListener("keydown",e=>{if((e.metaKey||e.ctrlKey)&&e.key==="n"&&U){e.preventDefault();cn();}if((e.metaKey||e.ctrlKey)&&e.key==="s"&&AI){e.preventDefault();sv();}if(e.key==="Escape")document.getElementById("ar").style.display="none";});
+// Auth helper — handles both Supabase response formats
+async function sbAuth(endpoint, body) {
+  const resp = await fetch(SB_URL + "/auth/v1/" + endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "apikey": SB_KEY },
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json();
+  // Supabase may return {error, error_description} OR {code, error_code, msg}
+  if (data.error || data.error_code || data.code >= 400) {
+    return { error: true, message: data.error_description || data.msg || data.error || "Auth failed" };
+  }
+  return data;
+}
+
+async function syncSession(session) {
+  if (!session || !session.access_token) return;
+  try {
+    await fetch(API + "/auth/set-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        access_token: session.access_token,
+        refresh_token: session.refresh_token,
+        user_id: session.user ? session.user.id : "",
+        email: session.user ? session.user.email : "",
+      }),
+    });
+  } catch (e) {}
+}
+
+async function init() {
+  // Try local storage first
+  try {
+    const saved = localStorage.getItem("tsifl_notes_session");
+    if (saved) {
+      const session = JSON.parse(saved);
+      if (session.refresh_token) {
+        const result = await sbAuth("token?grant_type=refresh_token", { refresh_token: session.refresh_token });
+        if (result.access_token && result.user) {
+          localStorage.setItem("tsifl_notes_session", JSON.stringify(result));
+          syncSession(result);
+          showApp({ id: result.user.id, email: result.user.email });
+          return;
+        }
+      }
+    }
+  } catch (e) { console.log("Local auth failed:", e); }
+
+  // Try backend shared session
+  try {
+    const resp = await fetch(API + "/auth/get-session");
+    const data = await resp.json();
+    if (data.session && data.session.refresh_token) {
+      const result = await sbAuth("token?grant_type=refresh_token", { refresh_token: data.session.refresh_token });
+      if (result.access_token && result.user) {
+        localStorage.setItem("tsifl_notes_session", JSON.stringify(result));
+        syncSession(result);
+        showApp({ id: result.user.id || data.session.user_id, email: result.user.email || data.session.email });
+        return;
+      }
+    }
+  } catch (e) { console.log("Backend auth failed:", e); }
+
+  // Both failed — login screen is already visible via CSS
+  // Pre-fill email if we saved it
+  const savedEmail = localStorage.getItem("tsifl_notes_email");
+  if (savedEmail) {
+    document.getElementById("em").value = savedEmail;
+    document.getElementById("pw").focus();
+  }
+}
+
+function showApp(user) {
+  U = user;
+  localStorage.setItem("tsifl_notes_email", user.email || "");
+  document.getElementById("login").style.display = "none";
+  document.getElementById("app").style.display = "flex";
+  document.getElementById("ub").textContent = user.email || "Signed in";
+  loadNotes();
+}
+
+// Sign in
+document.getElementById("si").onclick = async () => {
+  const email = document.getElementById("em").value.trim();
+  const pw = document.getElementById("pw").value;
+  const err = document.getElementById("auth-error");
+  err.textContent = "";
+  err.style.color = "#DC2626";
+  if (!email || !pw) { err.textContent = "Enter email and password."; return; }
+  try {
+    const result = await sbAuth("token?grant_type=password", { email: email, password: pw });
+    if (result.error) { err.textContent = result.message || "Sign in failed"; return; }
+    if (!result.access_token || !result.user) { err.textContent = "Invalid response from auth server"; return; }
+    localStorage.setItem("tsifl_notes_session", JSON.stringify(result));
+    localStorage.setItem("tsifl_notes_email", result.user.email);
+    syncSession(result);
+    showApp({ id: result.user.id, email: result.user.email });
+  } catch (e) { err.textContent = "Network error — check your connection"; }
+};
+
+// Sign up
+document.getElementById("su").onclick = async () => {
+  const email = document.getElementById("em").value.trim();
+  const pw = document.getElementById("pw").value;
+  const err = document.getElementById("auth-error");
+  err.textContent = "";
+  err.style.color = "#DC2626";
+  if (!email || !pw) { err.textContent = "Enter email and password."; return; }
+  if (pw.length < 6) { err.textContent = "Password must be 6+ characters."; return; }
+  try {
+    const result = await sbAuth("signup", { email: email, password: pw });
+    if (result.error) { err.textContent = result.message || "Sign up failed"; return; }
+    err.style.color = "#16A34A";
+    err.textContent = "Check your email to confirm, then sign in.";
+  } catch (e) { err.textContent = "Network error"; }
+};
+
+document.getElementById("pw").addEventListener("keydown", function(e) { if (e.key === "Enter") document.getElementById("si").click(); });
+
+// Sign out
+document.getElementById("ub").addEventListener("dblclick", function() {
+  localStorage.removeItem("tsifl_notes_session");
+  fetch(API + "/auth/clear-session", { method: "POST" }).catch(function() {});
+  U = null;
+  document.getElementById("login").style.display = "flex";
+  document.getElementById("app").style.display = "none";
+});
+
+// Notes CRUD
+async function loadNotes() {
+  try {
+    var url = API + "/notes/?user_id=" + U.id;
+    if (activeFolder) url += "&folder=" + encodeURIComponent(activeFolder);
+    var resp = await fetch(url);
+    var data = await resp.json();
+    notes = data.notes || [];
+    renderList();
+    loadFolders();
+  } catch (e) { notes = []; renderList(); }
+}
+
+async function loadFolders() {
+  try {
+    var resp = await fetch(API + "/notes/folders/list?user_id=" + U.id);
+    var data = await resp.json();
+    renderFolders(data.folders || ["General"]);
+  } catch (e) { renderFolders(["General"]); }
+}
+
+async function createNote() {
+  try {
+    var resp = await fetch(API + "/notes/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: U.id, title: "Untitled Note", content: "", folder: activeFolder || "General" }),
+    });
+    var note = await resp.json();
+    notes.unshift(note);
+    renderList();
+    selectNote(note.id);
+  } catch (e) { console.error(e); }
+}
+
+async function saveNote() {
+  if (!activeId) return;
+  var title = document.getElementById("nt").value;
+  var content = document.getElementById("nb").value;
+  try {
+    await fetch(API + "/notes/" + activeId + "?user_id=" + U.id, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: title, content: content }),
+    });
+    var note = notes.find(function(n) { return String(n.id) === String(activeId); });
+    if (note) { note.title = title; note.content = content; }
+    renderList();
+  } catch (e) {}
+}
+
+async function deleteNote() {
+  if (!activeId || !confirm("Delete this note?")) return;
+  try {
+    await fetch(API + "/notes/" + activeId + "?user_id=" + U.id, { method: "DELETE" });
+    notes = notes.filter(function(n) { return String(n.id) !== String(activeId); });
+    activeId = null;
+    renderList();
+    showEmpty();
+  } catch (e) {}
+}
+
+function selectNote(id) {
+  activeId = String(id);
+  var note = notes.find(function(n) { return String(n.id) === String(id); });
+  if (!note) return;
+  document.getElementById("empty").style.display = "none";
+  document.getElementById("tbar").style.display = "flex";
+  document.getElementById("nb").style.display = "block";
+  document.getElementById("ft").style.display = "flex";
+  document.getElementById("ar").style.display = "none";
+  document.getElementById("nt").value = note.title || "";
+  document.getElementById("nb").value = note.content || "";
+  renderList();
+}
+
+function showEmpty() {
+  document.getElementById("empty").style.display = "flex";
+  document.getElementById("tbar").style.display = "none";
+  document.getElementById("nb").style.display = "none";
+  document.getElementById("ft").style.display = "none";
+  document.getElementById("ar").style.display = "none";
+}
+
+function esc(text) { var d = document.createElement("div"); d.textContent = text; return d.innerHTML; }
+
+function renderList() {
+  var list = document.getElementById("nl");
+  var q = document.getElementById("srch").value.toLowerCase();
+  var filtered = notes;
+  if (q) filtered = notes.filter(function(n) { return (n.title + " " + n.content).toLowerCase().indexOf(q) >= 0; });
+  list.innerHTML = filtered.map(function(n) {
+    var preview = (n.content || "").replace(/\n/g, " ").slice(0, 60);
+    var date = n.updated_at ? new Date(n.updated_at).toLocaleDateString() : "";
+    var active = String(n.id) === String(activeId) ? " a" : "";
+    return '<div class="nc' + active + '" data-id="' + n.id + '"><div class="t">' + esc(n.title || "Untitled") + '</div><div class="p">' + esc(preview) + '</div><div class="d">' + date + '</div></div>';
+  }).join("");
+  var cards = list.querySelectorAll(".nc");
+  for (var i = 0; i < cards.length; i++) {
+    cards[i].onclick = (function(el) { return function() { selectNote(el.getAttribute("data-id")); }; })(cards[i]);
+  }
+}
+
+function renderFolders(folders) {
+  var el = document.getElementById("flds");
+  var html = '<div class="fd' + (!activeFolder ? ' a' : '') + '" data-f="">All</div>';
+  for (var i = 0; i < folders.length; i++) {
+    html += '<div class="fd' + (activeFolder === folders[i] ? ' a' : '') + '" data-f="' + esc(folders[i]) + '">' + esc(folders[i]) + '</div>';
+  }
+  el.innerHTML = html;
+  var items = el.querySelectorAll(".fd");
+  for (var j = 0; j < items.length; j++) {
+    items[j].onclick = (function(item) { return function() { activeFolder = item.getAttribute("data-f") || null; loadNotes(); }; })(items[j]);
+  }
+}
+
+// AI
+async function aiAction(action, question) {
+  if (!activeId) return;
+  var ar = document.getElementById("ar");
+  ar.style.display = "block";
+  ar.textContent = "Thinking...";
+  document.getElementById("ab").disabled = true;
+  try {
+    var resp = await fetch(API + "/notes/" + activeId + "/ai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: U.id, action: action, question: question || "" }),
+    });
+    var data = await resp.json();
+    ar.textContent = data.result || data.detail || "No response";
+  } catch (e) { ar.textContent = "Error: " + e.message; }
+  document.getElementById("ab").disabled = false;
+}
+
+// Events
+document.getElementById("new-btn").onclick = createNote;
+document.getElementById("del-btn").onclick = deleteNote;
+var aiButtons = document.querySelectorAll("[data-ai]");
+for (var k = 0; k < aiButtons.length; k++) {
+  aiButtons[k].onclick = (function(btn) { return function() { aiAction(btn.getAttribute("data-ai")); }; })(aiButtons[k]);
+}
+document.getElementById("ab").onclick = function() {
+  var q = document.getElementById("aq").value.trim();
+  if (q) { document.getElementById("aq").value = ""; aiAction("ask", q); }
+};
+document.getElementById("aq").addEventListener("keydown", function(e) {
+  if (e.key === "Enter") { e.preventDefault(); document.getElementById("ab").click(); }
+});
+document.getElementById("nb").addEventListener("input", function() { clearTimeout(saveTimer); saveTimer = setTimeout(saveNote, 1000); });
+document.getElementById("nt").addEventListener("input", function() { clearTimeout(saveTimer); saveTimer = setTimeout(saveNote, 1000); });
+document.getElementById("srch").addEventListener("input", renderList);
+document.addEventListener("keydown", function(e) {
+  if ((e.metaKey || e.ctrlKey) && e.key === "n" && U) { e.preventDefault(); createNote(); }
+  if ((e.metaKey || e.ctrlKey) && e.key === "s" && activeId) { e.preventDefault(); saveNote(); }
+  if (e.key === "Escape") document.getElementById("ar").style.display = "none";
+});
+
+// Start
 init();
 </script>
 </body>

@@ -135,6 +135,33 @@ Hidden sheets are still valid targets — navigate_sheet will unhide them. Never
 - Use =PMT(rate/12, nper, -pv) for monthly payment
 - =IPMT(rate/12, period, nper, -pv) for interest portion
 - =PPMT(rate/12, period, nper, -pv) for principal portion
+
+### Budget Tracker
+- Headers: Category, Budgeted, Actual, Variance (=Actual-Budgeted), % Variance (=Variance/Budgeted)
+- Income section + Expense section (Housing, Transport, Food, Insurance, Savings, Entertainment, Other)
+- Totals: =SUM() for each column
+- Net: =Total Income - Total Expenses
+- Use conditional formatting: green for positive variance, red for negative
+- Format currency columns with "$#,##0.00"
+
+### Portfolio Tracker
+- Holdings: Ticker, Shares, Purchase Price, Current Price (manual or GOOGLEFINANCE), Market Value (=Shares*Current), Cost Basis (=Shares*Purchase), Gain/Loss, % Return
+- Portfolio Summary: Total Value, Total Cost, Total Return, Weighted Average Return
+- Sector allocation with SUMIFS
+
+### Sensitivity Analysis / Data Table
+- Two-variable sensitivity: one input across columns (e.g., growth rates), another down rows (e.g., discount rates)
+- Use absolute references ($) for the input cells
+- Output cell references the model calculation
+- Format with color scale conditional formatting
+
+### Common Formatting Patterns for Finance
+- Headers: bold, #0D5EAF background, white text, center-aligned
+- Numbers: "$#,##0" for whole dollars, "$#,##0.00" for cents, "0.0%" for percentages
+- Negative numbers: red text or parentheses "#,##0;(#,##0)"
+- Borders: thin borders on data ranges, thick bottom border on totals
+- Freeze panes at the header row
+- Autofit columns after data entry
 - Remaining balance: =previous_balance - principal_payment
 - Write formulas in row 2, then fill_down for all 360 rows (NOT row by row)
 

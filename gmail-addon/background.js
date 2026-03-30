@@ -27,21 +27,9 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 // ── Keyboard Shortcut ───────────────────────────────────────────────────
-// Cmd+Shift+E (Mac) / Ctrl+Shift+E (Win/Linux)
-// NOTE: Cmd+Shift+T was Chrome's "reopen closed tab" — conflicted and never fired.
-
-chrome.commands.onCommand.addListener(async (command) => {
-  if (command === "toggle-sidebar") {
-    try {
-      const win = await chrome.windows.getCurrent();
-      if (win?.id) {
-        await chrome.sidePanel.open({ windowId: win.id });
-      }
-    } catch (e) {
-      console.warn("tsifl: keyboard shortcut open failed:", e);
-    }
-  }
-});
+// Cmd+Shift+U (Mac) / Ctrl+Shift+U (Win/Linux)
+// Uses _execute_action command which Chrome handles automatically —
+// it triggers the extension action button click, opening the side panel.
 
 // ── Message Router ──────────────────────────────────────────────────────
 // Panel.js and content.js communicate through here.

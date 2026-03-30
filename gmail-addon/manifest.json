@@ -22,12 +22,12 @@
     "default_title": "tsifl — Click to open AI sidebar"
   },
   "commands": {
-    "toggle-sidebar": {
+    "_execute_action": {
       "suggested_key": {
-        "default": "Ctrl+Shift+E",
-        "mac": "Command+Shift+E"
+        "default": "Ctrl+Shift+U",
+        "mac": "Command+Shift+U"
       },
-      "description": "Toggle tsifl sidebar"
+      "description": "Open tsifl sidebar"
     }
   },
   "side_panel": {
