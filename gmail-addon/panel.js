@@ -64,12 +64,10 @@ async function restoreFromBackend() {
     });
 
     if (result.access_token && result.user) {
-      chrome.storage.local.set({ tsifl_session: result });
+      const email = result.user.email || data.session.email;
+      chrome.storage.local.set({ tsifl_session: result, tsifl_email: email });
       syncSessionToBackend(result);
-      showChat({
-        id: result.user.id || data.session.user_id,
-        email: result.user.email || data.session.email,
-      });
+      showChat({ id: result.user.id || data.session.user_id, email });
       return true;
     }
   } catch (e) {
@@ -95,12 +93,10 @@ async function checkAuth() {
         refresh_token: stored.refresh_token,
       });
       if (result.access_token && result.user) {
-        chrome.storage.local.set({ tsifl_session: result });
+        const email = result.user.email || stored.user?.email;
+        chrome.storage.local.set({ tsifl_session: result, tsifl_email: email });
         syncSessionToBackend(result);
-        showChat({
-          id: result.user.id || stored.user?.id,
-          email: result.user.email || stored.user?.email,
-        });
+        showChat({ id: result.user.id || stored.user?.id, email });
         return;
       }
     } catch (e) {
@@ -111,6 +107,18 @@ async function checkAuth() {
   // Step 2: Try to restore from backend (logged in via another add-in)
   const restored = await restoreFromBackend();
   if (!restored) {
+    // Pre-fill email if we remember it from a previous session
+    try {
+      const savedEmail = await new Promise((resolve) => {
+        chrome.storage.local.get("tsifl_email", (data) => resolve(data.tsifl_email || ""));
+      });
+      if (savedEmail) {
+        document.getElementById("tsifl-auth-email").value = savedEmail;
+        document.getElementById("tsifl-auth-password").focus();
+        document.getElementById("tsifl-auth-error").textContent = "Session expired. Enter your password to continue.";
+        document.getElementById("tsifl-auth-error").style.color = "#64748B";
+      }
+    } catch (e) {}
     showLogin();
   }
 }
@@ -129,7 +137,7 @@ async function handleSignIn() {
       errEl.textContent = result.error_description || result.error || "Sign in failed";
       return;
     }
-    chrome.storage.local.set({ tsifl_session: result });
+    chrome.storage.local.set({ tsifl_session: result, tsifl_email: result.user.email });
     await syncSessionToBackend(result);
     showChat({ id: result.user.id, email: result.user.email });
   } catch (e) {
