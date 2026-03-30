@@ -395,6 +395,26 @@ class TsiflSidebarProvider {
           return;
         }
 
+        case "create_note": {
+          try {
+            const resp = await fetch(`${BACKEND_URL}/notes/`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                user_id: message?.userId || "unknown",
+                title: payload.title || "Untitled",
+                content: payload.content || "",
+                folder: "General",
+              }),
+            });
+            const note = await resp.json();
+            wv?.postMessage({ type: "actionComplete", action: type, success: true, message: `Note created: "${note.title}"` });
+          } catch (e) {
+            wv?.postMessage({ type: "actionComplete", action: type, success: false, message: e.message });
+          }
+          return;
+        }
+
         case "open_url": {
           if (payload.url) {
             vscode.env.openExternal(vscode.Uri.parse(payload.url));

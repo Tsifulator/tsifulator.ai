@@ -706,6 +706,18 @@ async function executeAction(action) {
       }
       break;
 
+    case "create_note":
+      try {
+        const resp = await fetch(`${BACKEND_URL}/notes/`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: currentUser?.id || "unknown", title: payload.title || "Untitled", content: payload.content || "", folder: "General" }),
+        });
+        const note = await resp.json();
+        appendMessage("action", `Note created: "${note.title}"`);
+      } catch (e) { appendMessage("action", `create_note: ${e.message}`); }
+      break;
+
     default:
       console.warn("Unknown action type:", type);
   }

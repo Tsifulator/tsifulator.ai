@@ -933,6 +933,26 @@ async function executeAction(action) {
       appendMessage("action", `open: ${e.message}`);
     }
   }
+
+  // ── create_note ────────────────────────────────────────────────────────────
+  else if (type === "create_note") {
+    try {
+      const resp = await fetch(`${BACKEND_URL}/notes/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: currentUser?.id || "unknown",
+          title: payload.title || "Untitled Note",
+          content: payload.content || "",
+          folder: payload.folder || "General",
+        }),
+      });
+      const note = await resp.json();
+      appendMessage("action", `Note created: "${note.title || "Untitled"}"`);
+    } catch (e) {
+      appendMessage("action", `create_note: ${e.message}`);
+    }
+  }
 }
 
 // ── Format helper (shared by write_cell, write_range, format_range) ──────────
