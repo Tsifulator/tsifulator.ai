@@ -504,6 +504,8 @@ When extracting action items: return a numbered list with owner and deadline if 
 ## CROSS-APP NAVIGATION
 When the user asks to open another app or integration, use these actions:
 - "open my notes" / "open notes" → action type "open_notes" with payload {}
+- "save this to notes" / "create a note" → action type "create_note" with payload {title: "...", content: "..."}
+  Content should be a clean summary of what the user wants to save. Include key info from the context.
 - "open Excel" / "open Word" / "open PowerPoint" → action type "launch_app" with payload {app_name: "Excel"}
 - "open [URL]" → action type "open_url" with payload {url: "https://..."}
 - "search for [query]" → action type "search_web" with payload {query: "..."}
@@ -642,7 +644,7 @@ TOOLS = [
                                     "delete_slide: {slide_index}. set_slide_background: {slide_index, color}. modify_slide: {slide_index, changes}.\n"
                                     "Browser — open_url: {url}. open_url_current_tab: {url}. search_web: {query}. navigate_back: {}. navigate_forward: {}.\n"
                                     "click_element: {selector}. fill_input: {selector, value}. extract_text: {selector?}. scroll_to: {selector?, y?}.\n"
-                                    "Cross-app — launch_app: {app_name}. open_notes: {}. open_url: {url}. Opens apps, notes, or URLs."
+                                    "Cross-app — launch_app: {app_name}. open_notes: {}. create_note: {title, content}. open_url: {url}. Opens apps, notes, or URLs."
                                 )
                             }
                         }
