@@ -14,6 +14,76 @@ load_dotenv(Path(__file__).parent.parent.parent / ".env", override=True)
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
+# ── Hybrid Model Router ──────────────────────────────────────────────────────
+# Routes queries to the optimal model tier based on complexity.
+#   FAST    → Haiku 3.5   — greetings, simple lookups, single formulas
+#   STANDARD→ Sonnet 4    — code generation, multi-step actions, analysis
+#   HEAVY   → Opus 4      — complex financial models, multi-sheet builds, debugging
+
+import re
+
+MODEL_FAST     = "claude-3-5-haiku-20241022"   # $0.80/$4 per M tokens
+MODEL_STANDARD = "claude-sonnet-4-20250514"    # $3/$15 per M tokens
+MODEL_HEAVY    = "claude-opus-4-20250514"      # $15/$75 per M tokens
+
+# Patterns that indicate a simple/fast query
+_FAST_PATTERNS = re.compile(
+    r"^(hi|hey|hello|thanks|thank you|ok|okay|yes|no|sure|got it|cool|nice|"
+    r"what is in|what'?s in cell|read cell|show cell|"
+    r"what time|what day|what date|"
+    r"clear |delete |remove |undo|"
+    r"save|format .{1,15} as|autofit|freeze|unfreeze|"
+    r"navigate to|go to|switch to|"
+    r"help$|help me$)",
+    re.IGNORECASE
+)
+
+# Patterns that indicate a heavy/complex query
+_HEAVY_PATTERNS = re.compile(
+    r"(build .{0,20}(model|dashboard|template|financial|dcf|lbo|budget|forecast))|"
+    r"(create .{0,15}(from scratch|entire|full|complete|comprehensive))|"
+    r"(across .{0,10}(all|every|multiple) sheets)|"
+    r"(multi.?step|step.?by.?step|walk me through)|"
+    r"(sensitivity|scenario|monte carlo|simulation|regression|amortization|depreciation)|"
+    r"(debug|fix .{0,20}(error|issue|problem|code|formula|script))|"
+    r"(compare .{0,30} (and|vs|versus|with|against))|"
+    r"(analyze .{0,20}(portfolio|risk|performance|variance|trend))|"
+    r"(why .{0,10}(isn.?t|doesn.?t|won.?t|can.?t|not working|broken|wrong|error))|"
+    r"(restructure|reorganize|transform .{0,20}(data|sheet|workbook))|"
+    r"(pivot|vlookup.*index.*match|array formula|dynamic array)|"
+    r"(build .{0,10}(me |a )?(complete|full|entire))",
+    re.IGNORECASE
+)
+
+def _select_model(message: str, context: dict, has_attachments: bool = False) -> str:
+    """Pick the right model tier based on message complexity and context."""
+    msg = message.strip()
+    app = context.get("app", "")
+
+    # Attachments (documents/images) need at least standard for vision/analysis
+    if has_attachments:
+        # Heavy if also complex query
+        if _HEAVY_PATTERNS.search(msg):
+            return MODEL_HEAVY
+        return MODEL_STANDARD
+
+    # Short messages (< 15 chars) that match fast patterns → Haiku
+    if len(msg) < 80 and _FAST_PATTERNS.search(msg):
+        return MODEL_FAST
+
+    # Complex queries → Opus
+    if _HEAVY_PATTERNS.search(msg):
+        return MODEL_HEAVY
+
+    # Long messages with lots of detail tend to be complex
+    if len(msg) > 500:
+        return MODEL_HEAVY
+
+    # Multi-sheet context (user working across sheets) bumps to standard at minimum
+    # Everything else → Sonnet (the workhorse)
+    return MODEL_STANDARD
+
+
 # ── System Prompt ─────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """
@@ -98,6 +168,18 @@ Examples:
   Highlight negatives red: {"type":"add_conditional_format","payload":{"sheet":"P&L","range":"B2:E10","rule_type":"cell_value","operator":"lessThan","values":[0],"format":{"font_color":"#FF0000"}}}
   Color scale green-to-red: {"type":"add_conditional_format","payload":{"sheet":"Scores","range":"B2:B50","rule_type":"color_scale","min_color":"#FF0000","max_color":"#00FF00"}}
   Top 10%: {"type":"add_conditional_format","payload":{"sheet":"Sales","range":"C2:C100","rule_type":"top_bottom","rank":10,"top":true,"percent":true,"format":{"color":"#FFFF00"}}}
+
+## AUTO-FORMAT DETECTION
+When writing data that looks like currency (contains $ or amounts > 100 that represent money), automatically add a set_number_format action with '$#,##0.00' for the range.
+When data looks like percentages (values between 0 and 1 with 'rate', 'pct', 'margin', or '%' in the header), format as '0.0%'.
+When data looks like dates, format as 'MM/DD/YYYY'.
+This makes spreadsheets look professional without the user having to ask.
+
+## CONDITIONAL FORMATTING SUGGESTIONS
+After creating a data table with numeric columns, suggest conditional formatting to the user. For example: "I can add color scales to highlight high/low values. Want me to?" Only suggest — do not auto-apply conditional formatting unless the user explicitly asks.
+
+## CHART BEST PRACTICES
+Always set chart position to avoid overlapping data. Default position: 2 columns right of the data range's last column. Always include a descriptive title. For financial data, prefer bar/column charts. For time-series trends, prefer line charts. For composition/breakdown, prefer pie/doughnut charts. Set reasonable width (480) and height (300) defaults.
 
 ## MULTI-SHEET TASKS
 Follow the user's instructions step by step. For each sheet:
@@ -204,6 +286,18 @@ After import_csv, you have named ranges for every column. Build analysis sheets 
 - When R saves a file, ALWAYS use /tmp/ (e.g., /tmp/sales_data.csv).
 - When importing into Excel, use the SAME /tmp/ path.
 
+## R-TO-EXCEL PLOT/IMAGE TRANSFER — CRITICAL
+When the user is in Excel and asks to import/paste/insert an R plot or graph:
+- NEVER use run_shell_command. It cannot insert images.
+- R plots are AUTO-EXPORTED to the transfer endpoint after every plot-generating code run.
+- Use action type "import_image" with payload: {transfer_id?: string, cell?: "A1", sheet?: "Sheet1"}
+- If no transfer_id, use "import_image" without it — Excel will check /transfer/pending/excel for the latest R plot.
+- Example: user says "paste that R graph here" → emit: {"type": "import_image", "payload": {"cell": "A1", "sheet": "Sheet1"}}
+
+When the user is in RStudio and asks to export a plot to Excel:
+- Use action type "export_plot" with payload: {to_app: "excel", cell?: "A1", sheet?: "Sheet1"}
+- This captures the current Plots pane image and sends it to the transfer endpoint for Excel to pick up.
+
 ## POWERPOINT ACTIONS
 When app is "powerpoint", use these action types:
 - create_slide: {layout?, title?, content?, speaker_notes?}. Layouts: "Title Slide","Title and Content","Two Content","Blank","Section Header","Title Only"
@@ -232,6 +326,11 @@ When app is "powerpoint", use these action types:
 - Title position: left=50, top=20, width=620, height=60
 - Board meeting: Executive Summary → Financial Performance → KPIs → Strategic Initiatives → Outlook
 - Quarterly review: Highlights → Revenue → Expenses → Margins → YoY Comparison → Guidance
+- After creating slides, suggest design improvements: "This slide has too much text — consider splitting into 2 slides" or "Add a visual to break up text blocks."
+- tsifl brand colors for "apply brand" requests: primary #0D5EAF, secondary #1E293B, accent #16A34A, font: system-ui
+- Suggest subtle transitions between slides. Recommend 'Fade' for most business presentations. Never use flashy transitions for financial presentations.
+- Always add slide numbers to non-title slides using add_text_box at bottom-right (left=640, top=500, width=60, height=30, font_size=10) with the slide index number.
+- When creating chart slides, position chart data at left=50, top=120, width=620, height=380. Title at top, source note at bottom.
 
 ## WORD ACTIONS
 When app is "word", use these action types:
@@ -264,6 +363,10 @@ When app is "word", use these action types:
 - Date format: "March 29, 2026" for formal docs, "3/29/26" for internal memos
 - When inserting multiple paragraphs, use insert_paragraph for each to maintain proper styling
 - Always start formal documents with set_page_margins before adding content
+- When track changes is on (indicated in context), inform the user that changes will be tracked
+- For citation formatting: support APA (Author, Year), MLA (Author Page), and Chicago (footnotes) styles
+- When user asks to insert an image from a URL or R, use insert_image action. Payload accepts image_data (base64) for direct image insertion
+- Page setup presets: "report" = 1-inch margins, Times New Roman 12pt, double-spaced; "letter" = business letter margins; "essay" = academic formatting with 1-inch margins, TNR 12pt, double-spaced
 
 ## GMAIL ACTIONS
 When app is "gmail" or user is on Gmail in the browser:
@@ -439,6 +542,13 @@ When app is "browser", the user is on a general webpage. You can:
 - Scroll to an element: use action type "scroll_to" with payload {selector?: "CSS selector", y?: number}
 - Launch a local app: use action type "launch_app" with payload {app_name: "Microsoft Excel" | "Microsoft PowerPoint" | "Microsoft Word" | "Visual Studio Code" | "Notes" | "Terminal"}
 When the user asks you to find something, search for it, or go to a website, USE the open_url or search_web action — do not just describe what to do.
+
+### URL RULES — NEVER GUESS URLs
+- ONLY use open_url when you are 100% certain of the exact URL (e.g. google.com, amazon.com, youtube.com, hermes.com, nike.com).
+- If you are NOT 100% sure of the URL, use search_web instead. For example: "open the Hermes website" → search_web with query "Hermes official website" is SAFER than guessing a wrong URL.
+- NEVER invent or construct URLs by combining words (e.g. "hermes-browser.com" does not exist). If unsure, SEARCH.
+- Common brands: hermes.com, gucci.com, louis vuitton → louisvuitton.com, chanel.com, nike.com, apple.com, tesla.com
+- When in doubt, ALWAYS prefer search_web over open_url. A Google search that works is infinitely better than a dead link.
 When the user has selected text, focus your response on that selection.
 When summarizing a page, provide a clean summary with: key points as bullets, main argument/thesis, and important details. Do NOT just say "here's a summary" — include the actual summary in your reply text.
 
@@ -539,8 +649,400 @@ When the user asks to open another app or integration, use these actions:
 The tsifl Notes app is available at https://focused-solace-production-6839.up.railway.app/notes-app
 All tsifl integrations share the same user session and can open each other.
 
+## RSTUDIO — COMPREHENSIVE R GUIDE
+
+### Core Rules
+- Action type: run_r_code with payload {code: "..."}.
+- NEVER include library() calls for packages already listed in "Loaded packages" in the context — they are already loaded. Only add library() for packages NOT in that list.
+- Always use <- for assignment, not =.
+- When the user shares a screenshot of homework/assignment questions: 1) Read the question carefully 2) Write the EXACT R code needed 3) Run the code 4) Provide the answer with full interpretation 5) Explain the reasoning step by step. ALWAYS show the numerical answer prominently in your reply text.
+- Combine all code into ONE run_r_code action. Never split across multiple actions.
+- When data is already loaded (visible in Global environment context), use that object directly — don't reload it.
+- Use pipe operator |> (base R 4.1+) or %>% (tidyverse) depending on what's loaded.
+- Default plot size: width=800, height=600. For wide plots (time series), use width=1000, height=400. For square plots (scatter, correlation), use width=600, height=600. Set via png(width=W, height=H) or ggplot size options.
+
+### CRITICAL: Fuzzy Matching & Object Resolution
+The user's R environment objects are listed in context under "env_objects" with their names, classes, dimensions, and column names.
+- ALWAYS check env_objects to find the ACTUAL object names before generating code.
+- If the user mentions a name that DOESN'T exactly match any env_object, do FUZZY MATCHING:
+  - Case-insensitive: "loandata" → match "LoanData" or "loanData"
+  - Partial match: "loan" → could mean "loan_data" or "LoanData"
+  - Typo tolerance: "hbs2" → probably means "hsb2"
+  - Underscore/camel: "loan_data" ↔ "LoanData" ↔ "loandata"
+  - Similar names: "helium" → "helium2"
+- When you find the likely match, USE THE EXACT env_object name in the code (not the user's misspelling).
+- If the object name the user mentioned is NOT in env_objects, add a check at the start of your code:
+  if (!exists("ObjectName")) { cat("Object 'ObjectName' not found in environment.\\nAvailable objects:", paste(ls(), collapse=", "), "\\n") } else { ... }
+- If the user references a dataset name that looks like it could be from a loaded package (e.g., "mtcars", "iris", "gifted"), try data(datasetname) first.
+- The "col_names" field in env_objects shows the first 10 column names — use these to understand what data the user has.
+- If the user says "the data I have open" or "my data", look at env_objects to find data.frames and tibbles.
+- If there's ONLY ONE data.frame/tibble in the environment, assume that's what the user means by "my data".
+
+### Package Loading Patterns
+When a package IS needed (not in loaded list):
+- Tidyverse stack: library(tidyverse) — loads ggplot2, dplyr, tidyr, readr, purrr, tibble, stringr, forcats
+- Stats: library(openintro), library(statsr), library(MASS), library(car)
+- Time series: library(forecast), library(tseries), library(zoo)
+- Machine learning: library(caret), library(randomForest), library(glmnet), library(xgboost)
+- Tables/reporting: library(knitr), library(kableExtra), library(gt)
+- Use suppressPackageStartupMessages() to keep console clean:
+  suppressPackageStartupMessages(library(tidyverse))
+
+### Data Loading & Inspection
+# Load CSV
+data <- read.csv("path/to/file.csv")
+data <- readr::read_csv("path/to/file.csv")
+
+# Built-in datasets
+data(mtcars)
+data(iris)
+data(gifted, package = "openintro")
+
+# Inspect
+str(data)
+head(data, 10)
+summary(data)
+dim(data)
+names(data)
+glimpse(data)     # tidyverse
+class(data$column)
+
+### Linear Regression (MOST COMMON — hardwire these patterns)
+# Simple linear regression
+model <- lm(y ~ x, data = dataset)
+summary(model)
+
+# Extract specific values from summary
+coefs <- summary(model)$coefficients
+p_value <- coefs["x", "Pr(>|t|)"]   # p-value for predictor
+r_squared <- summary(model)$r.squared
+adj_r_squared <- summary(model)$adj.r.squared
+slope <- coefs["x", "Estimate"]
+intercept <- coefs["(Intercept)", "Estimate"]
+se <- coefs["x", "Std. Error"]
+t_stat <- coefs["x", "t value"]
+
+# Confidence interval for coefficients
+confint(model, level = 0.95)
+
+# Predictions
+predict(model, newdata = data.frame(x = c(5, 10)))
+predict(model, newdata = data.frame(x = 5), interval = "confidence")
+predict(model, newdata = data.frame(x = 5), interval = "prediction")
+
+# Diagnostics — 4-panel plot
+par(mfrow = c(2,2))
+plot(model)
+par(mfrow = c(1,1))
+
+# Residual checks
+residuals(model)
+fitted(model)
+shapiro.test(residuals(model))   # normality test
+
+# Scatterplot with regression line
+plot(dataset$x, dataset$y, main = "Title", xlab = "X", ylab = "Y", pch = 19)
+abline(model, col = "blue", lwd = 2)
+
+# ggplot version
+ggplot(dataset, aes(x = x, y = y)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE, color = "blue") +
+  labs(title = "Title", x = "X Label", y = "Y Label") +
+  theme_minimal()
+
+### Multiple Linear Regression
+model <- lm(y ~ x1 + x2 + x3, data = dataset)
+model <- lm(y ~ ., data = dataset)  # all predictors
+summary(model)
+
+# Interaction terms
+model <- lm(y ~ x1 * x2, data = dataset)  # x1 + x2 + x1:x2
+model <- lm(y ~ x1 + x2 + x1:x2, data = dataset)
+
+# Polynomial regression
+model <- lm(y ~ x + I(x^2), data = dataset)
+
+# VIF for multicollinearity
+library(car)
+vif(model)
+
+# Stepwise selection
+step(model, direction = "both")
+
+### Interpreting Regression Output (ALWAYS explain these to user)
+- Coefficients Estimate: For every 1-unit increase in x, y changes by [slope] units (holding others constant)
+- p-value < 0.05: The predictor is statistically significant at the 5% level
+- R²: [value*100]% of the variation in [Y variable] is explained by the linear model
+- Adjusted R²: Same but penalized for number of predictors — use for comparing models
+- F-statistic p-value: Tests if the overall model is significant
+- Residual standard error: Average distance of data points from regression line
+
+### Hypothesis Testing
+# One-sample t-test
+t.test(data$x, mu = hypothesized_mean)
+t.test(data$x, mu = 100, alternative = "two.sided")
+t.test(data$x, mu = 100, alternative = "greater")
+t.test(data$x, mu = 100, alternative = "less")
+
+# Two-sample t-test
+t.test(group1$x, group2$x)
+t.test(x ~ group, data = dataset)  # formula interface
+t.test(x ~ group, data = dataset, var.equal = TRUE)  # pooled
+
+# Paired t-test
+t.test(before, after, paired = TRUE)
+
+# Proportion test
+prop.test(x = successes, n = total, p = 0.5)
+prop.test(x = c(s1, s2), n = c(n1, n2))  # two-sample
+
+# Chi-squared test
+chisq.test(table(data$var1, data$var2))
+chisq.test(observed_counts, p = expected_proportions)
+
+# ANOVA
+model <- aov(y ~ group, data = dataset)
+summary(model)
+TukeyHSD(model)  # post-hoc pairwise comparisons
+
+# Two-way ANOVA
+model <- aov(y ~ factor1 * factor2, data = dataset)
+summary(model)
+
+### Probability & Distributions
+# Normal distribution
+pnorm(q, mean, sd)              # P(X ≤ q)
+pnorm(q, mean, sd, lower.tail = FALSE)  # P(X > q)
+qnorm(p, mean, sd)              # inverse: find q for given probability
+dnorm(x, mean, sd)              # density
+rnorm(n, mean, sd)              # random samples
+
+# t-distribution
+pt(t_stat, df)                   # P(T ≤ t)
+qt(p, df)                       # critical value
+rt(n, df)                       # random
+
+# Binomial
+dbinom(k, n, p)                  # P(X = k)
+pbinom(k, n, p)                  # P(X ≤ k)
+qbinom(p, n, prob)              # quantile
+rbinom(trials, n, p)            # random
+
+# Poisson
+dpois(k, lambda)
+ppois(k, lambda)
+
+# Confidence intervals
+mean(x) + c(-1, 1) * qt(0.975, df = length(x)-1) * sd(x)/sqrt(length(x))
+
+### Descriptive Statistics
+mean(x, na.rm = TRUE)
+median(x, na.rm = TRUE)
+sd(x, na.rm = TRUE)
+var(x, na.rm = TRUE)
+IQR(x, na.rm = TRUE)
+quantile(x, probs = c(0.25, 0.5, 0.75), na.rm = TRUE)
+range(x, na.rm = TRUE)
+cor(x, y)                        # correlation
+cor.test(x, y)                   # correlation with p-value
+table(data$var)                  # frequency table
+prop.table(table(data$var))     # proportions
+
+# Tidyverse summary
+dataset %>%
+  group_by(category) %>%
+  summarise(
+    n = n(),
+    mean = mean(value, na.rm = TRUE),
+    sd = sd(value, na.rm = TRUE),
+    median = median(value, na.rm = TRUE),
+    min = min(value, na.rm = TRUE),
+    max = max(value, na.rm = TRUE)
+  )
+
+### Data Wrangling (dplyr/tidyr)
+# Filter, select, mutate, arrange
+dataset %>%
+  filter(column > 10, category == "A") %>%
+  select(col1, col2, col3) %>%
+  mutate(new_col = col1 / col2,
+         log_col = log(col1),
+         category = factor(category)) %>%
+  arrange(desc(new_col))
+
+# Group and summarize
+dataset %>%
+  group_by(group_col) %>%
+  summarise(across(where(is.numeric), list(mean = mean, sd = sd), na.rm = TRUE))
+
+# Pivot (reshape)
+pivot_longer(data, cols = col1:col5, names_to = "variable", values_to = "value")
+pivot_wider(data, names_from = category, values_from = value)
+
+# Join
+left_join(df1, df2, by = "key")
+inner_join(df1, df2, by = c("key1" = "key2"))
+
+# Handle NAs
+drop_na(data, column)
+replace_na(data, list(column = 0))
+complete.cases(data)
+
+### ggplot2 Visualization Patterns
+# Histogram
+ggplot(data, aes(x = variable)) +
+  geom_histogram(bins = 30, fill = "#0D5EAF", color = "white", alpha = 0.8) +
+  labs(title = "Distribution of Variable", x = "Variable", y = "Frequency") +
+  theme_minimal()
+
+# Boxplot
+ggplot(data, aes(x = group, y = value, fill = group)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(title = "Value by Group") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Scatter with regression
+ggplot(data, aes(x = x, y = y)) +
+  geom_point(alpha = 0.6, color = "#0D5EAF") +
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  labs(title = "Y vs X", x = "X", y = "Y") +
+  theme_minimal()
+
+# Bar chart
+ggplot(data, aes(x = reorder(category, -value), y = value, fill = category)) +
+  geom_col() +
+  labs(title = "Title", x = "Category", y = "Value") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Faceted plot
+ggplot(data, aes(x = x, y = y)) +
+  geom_point() +
+  facet_wrap(~ group, scales = "free") +
+  theme_minimal()
+
+# Line chart (time series)
+ggplot(data, aes(x = date, y = value, color = group)) +
+  geom_line(linewidth = 1) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b %Y") +
+  theme_minimal()
+
+# QQ plot (normality check)
+ggplot(data, aes(sample = variable)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  labs(title = "Normal Q-Q Plot") +
+  theme_minimal()
+
+# Residual plots
+ggplot(data.frame(fitted = fitted(model), resid = residuals(model)),
+       aes(x = fitted, y = resid)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(title = "Residuals vs Fitted", x = "Fitted Values", y = "Residuals") +
+  theme_minimal()
+
+# Correlation heatmap
+cor_matrix <- cor(data %>% select(where(is.numeric)), use = "complete.obs")
+ggplot(reshape2::melt(cor_matrix), aes(Var1, Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+### Time Series Analysis
+# Create ts object
+ts_data <- ts(data$value, start = c(2020, 1), frequency = 12)
+
+# Decomposition
+decomp <- decompose(ts_data)
+plot(decomp)
+
+# Autocorrelation
+acf(ts_data)
+pacf(ts_data)
+
+# ARIMA
+library(forecast)
+auto_model <- auto.arima(ts_data)
+summary(auto_model)
+forecast_result <- forecast(auto_model, h = 12)
+plot(forecast_result)
+
+# Moving average
+library(zoo)
+data$ma_7 <- rollmean(data$value, k = 7, fill = NA, align = "right")
+
+### Logistic Regression
+model <- glm(outcome ~ x1 + x2, data = dataset, family = binomial)
+summary(model)
+exp(coef(model))               # odds ratios
+confint(model)                  # CI for log-odds
+exp(confint(model))            # CI for odds ratios
+predicted_probs <- predict(model, type = "response")
+
+# Classification table
+predicted_class <- ifelse(predicted_probs > 0.5, 1, 0)
+table(Actual = dataset$outcome, Predicted = predicted_class)
+
+### Survival Analysis
+library(survival)
+library(survminer)
+surv_obj <- Surv(time = data$time, event = data$status)
+km_fit <- survfit(surv_obj ~ group, data = data)
+ggsurvplot(km_fit, data = data, pval = TRUE, conf.int = TRUE)
+cox_model <- coxph(surv_obj ~ age + treatment, data = data)
+summary(cox_model)
+
+### Common openintro / Stats Course Patterns
+# These datasets come up constantly in stats courses:
+# openintro: gifted, babies, bdims, email, epa2012, hsb2, loans_full_schema
+# Load: data(dataset_name, package = "openintro")
+
+# Inference for one mean
+t.test(data$variable, conf.level = 0.95)
+
+# Inference for difference of means
+t.test(variable ~ group, data = dataset, conf.level = 0.95)
+
+# Inference for proportions
+prop.test(x = count, n = total, conf.level = 0.95, correct = FALSE)
+
+# Simple linear regression for stats class
+model <- lm(response ~ explanatory, data = dataset)
+summary(model)
+# ALWAYS report: equation, R², p-value, interpretation
+
+# Regression equation format:
+# ŷ = b0 + b1*x
+# "For every 1 [unit] increase in [x], we expect [y] to [increase/decrease] by [b1] [units], on average."
+
+# Conditions for linear regression:
+# 1. Linearity: residuals vs fitted shows no pattern
+# 2. Nearly normal residuals: QQ plot or histogram of residuals
+# 3. Constant variability: residuals vs fitted has constant spread
+# 4. Independent observations: context-dependent
+
+### R Markdown / Reporting
+# Quick summary table
+knitr::kable(summary_df, digits = 3, caption = "Summary Statistics")
+
+# Export results
+write.csv(results, "output.csv", row.names = FALSE)
+sink("output.txt"); print(summary(model)); sink()
+
+### Error Prevention
+- Always use na.rm = TRUE in stat functions
+- Check data types: as.numeric(), as.factor(), as.character()
+- Use tryCatch() for operations that might fail
+- Check for NAs: sum(is.na(data$column))
+- Factor levels: levels(data$factor_col)
+- Ensure proper data frame structure before modeling
+
 ## OTHER APPS
-- RStudio: run_r_code with library() calls. Terminal: run_shell_command.
+- Terminal: run_shell_command.
 """
 
 # ── Tool Definition ───────────────────────────────────────────────────────────
@@ -577,7 +1079,7 @@ TOOLS = [
                                     "Preferences: save_preference. "
                                     "PowerPoint: create_slide, add_text_box, add_shape, add_image, add_table, add_chart, modify_slide, set_slide_background, duplicate_slide, delete_slide, reorder_slides, apply_theme. "
                                     "Word: insert_text, insert_paragraph, insert_table, insert_image, format_text, insert_header, insert_footer, insert_page_break, insert_section_break, apply_style, find_and_replace, insert_table_of_contents, add_comment, set_page_margins. "
-                                    "R: run_r_code, install_package. "
+                                    "R: run_r_code, install_package, create_r_script, export_plot. "
                                     "Terminal: run_shell_command, write_file, open_url. "
                                     "Gmail: send_email, draft_email, reply_email, search_emails, summarize_thread, extract_action_items. "
                                     "VS Code: insert_code, replace_selection, create_file, edit_file, run_terminal_command, open_file, show_diff, explain_code, fix_error, refactor, generate_tests. "
@@ -639,8 +1141,11 @@ TOOLS = [
                                     "insert_table_of_contents: {}.\n"
                                     "add_comment: {range_description, comment_text}.\n"
                                     "set_page_margins: {top?, bottom?, left?, right?}.\n"
-                                    "run_r_code: {code}.\n"
-                                    "install_package: {package}.\n"
+                                    "run_r_code: {code}. Runs R code in the console and opens it in a new script tab. Combine all code into ONE action.\n"
+                                    "install_package: {package}. Installs an R package.\n"
+                                    "create_r_script: {code, title?}. Creates a new R script file in the editor without executing.\n"
+                                    "export_plot: {to_app?, cell?, sheet?}. Captures current R plot and exports to transfer endpoint for Excel/PPT to pick up.\n"
+                                    "import_image: {transfer_id?, image_data?, cell?, sheet?}. Inserts an image into Excel. Use when user asks to paste/import an R graph. Fetches from /transfer/pending/excel if no transfer_id.\n"
                                     "run_shell_command: {command}.\n"
                                     "write_file: {path, content}.\n"
                                     "open_url: {url}.\n"
@@ -683,6 +1188,115 @@ TOOLS = [
     }
 ]
 
+# ── File/Document Processing ──────────────────────────────────────────────────
+
+# MIME types Claude can handle as images (vision)
+IMAGE_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"}
+
+# MIME types Claude can handle as native documents
+DOCUMENT_TYPES = {"application/pdf"}
+
+# Text-based files — we extract the text content and inline it in the message
+TEXT_TYPES = {
+    "text/plain", "text/csv", "text/html", "text/markdown", "text/xml",
+    "text/tab-separated-values", "text/x-r", "text/x-python", "text/x-script.python",
+    "application/json", "application/xml", "application/javascript",
+    "application/x-r", "application/x-python-code",
+}
+
+# File extensions we treat as text (fallback when MIME type is generic)
+TEXT_EXTENSIONS = {
+    ".txt", ".csv", ".tsv", ".json", ".xml", ".html", ".htm", ".md", ".markdown",
+    ".r", ".R", ".py", ".js", ".ts", ".jsx", ".tsx", ".css", ".scss", ".sass",
+    ".sql", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".log", ".sh",
+    ".bash", ".zsh", ".env", ".gitignore", ".dockerfile", ".makefile",
+    ".c", ".cpp", ".h", ".hpp", ".java", ".go", ".rs", ".rb", ".php", ".swift",
+    ".kt", ".scala", ".lua", ".pl", ".pm", ".sas", ".stata", ".do", ".m",
+}
+
+import base64 as b64module
+
+def _is_text_file(media_type: str, file_name: str) -> bool:
+    """Check if a file should be treated as text based on MIME type or extension."""
+    if media_type in TEXT_TYPES:
+        return True
+    if media_type.startswith("text/"):
+        return True
+    if file_name:
+        ext = "." + file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+        if ext in TEXT_EXTENSIONS:
+            return True
+    return False
+
+
+def _build_attachment_content(attachments: list, user_text: str) -> list:
+    """Build Claude API content array from mixed attachments (images, PDFs, text files).
+
+    Returns a list of content blocks for the Claude messages API.
+    """
+    content_blocks = []
+    text_file_contents = []
+
+    for att in attachments:
+        media_type = att.get("media_type", "image/png")
+        data = att.get("data", "")
+        file_name = att.get("file_name", "")
+
+        if media_type in IMAGE_TYPES:
+            # Native image — Claude vision
+            content_blocks.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": data,
+                }
+            })
+
+        elif media_type in DOCUMENT_TYPES:
+            # Native PDF document support
+            content_blocks.append({
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": data,
+                }
+            })
+
+        elif _is_text_file(media_type, file_name):
+            # Text-based file — decode base64 and inline as text
+            try:
+                raw_bytes = b64module.b64decode(data)
+                text_content = raw_bytes.decode("utf-8", errors="replace")
+                label = file_name or "uploaded file"
+                text_file_contents.append(f"── {label} ──\n{text_content}")
+            except Exception:
+                text_file_contents.append(f"── {file_name or 'file'} ── (could not decode)")
+
+        else:
+            # Unknown binary file — try to treat as text, fall back to note
+            try:
+                raw_bytes = b64module.b64decode(data)
+                text_content = raw_bytes.decode("utf-8", errors="strict")
+                label = file_name or "uploaded file"
+                text_file_contents.append(f"── {label} ──\n{text_content}")
+            except Exception:
+                # Binary file we can't process — tell Claude about it
+                label = file_name or "uploaded file"
+                text_file_contents.append(
+                    f"── {label} ({media_type}) ── [Binary file uploaded — cannot display contents directly]"
+                )
+
+    # Combine text file contents into the user message
+    if text_file_contents:
+        file_text = "\n\n".join(text_file_contents)
+        user_text = f"{user_text}\n\n--- Uploaded Documents ---\n{file_text}"
+
+    content_blocks.append({"type": "text", "text": user_text})
+    return content_blocks
+
+
 # ── Main Entry Point ──────────────────────────────────────────────────────────
 
 async def get_claude_response(message: str, context: dict,
@@ -701,20 +1315,9 @@ async def get_claude_response(message: str, context: dict,
             content = f"[From {app}] {content}"
         messages.append({"role": role, "content": content})
 
-    # Build user content: text + optional images
+    # Build user content: text + optional images/documents
     if images:
-        user_content = []
-        # Add images first so Claude sees them before the text
-        for img in images:
-            user_content.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": img.get("media_type", "image/png"),
-                    "data": img["data"],
-                }
-            })
-        user_content.append({"type": "text", "text": user_text})
+        user_content = _build_attachment_content(images, user_text)
     else:
         user_content = user_text
 
@@ -733,8 +1336,11 @@ async def get_claude_response(message: str, context: dict,
     is_browser_question = app_name == "browser" and is_question
     force_tool = not (is_browser_summary or is_notes or is_browser_question)
 
+    # Hybrid model selection
+    selected_model = _select_model(message, context, has_attachments=bool(images))
+
     response = client.messages.create(
-        model       = "claude-sonnet-4-5",
+        model       = selected_model,
         max_tokens  = 16384,
         system      = SYSTEM_PROMPT,
         tools       = TOOLS,
@@ -742,7 +1348,9 @@ async def get_claude_response(message: str, context: dict,
         messages    = messages,
     )
 
-    return _parse_tool_response(response)
+    result = _parse_tool_response(response)
+    result["model_used"] = selected_model
+    return result
 
 # ── Response Parser ───────────────────────────────────────────────────────────
 
@@ -771,308 +1379,68 @@ def _parse_tool_response(response) -> dict:
         "actions": actions    if len(actions) > 1  else [],
     }
 
-# ── Context Formatters ────────────────────────────────────────────────────────
+# ── Streaming Entry Point (Improvement 92) ───────────────────────────────────
 
-def _format_context(context: dict) -> str:
-    if not context:
-        return ""
+async def get_claude_stream(message: str, context: dict,
+                            session_id: str, history: list = [],
+                            images: list = []):
+    """Async generator that yields text chunks from Claude's streaming API."""
+    sheet_summary = _format_context(context)
+    user_text     = f"{message}\n\n{sheet_summary}" if sheet_summary else message
 
-    app = context.get("app", "excel")
+    messages = []
+    for h in history:
+        role    = h.get("role", "user")
+        content = h.get("content", "")
+        app     = h.get("app", "")
+        if role == "user" and app:
+            content = f"[From {app}] {content}"
+        messages.append({"role": role, "content": content})
 
-    if app == "excel":
-        lines = ["[EXCEL WORKBOOK CONTEXT]"]
-        active_sheet = context.get('sheet', 'Sheet1')
-        lines.append(f"Active sheet: {active_sheet}")
-        lines.append(f"Selected cell: {context.get('selected_cell', 'A1')}")
-
-        # User preferences
-        prefs = context.get("preferences", {})
-        if prefs:
-            lines.append("User preferences (apply automatically):")
-            for k, v in prefs.items():
-                lines.append(f"  {k}: {v}")
-
-        # ── All-sheet summaries — full data + formulas for every sheet ───────
-        summaries = context.get("sheet_summaries", [])
-        if summaries:
-            lines.append("\n[WORKBOOK SHEET MAP — full data for every sheet]")
-            for s in summaries:
-                if s.get("rows", 0) == 0:
-                    lines.append(f"  Sheet '{s['name']}': empty")
-                    continue
-                used_range_str = s.get("used_range", "")
-                lines.append(f"\n  Sheet '{s['name']}' — {s.get('rows',0)} rows × {s.get('cols',0)} cols  (range: {used_range_str})")
-                # Compute actual start row from used_range address
-                try:
-                    addr_part = used_range_str.split("!")[1] if "!" in used_range_str else used_range_str
-                    start_row = int(''.join(filter(str.isdigit, addr_part.split(":")[0])))
-                except Exception:
-                    start_row = 1
-                preview          = s.get("preview", [])
-                preview_formulas = s.get("preview_formulas", [])
-                for r_idx, row in enumerate(preview):
-                    actual_row = start_row + r_idx
-                    non_empty = []
-                    for c_idx, val in enumerate(row[:26]):
-                        formula = (preview_formulas[r_idx][c_idx]
-                                   if preview_formulas
-                                   and r_idx < len(preview_formulas)
-                                   and c_idx < len(preview_formulas[r_idx])
-                                   else None)
-                        display = formula if (formula and str(formula).startswith("=")) else val
-                        if display not in (None, "", 0):
-                            non_empty.append((c_idx, display))
-                    if non_empty:
-                        cells = "  ".join(f"{_col_letter(c)}{actual_row}={repr(v)}" for c, v in non_empty)
-                        lines.append(f"    {cells}")
-
-        # ── Active sheet — full data + formulas ───────────────────────────────
-        sheet_data     = context.get("sheet_data", [])
-        sheet_formulas = context.get("sheet_formulas", [])
-
-        if sheet_data:
-            lines.append(f"\n[ACTIVE SHEET: '{active_sheet}' — full data]")
-            lines.append(f"Used range: {context.get('used_range', '')}")
-            # Determine start row from used_range address for accurate row labels
-            used_range = context.get("used_range", "")
-            try:
-                start_row = int(''.join(filter(str.isdigit,
-                                used_range.split("!")[1].split(":")[0]
-                                if "!" in used_range else used_range.split(":")[0])))
-            except Exception:
-                start_row = 1
-
-            for r_idx, row in enumerate(sheet_data[:50]):
-                actual_row = start_row + r_idx
-                for c_idx, val in enumerate(row[:26]):
-                    formula = sheet_formulas[r_idx][c_idx] if sheet_formulas and r_idx < len(sheet_formulas) and c_idx < len(sheet_formulas[r_idx]) else None
-                    if formula and str(formula).startswith("="):
-                        lines.append(f"  {_col_letter(c_idx)}{actual_row}: {formula}")
-                    elif val not in (None, "", 0):
-                        lines.append(f"  {_col_letter(c_idx)}{actual_row}: {repr(val)}")
-        else:
-            lines.append(f"\nActive sheet '{active_sheet}' is empty.")
-
-    elif app == "rstudio":
-        lines = ["[RSTUDIO CONTEXT]"]
-        lines.append(f"R version: {context.get('r_version', 'unknown')}")
-        lines.append(f"Working dir: {context.get('working_dir', '~')}")
-        lines.append(f"Loaded packages: {context.get('loaded_pkgs', 'none')}")
-        env_objects = context.get("env_objects", [])
-        if env_objects:
-            lines.append("Global environment:")
-            for obj in env_objects:
-                dim = f" [{obj.get('dim')}]" if obj.get('dim') else ""
-                lines.append(f"  {obj['name']} ({obj['class']}{dim}): {obj.get('preview','')}")
-        else:
-            lines.append("Global environment is empty.")
-
-    elif app == "terminal":
-        lines = ["[TERMINAL CONTEXT]"]
-        lines.append(f"Shell: {context.get('shell', 'zsh')}")
-        lines.append(f"Working dir: {context.get('working_dir', '~')}")
-        recent = context.get("recent_commands", [])
-        if recent:
-            lines.append("Recent commands: " + ", ".join(recent))
-        ls_files = context.get("ls", [])
-        if ls_files:
-            lines.append(f"Files: {', '.join(ls_files[:15])}")
-
-    elif app == "powerpoint":
-        lines = ["[POWERPOINT CONTEXT]"]
-        lines.append(f"Total slides: {context.get('total_slides', 0)}")
-        current_slide = context.get("current_slide", {})
-        if current_slide:
-            lines.append(f"Current slide index: {current_slide.get('index', 0)}")
-            lines.append(f"Layout: {current_slide.get('layout', 'unknown')}")
-        slides = context.get("slides", [])
-        if slides:
-            lines.append("\n[SLIDE MAP]")
-            for s in slides:
-                lines.append(f"  Slide {s.get('index', 0)}: {s.get('title', '(no title)')}")
-                shapes = s.get("shapes", [])
-                for sh in shapes[:10]:
-                    lines.append(f"    - {sh.get('type', 'shape')}: {sh.get('text', '')[:80]}")
-
-    elif app == "word":
-        lines = ["[WORD DOCUMENT CONTEXT]"]
-        lines.append(f"Total paragraphs: {context.get('total_paragraphs', 0)}")
-        lines.append(f"Total pages: {context.get('total_pages', 'unknown')}")
-        selection = context.get("selection", "")
-        if selection:
-            lines.append(f"Selected text: {selection[:200]}")
-        paragraphs = context.get("paragraphs", [])
-        if paragraphs:
-            lines.append("\n[DOCUMENT CONTENT]")
-            for p in paragraphs[:50]:
-                style = p.get("style", "Normal")
-                text = p.get("text", "")
-                if text.strip():
-                    lines.append(f"  [{style}] {text[:120]}")
-        tables = context.get("tables", [])
-        if tables:
-            lines.append(f"\n[TABLES: {len(tables)} found]")
-            for i, t in enumerate(tables[:5]):
-                lines.append(f"  Table {i+1}: {t.get('rows', 0)} rows × {t.get('columns', 0)} cols")
-
-    elif app == "gmail":
-        lines = ["[GMAIL CONTEXT]"]
-        lines.append(f"Account: {context.get('email', 'connected')}")
-        recent_emails = context.get("recent_emails", [])
-        if recent_emails:
-            lines.append("Recent emails:")
-            for e in recent_emails[:5]:
-                lines.append(f"  {e.get('from','')} — {e.get('subject','')}")
-        current_thread = context.get("current_thread", {})
-        if current_thread:
-            lines.append(f"\nCurrent thread: {current_thread.get('subject', '')}")
-            messages = current_thread.get("messages", [])
-            for m in messages[:10]:
-                lines.append(f"  From: {m.get('from', '')} — {m.get('snippet', '')[:100]}")
-    elif app == "vscode":
-        lines = ["[VS CODE CONTEXT]"]
-        lines.append(f"Workspace: {context.get('workspace', '')}")
-        lines.append(f"Current file: {context.get('current_file', 'none')}")
-        lines.append(f"Language: {context.get('language', 'unknown')}")
-        lines.append(f"Lines: {context.get('line_count', 0)}")
-        open_files = context.get("open_files", [])
-        if open_files:
-            lines.append(f"Open files: {', '.join(open_files[:10])}")
-        selection = context.get("selection", "")
-        if selection:
-            lines.append(f"\nSelected text:\n{selection[:1000]}")
-        visible = context.get("visible_text", "")
-        if visible and not selection:
-            lines.append(f"\nVisible code:\n{visible[:2000]}")
-        file_content = context.get("file_content", "")
-        if file_content and not visible:
-            lines.append(f"\nFile content:\n{file_content[:3000]}")
-        diagnostics = context.get("diagnostics", [])
-        if diagnostics:
-            lines.append("\nDiagnostics:")
-            for d in diagnostics[:15]:
-                lines.append(f"  {d.get('severity','')}: {d.get('file','').split('/')[-1]}:{d.get('line',0)} — {d.get('message','')}")
-        git_branch = context.get("git_branch", "")
-        if git_branch:
-            lines.append(f"\nGit branch: {git_branch}, {context.get('git_changes', 0)} uncommitted changes")
-
-    elif app == "google_sheets":
-        lines = ["[GOOGLE SHEETS CONTEXT]"]
-        lines.append(f"Spreadsheet: {context.get('spreadsheet_name', '')}")
-        lines.append(f"Active sheet: {context.get('sheet_name', 'Sheet1')}")
-        lines.append(f"All sheets: {', '.join(context.get('all_sheets', []))}")
-        lines.append(f"Active cell: {context.get('active_cell', 'A1')}")
-        lines.append(f"Data range: {context.get('data_range', '')} ({context.get('row_count', 0)} rows × {context.get('col_count', 0)} cols)")
-        data = context.get("data", [])
-        formulas = context.get("formulas", [])
-        if data:
-            lines.append("\n[SHEET DATA]")
-            for r_idx, row in enumerate(data[:40]):
-                for c_idx, val in enumerate(row[:20]):
-                    formula = formulas[r_idx][c_idx] if formulas and r_idx < len(formulas) and c_idx < len(formulas[r_idx]) else ""
-                    display = formula if formula else val
-                    if display not in (None, "", 0):
-                        lines.append(f"  {_col_letter(c_idx)}{r_idx+1}: {repr(display)}")
-        sel_vals = context.get("selection_values", [])
-        if sel_vals:
-            lines.append(f"\nSelection values ({context.get('active_cell', '')}):")
-            for row in sel_vals[:10]:
-                lines.append(f"  {row}")
-
-    elif app == "google_docs":
-        lines = ["[GOOGLE DOCS CONTEXT]"]
-        lines.append(f"Document: {context.get('document_name', '')}")
-        lines.append(f"Paragraphs: {context.get('paragraph_count', 0)}")
-        selection = context.get("selection", "")
-        if selection:
-            lines.append(f"Selected text: {selection[:500]}")
-        cursor_text = context.get("cursor_text", "")
-        if cursor_text:
-            lines.append(f"Cursor at: {cursor_text}")
-        paragraphs = context.get("paragraphs", [])
-        if paragraphs:
-            lines.append("\n[DOCUMENT CONTENT]")
-            for p in paragraphs[:40]:
-                if p.get("type") == "table":
-                    lines.append(f"  [TABLE: {p.get('rows',0)}×{p.get('cols',0)}]")
-                else:
-                    heading = p.get("heading", "NORMAL")
-                    text = p.get("text", "")
-                    if text.strip():
-                        lines.append(f"  [{heading}] {text[:120]}")
-
-    elif app == "google_slides":
-        lines = ["[GOOGLE SLIDES CONTEXT]"]
-        lines.append(f"Presentation: {context.get('presentation_name', '')}")
-        lines.append(f"Total slides: {context.get('slide_count', 0)}")
-        lines.append(f"Current slide: {context.get('current_slide_index', 0)}")
-        selection = context.get("selection", "")
-        if selection:
-            lines.append(f"Selected text: {selection[:300]}")
-        slides = context.get("slides", [])
-        if slides:
-            lines.append("\n[SLIDE MAP]")
-            for s in slides:
-                lines.append(f"  Slide {s.get('index', 0)}: {s.get('title', '(no title)')}")
-                for sh in s.get("shapes", [])[:8]:
-                    lines.append(f"    - {sh.get('type', 'shape')}: {sh.get('text', '')[:60]}")
-
-    elif app == "notes":
-        lines = ["[NOTES CONTEXT]"]
-        lines.append(f"Note title: {context.get('note_title', 'Untitled')}")
-        note_content = context.get("note_content", "")
-        if note_content:
-            lines.append(f"\n[NOTE CONTENT]\n{note_content[:10000]}")
-        else:
-            lines.append("Note is empty.")
-
-    elif app == "browser":
-        lines = ["[BROWSER CONTEXT]"]
-        lines.append(f"URL: {context.get('url', '')}")
-        lines.append(f"Title: {context.get('title', '')}")
-        meta = context.get("meta_description", "")
-        if meta:
-            lines.append(f"Description: {meta}")
-        # Thread-level context from Gmail/Sheets/Docs/Slides content scripts
-        thread_subject = context.get("thread_subject", "")
-        if thread_subject:
-            lines.append(f"Email thread: {thread_subject}")
-        messages = context.get("messages", [])
-        if messages:
-            lines.append("Thread messages:")
-            for m in messages[:5]:
-                lines.append(f"  {m.get('sender', '')}: {m.get('snippet', '')[:200]}")
-        sheet_title = context.get("sheet_title", "")
-        if sheet_title:
-            lines.append(f"Spreadsheet: {sheet_title}")
-        doc_title = context.get("doc_title", "")
-        if doc_title:
-            lines.append(f"Document: {doc_title}")
-        doc_content = context.get("doc_content", "")
-        if doc_content:
-            lines.append(f"Document content:\n{doc_content[:3000]}")
-        selection = context.get("selection", "")
-        if selection:
-            lines.append(f"\nSelected text:\n{selection[:1500]}")
-        # Full page text for summarization (up to 15K chars)
-        full_page_text = context.get("full_page_text", "")
-        if full_page_text:
-            lines.append(f"\n[FULL PAGE TEXT FOR SUMMARIZATION]\n{full_page_text[:12000]}")
-        elif not selection:
-            page_text = context.get("page_text", "")
-            if page_text:
-                lines.append(f"\nPage content:\n{page_text[:2500]}")
-
+    if images:
+        user_content = _build_attachment_content(images, user_text)
     else:
-        return ""
+        user_content = user_text
 
-    return "\n".join(lines)
+    messages.append({"role": "user", "content": user_content})
+
+    app_name = context.get("app", "")
+    is_browser_summary = app_name == "browser" and bool(context.get("full_page_text", ""))
+    is_notes = app_name == "notes"
+    msg_lower = message.lower().strip()
+    is_question = any(msg_lower.startswith(q) for q in [
+        "what", "how", "why", "when", "where", "who", "can you", "do you",
+        "tell me", "explain", "help", "describe", "summarize", "summary",
+    ])
+    is_browser_question = app_name == "browser" and is_question
+
+    # Hybrid model selection
+    selected_model = _select_model(message, context, has_attachments=bool(images))
+
+    # Only stream text-only responses (no tool use)
+    if is_browser_summary or is_notes or is_browser_question:
+        with client.messages.stream(
+            model       = selected_model,
+            max_tokens  = 16384,
+            system      = SYSTEM_PROMPT,
+            messages    = messages,
+        ) as stream:
+            for text in stream.text_stream:
+                yield text
+    else:
+        # For tool-use responses, fall back to non-streaming
+        response = client.messages.create(
+            model       = selected_model,
+            max_tokens  = 16384,
+            system      = SYSTEM_PROMPT,
+            tools       = TOOLS,
+            tool_choice = {"type": "tool", "name": "execute_actions"},
+            messages    = messages,
+        )
+        result = _parse_tool_response(response)
+        yield result.get("reply", "Done.")
 
 
-def _col_letter(idx: int) -> str:
-    letters = ""
-    idx += 1
-    while idx > 0:
-        idx, remainder = divmod(idx - 1, 26)
-        letters = chr(65 + remainder) + letters
-    return letters
+# ── Context Formatters (extracted to services/prompts/context_formatter.py) ───
+from services.prompts.context_formatter import format_context as _format_context, _col_letter  # noqa: E402
+
