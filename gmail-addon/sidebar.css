@@ -365,3 +365,115 @@ body {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* Quick action buttons */
+#tsifl-quick-actions {
+  display: flex; gap: 4px; padding: 6px 12px; flex-wrap: wrap;
+  border-bottom: 1px solid #E2E8F0;
+}
+.tsifl-quick-btn {
+  background: #F8FAFC; color: #64748B; border: 1px solid #E2E8F0;
+  border-radius: 12px; padding: 3px 10px; font-size: 10px;
+  cursor: pointer; transition: all 0.15s; white-space: nowrap;
+}
+.tsifl-quick-btn:hover {
+  background: #EBF3FB; color: #0D5EAF; border-color: #0D5EAF;
+}
+
+/* Context display — shows captured context summary */
+#tsifl-context-display {
+  padding: 6px 12px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #0D5EAF;
+  background: #EBF3FB;
+  border-bottom: 1px solid rgba(13, 94, 175, 0.12);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+
+/* Context-specific quick actions */
+.tsifl-context-actions {
+  display: flex;
+  gap: 4px;
+  padding: 5px 12px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid #E2E8F0;
+  background: #F0F7FF;
+}
+
+.tsifl-context-actions .tsifl-context-btn {
+  background: #FFFFFF;
+  color: #0D5EAF;
+  border: 1px solid rgba(13, 94, 175, 0.25);
+  border-radius: 12px;
+  padding: 3px 10px;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.tsifl-context-actions .tsifl-context-btn:hover {
+  background: #0D5EAF;
+  color: #FFFFFF;
+  border-color: #0D5EAF;
+}
+
+/* Code blocks */
+.tsifl-msg pre {
+  position: relative; background: #1E293B; color: #E2E8F0;
+  border-radius: 6px; padding: 10px 12px; margin: 6px 0;
+  font-family: "SF Mono", Consolas, monospace; font-size: 12px;
+  line-height: 1.5; overflow-x: auto; white-space: pre-wrap;
+}
+.tsifl-msg pre .copy-btn {
+  position: absolute; top: 4px; right: 4px;
+  background: rgba(255,255,255,0.1); color: #E2E8F0;
+  border: none; border-radius: 4px; padding: 2px 8px;
+  font-size: 10px; cursor: pointer; opacity: 0; transition: opacity 0.15s;
+}
+.tsifl-msg pre:hover .copy-btn { opacity: 1; }
+.tsifl-msg code {
+  background: #F1F5F9; padding: 1px 5px; border-radius: 3px;
+  font-size: 11px; font-family: "SF Mono", Consolas, monospace;
+}
+
+/* Typing indicator */
+.typing-indicator { display: flex; gap: 4px; padding: 10px 12px; }
+.typing-indicator span {
+  width: 7px; height: 7px; background: #94A3B8;
+  border-radius: 50%; animation: pulse 1.4s infinite ease-in-out;
+}
+.typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+.typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes pulse {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+/* Dark mode */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0F172A;
+    --surface: #1E293B;
+    --border: #334155;
+    --text: #F1F5F9;
+    --muted: #94A3B8;
+    --blue-light: #1E3A5F;
+  }
+  body { background: var(--bg); color: var(--text); }
+  #tsifl-sidebar { background: var(--bg); }
+  #tsifl-header { background: var(--surface); }
+  #tsifl-login input { background: var(--surface); color: var(--text); border-color: var(--border); }
+  .tsifl-msg { color: var(--text); }
+  .tsifl-msg.assistant { background: var(--surface); border-color: var(--border); }
+  #tsifl-input { background: var(--surface); color: var(--text); border-color: var(--border); }
+  #tsifl-context-display { background: var(--blue-light); color: #93C5FD; border-color: var(--border); }
+  .tsifl-context-actions { background: var(--surface); border-color: var(--border); }
+  .tsifl-context-actions .tsifl-context-btn { background: var(--bg); color: #93C5FD; border-color: #334155; }
+  .tsifl-context-actions .tsifl-context-btn:hover { background: #0D5EAF; color: #FFFFFF; }
+}

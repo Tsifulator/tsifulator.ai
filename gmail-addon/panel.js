@@ -367,6 +367,10 @@ async function handleSubmit() {
   try {
     const context = await getContext();
 
+    // Update context display
+    updateContextDisplay(context);
+    updateContextActions(context);
+
     // If summarization request, capture full page text
     if (isSummarizationRequest(msg)) {
       setStatus("Reading page...");
@@ -656,6 +660,130 @@ function setSubmitEnabled(enabled) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// CONTEXT DISPLAY & CONTEXT ACTIONS
+// ══════════════════════════════════════════════════════════════════════════
+
+function updateContextDisplay(context) {
+  const el = document.getElementById("tsifl-context-display");
+  if (!el) return;
+
+  let summary = "";
+
+  if (context.app === "gmail") {
+    const count = context.message_count || (context.messages?.length) || 0;
+    const sender = context.messages?.[0]?.sender_email || context.messages?.[0]?.sender_name || "";
+    const subject = context.thread_subject || "";
+    if (count > 0 && sender) {
+      summary = `Reading: Gmail \u2014 ${count} message${count !== 1 ? "s" : ""} in thread from ${sender}`;
+    } else if (subject) {
+      summary = `Reading: Gmail \u2014 "${subject}"`;
+    } else if (context.is_composing) {
+      summary = "Reading: Gmail \u2014 Composing new email";
+    } else {
+      summary = "Reading: Gmail";
+    }
+  } else if (context.product) {
+    const p = context.product;
+    const details = [p.name];
+    if (p.price) details.push(p.price);
+    if (p.rating) details.push(`${p.rating} stars`);
+    const source = (p.source || "").charAt(0).toUpperCase() + (p.source || "").slice(1);
+    summary = `Analyzing: ${source || "Product"} \u2014 ${details.join(", ")}`;
+  } else if (context.app === "google_sheets") {
+    summary = `Analyzing: Google Sheets \u2014 ${context.sheet_title || "Spreadsheet"}`;
+  } else if (context.app === "google_docs") {
+    summary = `Editing: Google Docs \u2014 ${context.doc_title || "Document"}`;
+  } else if (context.app === "google_slides") {
+    summary = `Viewing: Google Slides \u2014 ${context.slide_count || 0} slides`;
+  } else {
+    // Generic browser
+    const pageTitle = context.title || "";
+    const host = (() => {
+      try { return new URL(context.url || "").hostname.replace("www.", ""); } catch (e) { return ""; }
+    })();
+    const pageType = context.page_type || "";
+    const typeLabels = {
+      wikipedia: "Wikipedia", article: "Article", financial: "Financial",
+      github: "GitHub", stackoverflow: "Stack Overflow", search_results: "Search Results",
+      linkedin_profile: "LinkedIn Profile", linkedin_job: "LinkedIn Job",
+    };
+    const label = typeLabels[pageType] || (host ? host.split(".")[0].charAt(0).toUpperCase() + host.split(".")[0].slice(1) : "Page");
+    const titleSnippet = pageTitle.length > 50 ? pageTitle.slice(0, 50) + "..." : pageTitle;
+    summary = `Browsing: ${label}${titleSnippet ? " \u2014 " + titleSnippet : ""}`;
+  }
+
+  if (summary) {
+    el.textContent = summary;
+    el.style.display = "block";
+  } else {
+    el.style.display = "none";
+  }
+
+  // Also update tab context
+  const tabCtx = document.getElementById("tsifl-tab-context");
+  const titleEl = document.getElementById("tsifl-tab-title");
+  if (tabCtx && titleEl) {
+    tabCtx.style.display = "block";
+    titleEl.textContent = summary || "On: " + (context.title || "").slice(0, 60);
+  }
+}
+
+function updateContextActions(context) {
+  const container = document.getElementById("tsifl-context-actions");
+  if (!container) return;
+
+  const actions = [];
+
+  if (context.app === "gmail") {
+    actions.push({ label: "Draft reply", prompt: "Draft a professional reply to this email thread" });
+    actions.push({ label: "Summarize thread", prompt: "Summarize this email thread with key points and decisions" });
+    actions.push({ label: "Extract action items", prompt: "Extract all action items and deadlines from this email thread" });
+    actions.push({ label: "Find emails", prompt: "Help me find specific emails — what should I search for?" });
+  }
+
+  if (context.app === "google_sheets") {
+    actions.push({ label: "Analyze data", prompt: "Analyze the data in this spreadsheet and provide key insights" });
+    actions.push({ label: "Create chart", prompt: "Suggest the best chart type for this data and how to create it" });
+    actions.push({ label: "Write formula", prompt: "Help me write a formula for this spreadsheet" });
+  }
+
+  if (context.tables && context.tables.length > 0) {
+    actions.push({ label: "Extract table data", prompt: "Extract and organize the table data on this page into a clean format" });
+  }
+
+  if (context.app === "google_docs") {
+    actions.push({ label: "Improve writing", prompt: "Review and suggest improvements to this document" });
+    actions.push({ label: "Summarize doc", prompt: "Summarize this document with key points" });
+  }
+
+  if (context.product) {
+    actions.push({ label: "Compare prices", prompt: "Help me compare this product with alternatives and find the best deal" });
+    actions.push({ label: "Product summary", prompt: "Give me a quick summary of this product: pros, cons, and value" });
+  }
+
+  if (actions.length === 0) {
+    container.style.display = "none";
+    return;
+  }
+
+  container.style.display = "flex";
+  container.innerHTML = actions.map(a =>
+    `<button class="tsifl-quick-btn tsifl-context-btn" data-prompt="${a.prompt.replace(/"/g, '&quot;')}">${a.label}</button>`
+  ).join("");
+
+  // Wire up click handlers
+  container.querySelectorAll(".tsifl-context-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const prompt = btn.getAttribute("data-prompt");
+      if (prompt) {
+        document.getElementById("tsifl-user-input").value = prompt;
+        handleSubmit();
+      }
+    });
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // EVENT WIRING
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -763,6 +891,10 @@ async function updateTabContext() {
         urlEl.textContent = (tab.url || "").slice(0, 80);
       }
     }
+    // Pre-load context actions on panel open
+    const context = await getContext();
+    updateContextDisplay(context);
+    updateContextActions(context);
   } catch (e) { /* silent */ }
 }
 

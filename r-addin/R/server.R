@@ -6,7 +6,11 @@
 #' @keywords internal
 run_tsifl_server <- function(port = 7444) {
 
-  BACKEND_URL <- "https://focused-solace-production-6839.up.railway.app"
+  BACKEND_URL <- if (nchar(Sys.getenv("TSIFULATOR_BACKEND_URL")) > 0) {
+    Sys.getenv("TSIFULATOR_BACKEND_URL")
+  } else {
+    "https://focused-solace-production-6839.up.railway.app"
+  }
 
   config_path <- path.expand("~/.tsifulator_user")
   USER_ID <- if (file.exists(config_path)) {
@@ -241,15 +245,71 @@ run_tsifl_server <- function(port = 7444) {
       color: #94A3B8;
       padding: 1px 0;
     }
+
+    .typing-indicator { display: flex; gap: 4px; padding: 8px 10px; align-items: center; }
+    .typing-indicator span { width: 7px; height: 7px; background: #94A3B8; border-radius: 50%; animation: pulse 1.4s infinite ease-in-out; }
+    .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes pulse { 0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; } 40% { transform: scale(1); opacity: 1; } }
+    @keyframes fadeInUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .message { animation: fadeInUp 0.3s ease; }
+
+    .message pre { position: relative; background: #1E293B; color: #E2E8F0; border-radius: 6px; padding: 10px 12px; margin: 6px 0; font-family: 'SF Mono', Consolas, monospace; font-size: 12px; line-height: 1.5; overflow-x: auto; white-space: pre-wrap; }
+    .message code { background: #F1F5F9; padding: 1px 4px; border-radius: 3px; font-size: 11px; font-family: 'SF Mono', Consolas, monospace; }
+
+    @media (prefers-color-scheme: dark) {
+      body { background: #0F172A; color: #F1F5F9; }
+      #header { background: #1E293B; border-color: #334155; }
+      .message.user { background: #1E3A5F; border-color: #0D5EAF; }
+      .message.assistant { background: #1E293B; border-color: #334155; color: #F1F5F9; }
+      #input_area { background: #0F172A; border-color: #334155; }
+      textarea { background: #1E293B !important; color: #F1F5F9 !important; border-color: #334155 !important; }
+    }
   "
 
   # ── UI ─────────────────────────────────────────────────────────────────────
   ui <- shiny::fluidPage(
-    shiny::tags$head(shiny::tags$style(shiny::HTML(CSS))),
+    shiny::tags$head(
+      shiny::tags$style(shiny::HTML(CSS)),
+      shiny::tags$script(shiny::HTML("
+        // Keep-alive ping every 30 seconds to prevent WebSocket idle disconnect
+        setInterval(function() {
+          if (Shiny && Shiny.setInputValue) {
+            Shiny.setInputValue('_keepalive', Date.now(), {priority: 'event'});
+          }
+        }, 30000);
+
+        // Reconnect if WebSocket drops
+        $(document).on('shiny:disconnected', function(event) {
+          setTimeout(function() { location.reload(); }, 3000);
+        });
+      "))
+    ),
 
     shiny::div(id = "header",
       shiny::span(id = "logo", "\u26a1 tsifl"),
-      shiny::uiOutput("tasks_label")
+      shiny::div(style = "display:flex;align-items:center;gap:6px;",
+        shiny::tags$button(
+          id = "notes_btn",
+          onclick = paste0("window.open('", BACKEND_URL, "/notes-app','_blank')"),
+          style = "background:#F1F5F9;color:#64748B;border:1px solid #E2E8F0;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:600;cursor:pointer;",
+          "Notes"
+        ),
+        shiny::uiOutput("tasks_label")
+      )
+    ),
+
+    # Quick actions (Improvements 60, 62, 63, 68)
+    shiny::div(id = "quick_actions", style = "display:flex;gap:4px;padding:6px 12px;flex-wrap:wrap;border-bottom:1px solid #E2E8F0;",
+      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 't_test', {priority: 'event'})", style = "background:#F8FAFC;color:#64748B;border:1px solid #E2E8F0;border-radius:10px;padding:2px 8px;font-size:10px;cursor:pointer;", "t-test"),
+      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'linear_reg', {priority: 'event'})", style = "background:#F8FAFC;color:#64748B;border:1px solid #E2E8F0;border-radius:10px;padding:2px 8px;font-size:10px;cursor:pointer;", "Linear Reg"),
+      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'anova', {priority: 'event'})", style = "background:#F8FAFC;color:#64748B;border:1px solid #E2E8F0;border-radius:10px;padding:2px 8px;font-size:10px;cursor:pointer;", "ANOVA"),
+      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'ggplot_scatter', {priority: 'event'})", style = "background:#F8FAFC;color:#64748B;border:1px solid #E2E8F0;border-radius:10px;padding:2px 8px;font-size:10px;cursor:pointer;", "ggplot"),
+      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'summary_stats', {priority: 'event'})", style = "background:#F8FAFC;color:#64748B;border:1px solid #E2E8F0;border-radius:10px;padding:2px 8px;font-size:10px;cursor:pointer;", "Summary"),
+      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'correlation', {priority: 'event'})", style = "background:#F8FAFC;color:#64748B;border:1px solid #E2E8F0;border-radius:10px;padding:2px 8px;font-size:10px;cursor:pointer;", "Correlation"),
+      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'which_test', {priority: 'event'})", style = "background:#F8FAFC;color:#64748B;border:1px solid #E2E8F0;border-radius:10px;padding:2px 8px;font-size:10px;cursor:pointer;", "Which test?"),
+      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'profile_data', {priority: 'event'})", style = "background:#F8FAFC;color:#64748B;border:1px solid #E2E8F0;border-radius:10px;padding:2px 8px;font-size:10px;cursor:pointer;", "Profile data"),
+      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'compare_models', {priority: 'event'})", style = "background:#F8FAFC;color:#64748B;border:1px solid #E2E8F0;border-radius:10px;padding:2px 8px;font-size:10px;cursor:pointer;", "Compare models")
     ),
 
     shiny::div(id = "chat_history",
@@ -263,11 +323,12 @@ run_tsifl_server <- function(port = 7444) {
         rows = 2, width = "100%"
       ),
       shiny::tags$input(type = "file", id = "image_input",
-        accept = "image/*", multiple = "multiple",
+        accept = "image/*,.pdf,.csv,.txt,.json,.xml,.r,.R,.py,.js,.ts,.sql,.md,.html,.yaml,.yml,.docx,.xlsx,.sas,.do,.log",
+        multiple = "multiple",
         style = "display:none;"
       ),
       shiny::div(id = "input_actions",
-        shiny::tags$button(id = "attach_btn", title = "Attach image", "+"),
+        shiny::tags$button(id = "attach_btn", title = "Attach file", "+"),
         shiny::actionButton("send_btn", "Send", width = "100%")
       ),
       shiny::div(id = "status_bar", shiny::textOutput("status", inline = TRUE))
@@ -282,11 +343,11 @@ run_tsifl_server <- function(port = 7444) {
         document.getElementById('image_input').click();
       });
 
-      // File picker change
+      // File picker change — accepts all file types
       document.getElementById('image_input').addEventListener('change', function(e) {
         var files = Array.from(e.target.files);
         files.forEach(function(f) {
-          if (f.type.startsWith('image/')) readImageFile(f);
+          readFileAsBase64(f);
         });
         e.target.value = '';
       });
@@ -312,7 +373,7 @@ run_tsifl_server <- function(port = 7444) {
         inputArea.style.background = '';
         var files = Array.from(e.dataTransfer.files || []);
         files.forEach(function(f) {
-          if (f.type.startsWith('image/')) readImageFile(f);
+          readFileAsBase64(f);
         });
       });
 
@@ -320,25 +381,29 @@ run_tsifl_server <- function(port = 7444) {
       document.querySelector('#user_input').addEventListener('paste', function(e) {
         var items = Array.from(e.clipboardData ? e.clipboardData.items : []);
         items.forEach(function(item) {
-          if (item.type.startsWith('image/')) {
+          if (item.type.startsWith('image/') || item.kind === 'file') {
             var f = item.getAsFile();
-            if (f) readImageFile(f);
+            if (f) readFileAsBase64(f);
           }
         });
       });
 
-      // Read image file → base64
-      function readImageFile(file) {
+      // Read any file → base64
+      function readFileAsBase64(file) {
         var reader = new FileReader();
         reader.onload = function() {
           var base64 = reader.result;
-          var mediaType = file.type || 'image/png';
+          var isImage = file.type && file.type.startsWith('image/');
+          var mediaType = file.type || (isImage ? 'image/png' : 'application/octet-stream');
           var data = base64.split(',')[1];
-          pendingImages.push({ media_type: mediaType, data: data });
+          pendingImages.push({ media_type: mediaType, data: data, file_name: file.name || '' });
           updatePreview();
         };
         reader.readAsDataURL(file);
       }
+
+      // Backward compat alias
+      function readImageFile(file) { readFileAsBase64(file); }
 
       // Render base64 → canvas (bypasses CSP restrictions)
       function renderToCanvas(base64Data, mediaType, maxW, maxH) {
@@ -372,18 +437,27 @@ run_tsifl_server <- function(port = 7444) {
         if (pendingImages.length === 0) {
           bar.style.display = 'none';
           btn.textContent = '+';
-          btn.title = 'Attach image';
+          btn.title = 'Attach file';
           return;
         }
         btn.textContent = pendingImages.length;
-        btn.title = pendingImages.length + ' image(s) attached';
+        btn.title = pendingImages.length + ' file(s) attached';
         bar.style.display = 'flex';
         pendingImages.forEach(function(img, i) {
           var wrapper = document.createElement('div');
           wrapper.className = 'image-preview-item';
-          renderToCanvas(img.data, img.media_type, 48, 48).then(function(canvas) {
-            if (canvas) wrapper.insertBefore(canvas, wrapper.firstChild);
-          });
+          var isImage = img.media_type && img.media_type.startsWith('image/');
+          if (isImage) {
+            renderToCanvas(img.data, img.media_type, 48, 48).then(function(canvas) {
+              if (canvas) wrapper.insertBefore(canvas, wrapper.firstChild);
+            });
+          } else {
+            var docIcon = document.createElement('div');
+            var ext = img.file_name ? img.file_name.split('.').pop().toUpperCase() : 'FILE';
+            docIcon.style.cssText = 'width:48px;height:48px;display:flex;align-items:center;justify-content:center;background:#F1F5F9;border-radius:4px;border:1px solid #E2E8F0;font-size:9px;font-weight:700;color:#0D5EAF;text-align:center;';
+            docIcon.textContent = ext;
+            wrapper.insertBefore(docIcon, wrapper.firstChild);
+          }
           var rm = document.createElement('button');
           rm.className = 'remove-img';
           rm.textContent = 'x';
@@ -488,13 +562,143 @@ run_tsifl_server <- function(port = 7444) {
       messages(c(current, list(entry)))
     }
 
+    # ── Environment snapshot (background job → main session IPC) ───────────
+    # The tsifl Shiny server runs in a background job with its OWN .GlobalEnv.
+    # To see the user's actual data we use two mechanisms:
+    #   A) At startup: install a recurring `later` callback in the MAIN session
+    #      that auto-captures the environment every 3 seconds.
+    #   B) On each chat: also fire a one-shot capture as a safety net.
+    # Both write to the same shared temp file.
+
+    ENV_SNAPSHOT_FILE <- "/tmp/.tsifl_env_snapshot.rds"
+
+    # The R code that captures the main session's environment.
+    # Written as a standalone script file so `source()` is reliable.
+    ENV_CAPTURE_SCRIPT <- "/tmp/.tsifl_capture_env.R"
+    writeLines(c(
+      'tryCatch({',
+      '  nms <- setdiff(ls(.GlobalEnv), c(".tsifl_watcher", ".tsifl_capture"))',
+      '  info <- lapply(nms, function(nm) {',
+      '    obj <- tryCatch(get(nm, envir = .GlobalEnv), error = function(e) NULL)',
+      '    if (is.null(obj)) return(list(name = nm, class = "unknown"))',
+      '    r <- list(name = nm, class = paste(class(obj), collapse = ", "))',
+      '    if (!is.null(dim(obj))) r$dim <- paste(dim(obj), collapse = "x")',
+      '    if (!is.null(names(obj))) r$col_names <- paste(head(names(obj), 10), collapse = ", ")',
+      '    tryCatch({',
+      '      r$preview <- paste(utils::capture.output(utils::str(obj, max.level = 0, give.attr = FALSE))[1], collapse = "")',
+      '    }, error = function(e) {})',
+      '    r',
+      '  })',
+      '  pkgs <- gsub("^package:", "", grep("^package:", search(), value = TRUE))',
+      '  saveRDS(list(env = info, pkgs = pkgs, ts = Sys.time()), "/tmp/.tsifl_env_snapshot.rds")',
+      '}, error = function(e) {',
+      '  saveRDS(list(env = list(), pkgs = character(0), ts = Sys.time(), err = conditionMessage(e)), "/tmp/.tsifl_env_snapshot.rds")',
+      '})'
+    ), ENV_CAPTURE_SCRIPT)
+
+    # (A) Install a recurring watcher in the MAIN R session via sendToConsole.
+    #     Uses later::later (always available — it's a shiny dependency).
+    #     The watcher captures the env every 3 seconds automatically.
+    watcher_cmd <- paste0(
+      'local({ ',
+      'if (!exists(".tsifl_watcher", envir = .GlobalEnv)) { ',
+      '  assign(".tsifl_watcher", TRUE, envir = .GlobalEnv); ',
+      '  .tsifl_capture <- function() { ',
+      '    tryCatch(source("/tmp/.tsifl_capture_env.R", local = TRUE, echo = FALSE), error = function(e) {}); ',
+      '    later::later(.tsifl_capture, delay = 3) ',
+      '  }; ',
+      '  assign(".tsifl_capture", .tsifl_capture, envir = .GlobalEnv); ',
+      '  .tsifl_capture() ',
+      '} })'
+    )
+    tryCatch(
+      rstudioapi::sendToConsole(watcher_cmd, execute = TRUE, echo = FALSE, focus = FALSE),
+      error = function(e) {
+        # If sendToConsole fails at startup, try again after a short delay
+        later::later(function() {
+          tryCatch(
+            rstudioapi::sendToConsole(watcher_cmd, execute = TRUE, echo = FALSE, focus = FALSE),
+            error = function(e2) {}
+          )
+        }, delay = 2)
+      }
+    )
+
     get_r_context <- function() {
+      # (B) Fire a one-shot capture as safety net (in case the watcher isn't running)
+      tryCatch(
+        rstudioapi::sendToConsole(
+          'tryCatch(source("/tmp/.tsifl_capture_env.R", local = TRUE, echo = FALSE), error = function(e) {})',
+          execute = TRUE, echo = FALSE, focus = FALSE
+        ),
+        error = function(e) {}
+      )
+
+      # Wait for the snapshot, with retries
+      snap <- NULL
+      for (attempt in 1:4) {
+        Sys.sleep(0.4)
+        snap <- tryCatch(readRDS(ENV_SNAPSHOT_FILE), error = function(e) NULL)
+        if (!is.null(snap)) break
+      }
+
+      env_objs <- list()
+      pkgs <- character(0)
+      if (!is.null(snap)) {
+        env_objs <- if (!is.null(snap$env)) snap$env else list()
+        pkgs <- if (!is.null(snap$pkgs)) snap$pkgs else character(0)
+      }
+
+      # Fallback: at least get packages from this background session
+      if (length(pkgs) == 0) {
+        pkgs <- tryCatch({
+          gsub("^package:", "", grep("^package:", search(), value = TRUE))
+        }, error = function(e) character(0))
+      }
+
+      # Get active editor tab from RStudio IDE
+      open_tabs <- tryCatch({
+        ctx <- rstudioapi::getActiveDocumentContext()
+        doc_info <- list()
+        if (nchar(ctx$path) > 0) {
+          doc_info$active_file <- basename(ctx$path)
+        }
+        if (length(ctx$contents) > 0) {
+          doc_info$active_preview <- paste(utils::head(ctx$contents, 15), collapse = "\n")
+        }
+        doc_info
+      }, error = function(e) list())
+
       list(
         app         = "rstudio",
         r_version   = R.version$version.string,
-        working_dir = getwd()
+        working_dir = getwd(),
+        loaded_pkgs = paste(pkgs, collapse = ", "),
+        env_objects = env_objs,
+        open_editor = open_tabs
       )
     }
+
+    # Quick action handler (Improvements 60, 62, 63, 68)
+    shiny::observeEvent(input$quick_action, {
+      prompts <- list(
+        t_test = "Run a t-test on my data. Ask me which variable and hypothesis if unclear.",
+        linear_reg = "Run a linear regression on my data. Ask which variables to use if unclear.",
+        anova = "Run an ANOVA test on my data. Ask which variables to use if unclear.",
+        ggplot_scatter = "Create a ggplot scatter plot from my data. Ask which variables to use if unclear.",
+        summary_stats = "Generate comprehensive summary statistics for all numeric variables in my data.",
+        correlation = "Create a correlation matrix for all numeric variables in my data with a visualization.",
+        which_test = "Based on my data, which statistical test should I use? Help me choose the right test for my research question.",
+        profile_data = "Profile my data: show nrow, ncol, column types, percent missing per column, unique values per column, min/max/mean for numerics, and top 5 values for categoricals.",
+        compare_models = "Compare all model objects in my R environment. Show R-squared, Adjusted R-squared, AIC, BIC, and p-values in a comparison table."
+      )
+      prompt <- prompts[[input$quick_action]]
+      if (!is.null(prompt)) {
+        shiny::updateTextAreaInput(session, "user_input", value = prompt)
+        # Trigger send
+        shinyjs_msg <- paste0("$('#send_btn').click();")
+      }
+    }, ignoreInit = TRUE)
 
     shiny::observeEvent(input$send_btn, {
       msg <- trimws(input$user_input)
@@ -535,14 +739,23 @@ run_tsifl_server <- function(port = 7444) {
         if (!is.null(data$tasks_remaining) && data$tasks_remaining >= 0)
           tasks_left(data$tasks_remaining)
 
-        all_actions <- c(
-          if (!is.null(data$actions) && length(data$actions) > 0) data$actions else list(),
-          if (!is.null(data$action)  && length(data$action)  > 0 &&
-              !identical(data$action$type, "none")) list(data$action) else list()
-        )
+        all_actions <- list()
+        # Safely collect actions array
+        if (!is.null(data$actions) && is.list(data$actions) && length(data$actions) > 0) {
+          all_actions <- c(all_actions, data$actions)
+        }
+        # Safely collect single action (must be a list with $type)
+        if (!is.null(data$action) && is.list(data$action) && !is.null(data$action$type) &&
+            !identical(data$action$type, "none")) {
+          all_actions <- c(all_actions, list(data$action))
+        }
 
         for (action in all_actions) {
-          execute_r_action(action, add_message)
+          tryCatch({
+            execute_r_action(action, add_message)
+          }, error = function(e) {
+            add_message("action", paste0("\u26a0\ufe0f Action error: ", e$message))
+          })
         }
 
         status_text("Done")
@@ -562,20 +775,43 @@ run_tsifl_server <- function(port = 7444) {
       if (type == "run_r_code") {
         code <- payload$code
 
-        # 1. Insert into editor so user can see the code
+        # 1. Create a NEW R script document with the generated code
+        #    so it appears in a fresh tab (not buried in existing file)
         tryCatch({
-          ctx <- rstudioapi::getSourceEditorContext()
-          rstudioapi::insertText(
-            location = ctx$selection[[1]]$range$end,
-            text     = paste0("\n# tsifl\n", code, "\n"),
-            id       = ctx$id
+          # Create new untitled R script
+          rstudioapi::documentNew(
+            text = paste0("# tsifl — Generated Code\n\n", code, "\n"),
+            type = "r"
           )
-        }, error = function(e) {})
+        }, error = function(e) {
+          # Fallback: try inserting into current editor
+          tryCatch({
+            ctx <- rstudioapi::getSourceEditorContext()
+            rstudioapi::insertText(
+              location = ctx$selection[[1]]$range$end,
+              text     = paste0("\n# tsifl\n", code, "\n"),
+              id       = ctx$id
+            )
+          }, error = function(e2) {})
+        })
 
         # 2. Send to the MAIN R console.
         #    Because this server runs in a background job, the main console
         #    is NOT blocked — sendToConsole goes straight there, graphics
         #    route normally to the Plots pane.
+        #    Auto-install missing packages (Improvement 67)
+        #    Wrap code with tryCatch that detects missing packages and installs them
+        wrapped_code <- paste0(
+          'tryCatch({ ', code, ' }, error = function(e) { ',
+          '  msg <- conditionMessage(e); ',
+          '  if (grepl("there is no package called", msg)) { ',
+          '    pkg <- sub(".*there is no package called .(.+?).", "\\\\1", msg); ',
+          '    message("Auto-installing package: ", pkg); ',
+          '    install.packages(pkg, repos = "https://cran.r-project.org", quiet = TRUE); ',
+          '    eval(parse(text = paste0("library(", pkg, ")"))); ',
+          '    eval(parse(text = ', deparse(code), ')); ',
+          '  } else { stop(e) } })'
+        )
         sent <- tryCatch({
           rstudioapi::sendToConsole(
             code, execute = TRUE, echo = TRUE, focus = FALSE
@@ -585,6 +821,154 @@ run_tsifl_server <- function(port = 7444) {
 
         if (sent) {
           add_message("action", "\u2705 Running in console \u2014 check Plots pane for charts")
+
+          # ── Cross-app memory: capture R output and data snapshots ──────────
+          tryCatch({
+            # Build a capture script that runs in the main session
+            capture_script_path <- "/tmp/.tsifl_capture_output.R"
+            writeLines(c(
+              'tryCatch({',
+              paste0('  .tsifl_code <- ', deparse(code), ';'),
+              '  .tsifl_output <- paste(utils::capture.output(eval(parse(text = .tsifl_code))), collapse = "\\n");',
+              '  .tsifl_output <- substr(.tsifl_output, 1, 5000);',
+              '  writeLines(.tsifl_output, "/tmp/.tsifl_last_output.txt");',
+              '  # Snapshot data frames',
+              '  .tsifl_df_info <- list();',
+              '  for (.tsifl_nm in ls(.GlobalEnv)) {',
+              '    .tsifl_obj <- tryCatch(get(.tsifl_nm, envir = .GlobalEnv), error = function(e) NULL);',
+              '    if (is.data.frame(.tsifl_obj) || inherits(.tsifl_obj, "tbl_df") || inherits(.tsifl_obj, "data.table")) {',
+              '      .tsifl_csv_path <- paste0("/tmp/", .tsifl_nm, ".csv");',
+              '      tryCatch(utils::write.csv(.tsifl_obj, .tsifl_csv_path, row.names = FALSE), error = function(e) {});',
+              '      .tsifl_df_info[[.tsifl_nm]] <- list(',
+              '        name = .tsifl_nm,',
+              '        nrow = nrow(.tsifl_obj),',
+              '        ncol = ncol(.tsifl_obj),',
+              '        columns = paste(names(.tsifl_obj), collapse = ", "),',
+              '        csv_path = .tsifl_csv_path',
+              '      );',
+              '    }',
+              '  };',
+              '  saveRDS(.tsifl_df_info, "/tmp/.tsifl_df_info.rds");',
+              '  rm(list = grep("^\\\\.tsifl_", ls(), value = TRUE));',
+              '}, error = function(e) {})'
+            ), capture_script_path)
+
+            # Run the capture script in the main session
+            Sys.sleep(1)  # Wait for the main code to finish
+            tryCatch(
+              rstudioapi::sendToConsole(
+                'tryCatch(source("/tmp/.tsifl_capture_output.R", local = TRUE, echo = FALSE), error = function(e) {})',
+                execute = TRUE, echo = FALSE, focus = FALSE
+              ),
+              error = function(e) {}
+            )
+
+            Sys.sleep(1.5)  # Wait for capture to complete
+
+            # POST r_output to transfer/store
+            output_text <- ""
+            if (file.exists("/tmp/.tsifl_last_output.txt")) {
+              output_text <- tryCatch(
+                paste(readLines("/tmp/.tsifl_last_output.txt", warn = FALSE), collapse = "\n"),
+                error = function(e) ""
+              )
+            }
+            if (nchar(output_text) > 0) {
+              first_line <- strsplit(output_text, "\n")[[1]][1]
+              transfer_body <- list(
+                from_app  = "rstudio",
+                to_app    = "any",
+                data_type = "r_output",
+                data      = substr(output_text, 1, 5000),
+                metadata  = list(code = substr(code, 1, 500), summary = substr(first_line, 1, 200))
+              )
+              tryCatch({
+                httr2::request(BACKEND_URL) |>
+                  httr2::req_url_path_append("transfer", "store") |>
+                  httr2::req_headers("Content-Type" = "application/json") |>
+                  httr2::req_body_json(transfer_body) |>
+                  httr2::req_options(ssl_verifypeer = 0) |>
+                  httr2::req_perform()
+              }, error = function(e) {})
+            }
+
+            # POST data_snapshot for each data frame
+            df_info <- tryCatch(readRDS("/tmp/.tsifl_df_info.rds"), error = function(e) list())
+            for (df_meta in df_info) {
+              transfer_body <- list(
+                from_app  = "rstudio",
+                to_app    = "any",
+                data_type = "data_snapshot",
+                data      = paste0("Data frame '", df_meta$name, "': ",
+                                   df_meta$nrow, " rows x ", df_meta$ncol, " cols. ",
+                                   "Columns: ", df_meta$columns),
+                metadata  = list(
+                  name     = df_meta$name,
+                  nrow     = df_meta$nrow,
+                  ncol     = df_meta$ncol,
+                  columns  = df_meta$columns,
+                  csv_path = df_meta$csv_path
+                )
+              )
+              tryCatch({
+                httr2::request(BACKEND_URL) |>
+                  httr2::req_url_path_append("transfer", "store") |>
+                  httr2::req_headers("Content-Type" = "application/json") |>
+                  httr2::req_body_json(transfer_body) |>
+                  httr2::req_options(ssl_verifypeer = 0) |>
+                  httr2::req_perform()
+              }, error = function(e) {})
+            }
+          }, error = function(e) {
+            # Cross-app capture is best-effort, don't break the main flow
+          })
+
+          # Auto-export plot: inject a save command into the MAIN console
+          # (dev.copy doesn't work from background job — no plot device here)
+          plot_keywords <- c("plot(", "ggplot(", "boxplot(", "hist(", "barplot(",
+                            "geom_", "abline(", "curve(", "pie(", "heatmap(",
+                            "pairs(", "qqnorm(", "acf(", "pacf(", "stripchart(")
+          has_plot <- any(sapply(plot_keywords, function(kw) grepl(kw, code, fixed = TRUE)))
+          if (has_plot) {
+            # Tell the main console to save the current plot to a temp file
+            plot_path <- file.path(tempdir(), ".tsifl_last_plot.png")
+            save_cmd <- sprintf(
+              'tryCatch({ grDevices::dev.copy(grDevices::png, "%s", width=800, height=600, res=150); grDevices::dev.off() }, error=function(e){})',
+              plot_path
+            )
+            Sys.sleep(2)  # Wait for plot to render in main session
+            tryCatch({
+              rstudioapi::sendToConsole(save_cmd, execute = TRUE, echo = FALSE, focus = FALSE)
+            }, error = function(e) {})
+
+            # Now wait a moment for the file to be written, then read it
+            Sys.sleep(1)
+            tryCatch({
+              if (file.exists(plot_path) && file.info(plot_path)$size > 0) {
+                img_b64 <- base64enc::base64encode(plot_path)
+                unlink(plot_path)
+
+                transfer_body <- list(
+                  from_app  = "rstudio",
+                  to_app    = "excel",
+                  data_type = "image",
+                  data      = img_b64,
+                  metadata  = list(title = "R Plot")
+                )
+
+                httr2::request(BACKEND_URL) |>
+                  httr2::req_url_path_append("transfer", "store") |>
+                  httr2::req_headers("Content-Type" = "application/json") |>
+                  httr2::req_body_json(transfer_body) |>
+                  httr2::req_options(ssl_verifypeer = 0) |>
+                  httr2::req_perform()
+
+                add_message("action", "\U0001f4e4 Plot exported \u2014 say 'paste R plot' in Excel to insert it")
+              }
+            }, error = function(e) {
+              # Silently skip — plot capture is best-effort
+            })
+          }
         } else {
           add_message("action", "\u26a0\ufe0f Could not send to console")
         }
@@ -597,13 +981,86 @@ run_tsifl_server <- function(port = 7444) {
           execute = TRUE, echo = TRUE, focus = FALSE
         )
         add_message("action", paste0("\u2705 Installing ", pkg, " in console"))
+
+      } else if (type == "export_plot") {
+        # Save current plot via main console, then upload from background job
+        tryCatch({
+          plot_path <- file.path(tempdir(), ".tsifl_export_plot.png")
+          save_cmd <- sprintf(
+            'tryCatch({ grDevices::dev.copy(grDevices::png, "%s", width=800, height=600, res=150); grDevices::dev.off() }, error=function(e){})',
+            plot_path
+          )
+          rstudioapi::sendToConsole(save_cmd, execute = TRUE, echo = FALSE, focus = FALSE)
+          Sys.sleep(1.5)
+
+          if (file.exists(plot_path) && file.info(plot_path)$size > 0) {
+            img_b64 <- base64enc::base64encode(plot_path)
+            unlink(plot_path)
+
+            target_app  <- if (!is.null(payload$to_app)) payload$to_app else "excel"
+            target_cell <- if (!is.null(payload$cell)) payload$cell else "A1"
+            target_sheet <- if (!is.null(payload$sheet)) payload$sheet else ""
+
+            transfer_body <- list(
+              from_app  = "rstudio",
+              to_app    = target_app,
+              data_type = "image",
+              data      = img_b64,
+              metadata  = list(cell = target_cell, sheet = target_sheet)
+            )
+
+            resp <- httr2::request(BACKEND_URL) |>
+              httr2::req_url_path_append("transfer", "store") |>
+              httr2::req_headers("Content-Type" = "application/json") |>
+              httr2::req_body_json(transfer_body) |>
+              httr2::req_options(ssl_verifypeer = 0) |>
+              httr2::req_perform()
+
+            result <- httr2::resp_body_json(resp)
+            tid <- result$transfer_id
+            add_message("action", paste0("\u2705 Plot exported (ID: ", tid, ") \u2014 say 'paste R plot' in Excel"))
+          } else {
+            add_message("action", "\u26a0\ufe0f No plot found in Plots pane. Generate a plot first.")
+          }
+        }, error = function(e) {
+          add_message("action", paste0("\u26a0\ufe0f Could not export plot: ", e$message))
+        })
+
+      } else if (type == "create_r_script") {
+        code  <- payload$code
+        title <- if (!is.null(payload$title)) payload$title else "tsifl Script"
+        tryCatch({
+          rstudioapi::documentNew(
+            text = paste0("# ", title, "\n# Generated by tsifl\n\n", code, "\n"),
+            type = "r"
+          )
+          add_message("action", paste0("\u2705 Created script: ", title))
+        }, error = function(e) {
+          add_message("action", "\u26a0\ufe0f Could not create script file")
+        })
       }
     }
   }
 
   # ── Launch ─────────────────────────────────────────────────────────────────
+  # Set options to prevent idle timeout — keep the Shiny app alive indefinitely
+  options(
+    shiny.autoreload = FALSE,
+    shiny.maxRequestSize = 50 * 1024^2  # 50MB max upload
+  )
+
+  shiny_app <- shiny::shinyApp(
+    ui = ui,
+    server = server,
+    options = list(
+      # Disable session idle timeout (default is 0 which means disconnect on WebSocket close)
+      # Setting to very large number keeps session alive
+      sessionTimeout = 0
+    )
+  )
+
   shiny::runApp(
-    shiny::shinyApp(ui, server),
+    shiny_app,
     host          = "127.0.0.1",
     port          = port,
     launch.browser = FALSE,

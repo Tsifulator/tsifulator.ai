@@ -2,7 +2,7 @@
   "name": "tsifl",
   "displayName": "tsifl — AI for Financial Analysts",
   "description": "Agentic AI Sandbox for Financial Analysts inside VS Code",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "publisher": "tsifulator",
   "engines": {
     "vscode": "^1.85.0"

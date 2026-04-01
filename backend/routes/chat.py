@@ -187,6 +187,19 @@ async def chat(request: ChatRequest):
         paths_str = ", ".join(saved_file_paths)
         message = f"{message}\n\n[SYSTEM: The user uploaded data files that have been saved to the server. Use import_csv to import them into the spreadsheet. File paths: {paths_str}]"
 
+    # Fetch cross-app context
+    cross_app_context = ""
+    try:
+        from routes.transfer import get_cross_app_context
+        cross_app_data = get_cross_app_context(app)
+        if cross_app_data:
+            cross_app_context = "\n\n[CROSS-APP CONTEXT: " + cross_app_data + "]"
+    except Exception:
+        pass
+
+    if cross_app_context:
+        message = message + cross_app_context
+
     result = await get_claude_response(
         message=message,
         context=request.context,

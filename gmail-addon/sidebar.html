@@ -19,31 +19,53 @@
       </div>
     </div>
 
+    <!-- Tab context display (Improvement 73) -->
+    <div id="tsifl-tab-context" style="display:none;padding:4px 12px;font-size:10px;color:#64748B;border-bottom:1px solid #E2E8F0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+      <div id="tsifl-tab-title" style="font-weight:600;color:#1E293B;"></div>
+      <div id="tsifl-tab-url" style="color:#94A3B8;"></div>
+    </div>
+
     <div id="tsifl-login">
       <h2 style="color:#0D5EAF; font-size:18px; margin-bottom:4px;">tsifl</h2>
       <div id="tsifl-login-tagline">AI for Financial Analysts</div>
       <div id="tsifl-login-form">
         <input type="email" id="tsifl-auth-email" placeholder="Email"/>
-        <input type="password" id="tsifl-auth-password" placeholder="Password"/>
+        <div style="position:relative;">
+          <input type="password" id="tsifl-auth-password" placeholder="Password" style="padding-right:32px;"/>
+          <button type="button" id="tsifl-toggle-pw" title="Show password" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:13px;color:#64748B;">&#128065;</button>
+        </div>
         <button id="tsifl-login-btn">Sign In</button>
         <button id="tsifl-signup-btn">Create Account</button>
         <div id="tsifl-auth-error"></div>
+        <button id="tsifl-forgot-pw" style="background:none;border:none;color:#0D5EAF;font-size:11px;cursor:pointer;margin-top:4px;">Forgot password?</button>
       </div>
     </div>
 
     <div id="tsifl-chat-area">
       <div id="tsifl-user-bar"></div>
+      <div id="tsifl-context-display" style="display:none;"></div>
+      <div id="tsifl-quick-actions">
+        <button class="tsifl-quick-btn" data-prompt="Summarize this page">Summarize</button>
+        <button class="tsifl-quick-btn" data-prompt="Find key information on this page">Find info</button>
+        <button class="tsifl-quick-btn" data-prompt="Extract action items">Actions</button>
+        <button class="tsifl-quick-btn" data-prompt="Save this page as a note with an AI-generated summary">Save note</button>
+        <button class="tsifl-quick-btn" data-prompt="Bookmark this page — save the URL, title, and a brief summary to my notes in a Bookmarks folder">Bookmark</button>
+        <button class="tsifl-quick-btn" data-prompt="Copy the main content of this page as clean Markdown format">Copy as Markdown</button>
+        <button class="tsifl-quick-btn" data-prompt="Translate the selected text or page content to English">Translate</button>
+      </div>
+      <div id="tsifl-context-actions" class="tsifl-context-actions" style="display:none;"></div>
       <div id="tsifl-chat-history"></div>
       <div id="tsifl-input-area">
         <div id="tsifl-image-preview-bar"></div>
         <textarea id="tsifl-user-input" placeholder="Ask anything..." rows="3"></textarea>
         <div id="tsifl-input-actions">
-          <input type="file" id="tsifl-image-input" accept="image/*" multiple style="display:none;"/>
-          <button id="tsifl-attach-btn" title="Attach image">+</button>
+          <input type="file" id="tsifl-image-input" accept="image/*,.pdf,.csv,.txt,.json,.xml,.r,.R,.py,.js,.ts,.sql,.md,.html,.yaml,.yml,.docx,.xlsx,.sas,.do,.log" multiple style="display:none;"/>
+          <button id="tsifl-attach-btn" title="Attach file">+</button>
+          <button id="tsifl-screenshot-btn" title="Screenshot page" style="background:none;border:1px solid #E2E8F0;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;color:#64748B;">&#128247;</button>
           <button id="tsifl-submit-btn">Send</button>
         </div>
       </div>
-      <div id="tsifl-status-bar">Ready</div>
+      <div id="tsifl-status-bar">Ready &middot; &#8984;&#8679;U to toggle</div>
     </div>
   </div>
   <script src="panel.js"></script>

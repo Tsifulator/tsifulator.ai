@@ -4,16 +4,28 @@
  */
 
 import "./taskpane.css";
-import { getCurrentUser, signIn, signUp, signOut } from "./auth.js";
+import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncSessionToBackend } from "./auth.js";
 
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v40";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v41";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
 let pendingImages      = [];     // base64 images queued for next message
+
+// Undo stack (Improvement 11) — stores cell states before actions
+const undoStack = [];
+const MAX_UNDO = 5;
+
+// Action history (Improvement 12)
+const actionHistory = [];
+const MAX_HISTORY = 20;
+
+// Debug state (Improvement 10)
+let lastSyncTimestamp = null;
+let sessionSource = "none";
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 
@@ -50,16 +62,166 @@ function showLoginScreen() {
   document.getElementById("auth-password").addEventListener("keydown", (e) => {
     if (e.key === "Enter") handleSignIn();
   });
+  // Show/hide password toggle (Improvement 9)
+  const togglePw = document.getElementById("toggle-pw-btn");
+  if (togglePw) {
+    togglePw.addEventListener("click", () => {
+      const pwInput = document.getElementById("auth-password");
+      pwInput.type = pwInput.type === "password" ? "text" : "password";
+    });
+  }
+  // Forgot password (Improvement 5)
+  const forgotBtn = document.getElementById("forgot-pw-btn");
+  if (forgotBtn) {
+    forgotBtn.addEventListener("click", async () => {
+      const email = document.getElementById("auth-email").value.trim();
+      const errEl = document.getElementById("auth-error");
+      if (!email || !email.includes("@")) {
+        errEl.style.color = "#DC2626";
+        errEl.textContent = "Enter your email address first.";
+        return;
+      }
+      const { error } = await resetPassword(email);
+      if (error) { errEl.style.color = "#DC2626"; errEl.textContent = error.message; return; }
+      errEl.style.color = "#16A34A";
+      errEl.textContent = "Check your email for a reset link.";
+    });
+  }
 }
 
 function showChatScreen(user) {
   document.getElementById("login-screen").style.display = "none";
   document.getElementById("chat-screen").style.display  = "flex";
-  document.getElementById("user-bar").textContent = `${user.email} · ${BUILD_VER}`;
+
+  // User display with avatar initial (Improvement 8)
+  const initial = (user.email || "?")[0].toUpperCase();
+  document.getElementById("user-bar").innerHTML =
+    `<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#0D5EAF;color:white;font-size:10px;font-weight:700;margin-right:4px;">${initial}</span>${user.email} &middot; ${BUILD_VER}`;
 
   document.getElementById("submit-btn").addEventListener("click", handleSubmit);
   document.getElementById("user-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
+    if (e.key === "Escape") { e.target.value = ""; }
+  });
+
+  // Auto-resize textarea
+  const input = document.getElementById("user-input");
+  input.addEventListener("input", () => {
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 100) + "px";
+  });
+
+  // Notes button
+  document.getElementById("notes-btn").addEventListener("click", () => {
+    window.open(`${BACKEND_URL}/notes-app`, "_blank");
+  });
+
+  // Quick action buttons
+  document.querySelectorAll(".quick-btn").forEach(btn => {
+    if (btn.id === "explain-formula-btn") return; // handled separately
+    btn.addEventListener("click", () => {
+      const prompt = btn.getAttribute("data-prompt");
+      if (prompt) {
+        document.getElementById("user-input").value = prompt;
+        handleSubmit();
+      }
+    });
+  });
+
+  // Explain formula button (Improvement 15)
+  const explainBtn = document.getElementById("explain-formula-btn");
+  if (explainBtn) {
+    explainBtn.addEventListener("click", async () => {
+      try {
+        await Excel.run(async (ctx) => {
+          const cell = ctx.workbook.getActiveCell();
+          cell.load("formulas");
+          await ctx.sync();
+          const formula = cell.formulas[0][0];
+          if (formula && formula.startsWith("=")) {
+            document.getElementById("user-input").value = `Explain this Excel formula: ${formula}`;
+            handleSubmit();
+          } else {
+            appendMessage("action", "Active cell does not contain a formula.");
+          }
+        });
+      } catch (e) {
+        appendMessage("action", "Could not read active cell: " + e.message);
+      }
+    });
+  }
+
+  // Templates dropdown (Improvement 14)
+  const templatesBtn = document.getElementById("templates-btn");
+  const templatesDd = document.getElementById("templates-dropdown");
+  if (templatesBtn && templatesDd) {
+    templatesBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      templatesDd.style.display = templatesDd.style.display === "none" ? "block" : "none";
+    });
+    document.querySelectorAll(".template-item").forEach(item => {
+      item.addEventListener("click", () => {
+        const name = item.getAttribute("data-template");
+        document.getElementById("user-input").value = `Create a ${name} with sample data in this workbook`;
+        templatesDd.style.display = "none";
+        handleSubmit();
+      });
+    });
+    document.addEventListener("click", () => { templatesDd.style.display = "none"; });
+  }
+
+  // Undo button (Improvement 11)
+  const undoBtn = document.getElementById("undo-btn");
+  if (undoBtn) {
+    undoBtn.addEventListener("click", handleUndo);
+  }
+
+  // History panel toggle (Improvement 12)
+  const histToggle = document.getElementById("history-toggle");
+  if (histToggle) {
+    histToggle.addEventListener("click", () => {
+      const panel = document.getElementById("history-panel");
+      panel.style.display = panel.style.display === "none" ? "block" : "none";
+    });
+  }
+
+  // Session expiry check every 60s (Improvement 7)
+  setInterval(checkSessionExpiry, 60 * 1000);
+  const refreshBtn = document.getElementById("refresh-session-btn");
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", async () => {
+      const { data } = await supabase.auth.refreshSession();
+      if (data?.session) {
+        syncSessionToBackend(data.session);
+        document.getElementById("session-warning").style.display = "none";
+      }
+    });
+  }
+
+  // Auth debug panel — triple-click logo (Improvement 10)
+  let logoClickCount = 0;
+  let logoClickTimer = null;
+  const logoImg = document.getElementById("logo-img");
+  if (logoImg) {
+    logoImg.addEventListener("click", () => {
+      logoClickCount++;
+      if (logoClickTimer) clearTimeout(logoClickTimer);
+      logoClickTimer = setTimeout(() => { logoClickCount = 0; }, 600);
+      if (logoClickCount >= 3) {
+        logoClickCount = 0;
+        const dbg = document.getElementById("debug-panel");
+        dbg.style.display = dbg.style.display === "none" ? "block" : "none";
+        updateDebugPanel();
+      }
+    });
+  }
+
+  // Logout button
+  document.getElementById("logout-btn").addEventListener("click", async () => {
+    await signOut();
+    CURRENT_USER = null;
+    document.getElementById("chat-history").innerHTML = "";
+    showLoginScreen();
   });
 
   // Image attachment — file picker
@@ -96,21 +258,11 @@ function showChatScreen(user) {
     inputArea.style.outlineOffset = "";
     inputArea.style.background = "";
     const files = Array.from(e.dataTransfer?.files || []);
-    let count = 0;
     for (const file of files) {
-      if (!file.type.startsWith("image/")) continue;
-      readImageAsBase64(file);
-      count++;
+      readFileAsBase64(file);
     }
-    if (count === 0) setStatus("No image files found in drop");
+    if (files.length === 0) setStatus("No files found in drop");
   });
-  document.getElementById("logout-btn").addEventListener("click", async () => {
-    await signOut();
-    CURRENT_USER = null;
-    document.getElementById("chat-history").innerHTML = "";
-    showLoginScreen();
-  });
-
   setStatus("Connected · " + user.email);
 }
 
@@ -120,13 +272,19 @@ async function handleSignIn() {
   const email    = document.getElementById("auth-email").value.trim();
   const password = document.getElementById("auth-password").value;
   const errEl    = document.getElementById("auth-error");
+  errEl.style.color = "#DC2626";
   errEl.textContent = "";
+  // Validation (Improvement 9)
+  if (!email || !email.includes("@")) { errEl.textContent = "Enter a valid email address."; return; }
+  if (!password) { errEl.textContent = "Enter your password."; return; }
   document.getElementById("login-btn").textContent = "Signing in...";
   const { user, error } = await signIn(email, password);
   document.getElementById("login-btn").textContent = "Sign In";
   if (error) { errEl.textContent = error.message; return; }
   if (!user)  { errEl.textContent = "Check your email to confirm your account first."; return; }
   CURRENT_USER = user;
+  sessionSource = "login";
+  lastSyncTimestamp = new Date().toISOString();
   await saveUserConfig(user);
   showChatScreen(user);
 }
@@ -135,12 +293,16 @@ async function handleSignUp() {
   const email    = document.getElementById("auth-email").value.trim();
   const password = document.getElementById("auth-password").value;
   const errEl    = document.getElementById("auth-error");
+  errEl.style.color = "#DC2626";
   errEl.textContent = "";
+  // Validation (Improvement 9)
+  if (!email || !email.includes("@")) { errEl.textContent = "Enter a valid email address."; return; }
+  if (password.length < 6) { errEl.textContent = "Password must be at least 6 characters."; return; }
   document.getElementById("signup-btn").textContent = "Creating account...";
   const { user, error } = await signUp(email, password);
   document.getElementById("signup-btn").textContent = "Create Account";
   if (error) { errEl.textContent = error.message; return; }
-  errEl.style.color = "#2ecc71";
+  errEl.style.color = "#16A34A";
   errEl.textContent = "Account created! Check your email to confirm, then sign in.";
 }
 
@@ -149,8 +311,7 @@ async function handleSignUp() {
 function handleImageSelect(e) {
   const files = Array.from(e.target.files);
   for (const file of files) {
-    if (!file.type.startsWith("image/")) continue;
-    readImageAsBase64(file);
+    readFileAsBase64(file);
   }
   e.target.value = "";  // reset so same file can be re-selected
 }
@@ -158,21 +319,25 @@ function handleImageSelect(e) {
 function handleImagePaste(e) {
   const items = Array.from(e.clipboardData?.items || []);
   for (const item of items) {
-    if (!item.type.startsWith("image/")) continue;
-    const file = item.getAsFile();
-    if (file) readImageAsBase64(file);
+    // Accept images from clipboard paste, and files if available
+    if (item.type.startsWith("image/") || item.kind === "file") {
+      const file = item.getAsFile();
+      if (file) readFileAsBase64(file);
+    }
   }
 }
 
-function readImageAsBase64(file) {
-  setStatus(`📎 reading ${file.name} (${file.type}, ${Math.round(file.size/1024)}KB)...`);
+function readFileAsBase64(file) {
+  const isImage = file.type.startsWith("image/");
+  const label = isImage ? "image" : "document";
+  setStatus(`📎 reading ${file.name} (${file.type || "unknown"}, ${Math.round(file.size/1024)}KB)...`);
   const reader = new FileReader();
   reader.onload = () => {
-    const base64 = reader.result;  // data:image/png;base64,...
-    const mediaType = file.type || "image/png";
+    const base64 = reader.result;  // data:type;base64,...
+    const mediaType = file.type || (isImage ? "image/png" : "application/octet-stream");
     const data = base64.split(",")[1];  // strip the data:... prefix
-    pendingImages.push({ media_type: mediaType, data });
-    setStatus(`✅ image captured · ${data.length} chars base64 · ${pendingImages.length} pending`);
+    pendingImages.push({ media_type: mediaType, data, file_name: file.name || "" });
+    setStatus(`✅ ${label} attached · ${pendingImages.length} file${pendingImages.length > 1 ? "s" : ""} pending`);
     updateImagePreview();
   };
   reader.onerror = () => {
@@ -198,28 +363,38 @@ function updateImagePreview() {
   if (pendingImages.length === 0) {
     bar.style.display = "none";
     attachBtn.textContent = "+";
-    attachBtn.title = "Attach image";
+    attachBtn.title = "Attach file";
     return;
   }
 
   // Update attach button to show count
   attachBtn.textContent = `${pendingImages.length}`;
-  attachBtn.title = `${pendingImages.length} image${pendingImages.length > 1 ? "s" : ""} attached — click to add more`;
-  setStatus(`${pendingImages.length} image${pendingImages.length > 1 ? "s" : ""} attached`);
+  attachBtn.title = `${pendingImages.length} file${pendingImages.length > 1 ? "s" : ""} attached — click to add more`;
+  setStatus(`${pendingImages.length} file${pendingImages.length > 1 ? "s" : ""} attached`);
 
   bar.style.display = "flex";
   pendingImages.forEach((img, i) => {
     const wrapper = document.createElement("div");
     wrapper.className = "image-preview-item";
+    const isImage = img.media_type.startsWith("image/");
 
-    // Render to canvas (bypasses CSP restrictions on data:/blob: img src)
-    renderImageToCanvas(img.data, img.media_type, 48, 48).then(canvas => {
-      if (canvas) {
-        canvas.style.borderRadius = "4px";
-        canvas.style.border = "1px solid var(--border)";
-        wrapper.insertBefore(canvas, wrapper.firstChild);
-      }
-    });
+    if (isImage) {
+      // Render to canvas (bypasses CSP restrictions on data:/blob: img src)
+      renderImageToCanvas(img.data, img.media_type, 48, 48).then(canvas => {
+        if (canvas) {
+          canvas.style.borderRadius = "4px";
+          canvas.style.border = "1px solid var(--border)";
+          wrapper.insertBefore(canvas, wrapper.firstChild);
+        }
+      });
+    } else {
+      // Document file — show icon + filename
+      const docIcon = document.createElement("div");
+      const ext = img.file_name ? img.file_name.split(".").pop().toUpperCase() : "FILE";
+      docIcon.style.cssText = "width:48px;height:48px;display:flex;align-items:center;justify-content:center;background:#F1F5F9;border-radius:4px;border:1px solid var(--border);font-size:9px;font-weight:700;color:#0D5EAF;text-align:center;line-height:1.1;";
+      docIcon.textContent = ext;
+      wrapper.insertBefore(docIcon, wrapper.firstChild);
+    }
 
     const removeBtn = document.createElement("button");
     removeBtn.className = "remove-img";
@@ -275,10 +450,12 @@ async function handleSubmit() {
   setSubmitEnabled(false);
   appendMessage("user", message, images);
   setStatus("Reading workbook...");
+  input.style.height = "auto";
 
   try {
     const excelContext = await getExcelContext();
     setStatus("Thinking...");
+    showTypingIndicator();
 
     const response = await fetch(`${BACKEND_URL}/chat/`, {
       method:  "POST",
@@ -299,6 +476,7 @@ async function handleSubmit() {
     }
 
     const data = await response.json();
+    hideTypingIndicator();
     appendMessage("assistant", data.reply);
 
     if (data.tasks_remaining >= 0) {
@@ -316,23 +494,34 @@ async function handleSubmit() {
 
     if (allActions.length > 0) {
       setStatus(`Applying ${allActions.length} action${allActions.length > 1 ? "s" : ""}...`);
+      if (allActions.length > 2) showProgress(0, allActions.length);
       let applied = 0;
       let failed  = 0;
       for (const action of allActions) {
         try {
+          // Save undo state for write actions (Improvement 11)
+          const p = action.payload || {};
+          if (["write_cell", "write_range", "write_formula", "clear_range"].includes(action.type)) {
+            const addr = p.cell || p.range;
+            if (addr) await saveUndoState(addr, p.sheet || lastNavigatedSheet);
+          }
           await executeAction(action);
           applied++;
+          addToHistory(action.type, summarizeAction(action));
+          if (allActions.length > 2) showProgress(applied + failed, allActions.length);
         } catch (err) {
           failed++;
           appendMessage("action", `⚠️ ${action.type} → ${err.message} | payload: ${JSON.stringify(action.payload || {}).slice(0, 120)}`);
         }
       }
+      hideProgress();
       appendMessage("action", `✅ ${applied} applied${failed > 0 ? ` · ⚠️ ${failed} failed` : ""}`);
     }
 
     setStatus("Done");
   } catch (err) {
-    appendMessage("assistant", "⚠️ Could not reach tsifl backend.");
+    hideTypingIndicator();
+    appendMessage("assistant", "Could not reach tsifl backend.");
     setStatus("Disconnected");
   } finally {
     setSubmitEnabled(true);
@@ -400,6 +589,15 @@ async function getExcelContext() {
         });
       }
 
+      // Load named ranges (Improvement 20)
+      let namedRanges = [];
+      try {
+        const names = wb.names;
+        names.load("items/name,items/value");
+        await ctx.sync();
+        namedRanges = names.items.map(n => ({ name: n.name, reference: n.value }));
+      } catch (_) { /* named ranges may not exist */ }
+
       resolve({
         app:              "excel",
         sheet:            activeName,
@@ -410,6 +608,7 @@ async function getExcelContext() {
         sheet_data:       activeSheetData,
         sheet_formulas:   activeSheetFormulas,
         sheet_summaries:  sheetSummaries,
+        named_ranges:     namedRanges,
         preferences:      loadPreferences(),
       });
     }).catch(() => resolve({ app: "excel", preferences: loadPreferences() }));
@@ -496,6 +695,9 @@ const SHEET_AWARE_TYPES = new Set([
   "format_range", "set_number_format",
   "autofit", "autofit_columns",
   "clear_range", "freeze_panes",
+  "remove_duplicates", "conditional_format_heatmap",
+  "create_pivot_summary", "auto_chart_best_fit",
+  "trim_whitespace", "find_replace_bulk",
 ]);
 
 async function executeAction(action) {
@@ -534,6 +736,13 @@ async function executeAction(action) {
       const { sheet: s, addr } = splitAddr(payload.cell, payload.sheet);
       const sheet = getSheet(ctx, s);
       const range = sheet.getRange(addr);
+      // Data validation warning (Improvement 16)
+      range.load("values");
+      await ctx.sync();
+      const existing = range.values[0][0];
+      if (existing !== null && existing !== "" && existing !== 0) {
+        appendMessage("action", `\u26A0\uFE0F Overwrote existing data in ${addr}`);
+      }
       const val   = payload.formula ?? payload.value ?? "";
       if (typeof val === "string" && val.startsWith("=")) {
         range.formulas = [[val]];
@@ -941,7 +1150,7 @@ async function executeAction(action) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user_id: currentUser?.id || "unknown",
+          user_id: CURRENT_USER?.id || "unknown",
           title: payload.title || "Untitled Note",
           content: payload.content || "",
           folder: payload.folder || "General",
@@ -952,6 +1161,236 @@ async function executeAction(action) {
     } catch (e) {
       appendMessage("action", `create_note: ${e.message}`);
     }
+  }
+
+  // ── create_workbook ──────────────────────────────────────────────────────────
+  else if (type === "create_workbook") {
+    try {
+      await Excel.createWorkbook();
+      appendMessage("action", "create_workbook: New workbook created");
+    } catch (e) {
+      appendMessage("action", `create_workbook: ${e.message}`);
+    }
+  }
+
+  // ── import_image / import_r_output ───────────────────────────────────────────
+  else if (type === "import_image" || type === "import_r_output") {
+    try {
+      let imageData = payload.image_data;
+
+      // If transfer_id provided, fetch that specific transfer
+      if (payload.transfer_id) {
+        const resp = await fetch(`${BACKEND_URL}/transfer/${payload.transfer_id}`);
+        if (resp.ok) {
+          const transfer = await resp.json();
+          imageData = transfer.data;
+        }
+      }
+
+      // If no image yet, check for pending R→Excel transfers
+      if (!imageData) {
+        const pendingResp = await fetch(`${BACKEND_URL}/transfer/pending/excel`);
+        if (pendingResp.ok) {
+          const pendingData = await pendingResp.json();
+          const pending = pendingData.pending || [];
+          if (pending.length > 0) {
+            // Grab the most recent one
+            const latest = pending[pending.length - 1];
+            const tResp = await fetch(`${BACKEND_URL}/transfer/${latest.transfer_id}`);
+            if (tResp.ok) {
+              const transfer = await tResp.json();
+              imageData = transfer.data;
+            }
+          }
+        }
+      }
+
+      if (imageData) {
+        await Excel.run(async (ctx) => {
+          const sheet = payload.sheet
+            ? ctx.workbook.worksheets.getItem(payload.sheet)
+            : ctx.workbook.worksheets.getActiveWorksheet();
+          sheet.shapes.addImage("data:image/png;base64," + imageData);
+          await ctx.sync();
+        });
+        appendMessage("action", `✅ Image inserted into ${payload.sheet || "active sheet"}`);
+      } else {
+        appendMessage("action", "⚠️ No R plot found. Generate a plot in RStudio first, then try again.");
+      }
+    } catch (e) {
+      appendMessage("action", `import_image: ${e.message}`);
+    }
+  }
+
+  // ── remove_duplicates ──────────────────────────────────────────────────────
+  // Remove duplicate rows from a range based on a key column.
+  // payload: { sheet?, range, key_column? (letter, defaults to first col) }
+  else if (type === "remove_duplicates") {
+    await Excel.run(async (ctx) => {
+      const { sheet: s, addr } = splitAddr(payload.range, payload.sheet);
+      const sheet = getSheet(ctx, s);
+      const range = sheet.getRange(addr);
+      range.load("values");
+      await ctx.sync();
+      const values = range.values;
+      if (values.length < 2) return;
+
+      const keyColIdx = payload.key_column ? colLetterToIndex(payload.key_column) : 0;
+      const seen = new Set();
+      const unique = [values[0]]; // keep header row
+      for (let i = 1; i < values.length; i++) {
+        const key = String(values[i][keyColIdx]);
+        if (!seen.has(key)) { seen.add(key); unique.push(values[i]); }
+      }
+
+      // Parse start position from the range address
+      const startCell = addr.split(":")[0];
+      const startMatch = startCell.match(/([A-Z]+)(\d+)/i);
+      const startCol = startMatch[1].toUpperCase();
+      const startRow = parseInt(startMatch[2]);
+      const endCol = indexToColLetter(colLetterToIndex(startCol) + values[0].length - 1);
+
+      // Write unique rows back
+      const endRow = startRow + unique.length - 1;
+      const writeRange = sheet.getRange(`${startCol}${startRow}:${endCol}${endRow}`);
+      writeRange.values = unique;
+
+      // Clear leftover rows below
+      if (unique.length < values.length) {
+        const clearStart = startRow + unique.length;
+        const clearEnd = startRow + values.length - 1;
+        const clearRange = sheet.getRange(`${startCol}${clearStart}:${endCol}${clearEnd}`);
+        clearRange.clear(Excel.ClearApplyTo.contents);
+      }
+      await ctx.sync();
+      appendMessage("action", `Removed ${values.length - unique.length} duplicate rows`);
+    });
+  }
+
+  // ── conditional_format_heatmap ─────────────────────────────────────────────
+  // Apply a 3-color heatmap (red-yellow-green) to a numeric range.
+  // payload: { sheet?, range, min_color?, mid_color?, max_color? }
+  else if (type === "conditional_format_heatmap") {
+    await Excel.run(async (ctx) => {
+      const { sheet: s, addr } = splitAddr(payload.range, payload.sheet);
+      const sheet = getSheet(ctx, s);
+      const range = sheet.getRange(addr);
+      const cf = range.conditionalFormats.add(Excel.ConditionalFormatType.colorScale);
+      cf.colorScale.criteria = {
+        minimum: { color: payload.min_color || "#F8696B", type: "LowestValue" },
+        midpoint: { color: payload.mid_color || "#FFEB84", type: "Percentile", value: 50 },
+        maximum: { color: payload.max_color || "#63BE7B", type: "HighestValue" },
+      };
+      await ctx.sync();
+    });
+  }
+
+  // ── create_pivot_summary ───────────────────────────────────────────────────
+  // Create a summary/pivot-like table from data using formulas.
+  // payload: { sheet?, target_sheet?, start_cell?, group_column?, value_column?,
+  //            categories: string[], sumifs_formula? }
+  else if (type === "create_pivot_summary") {
+    await Excel.run(async (ctx) => {
+      const sheet = getSheet(ctx, payload.sheet);
+      const targetSheet = payload.target_sheet
+        ? ctx.workbook.worksheets.getItem(payload.target_sheet)
+        : sheet;
+
+      // Write header row
+      const startCell = payload.start_cell || "A1";
+      const headerRange = targetSheet.getRange(startCell);
+      headerRange.values = [[payload.group_column || "Category", payload.value_column || "Total"]];
+      headerRange.format.font.bold = true;
+
+      // Write unique categories and SUMIFS formulas
+      if (payload.categories && payload.categories.length > 0) {
+        const catStartRow = parseInt(startCell.match(/\d+/)[0]) + 1;
+        const catCol = startCell.match(/[A-Z]+/i)[0].toUpperCase();
+        const valCol = indexToColLetter(colLetterToIndex(catCol) + 1);
+        for (let i = 0; i < payload.categories.length; i++) {
+          const row = catStartRow + i;
+          targetSheet.getRange(`${catCol}${row}`).values = [[payload.categories[i]]];
+          if (payload.sumifs_formula) {
+            targetSheet.getRange(`${valCol}${row}`).formulas = [[
+              payload.sumifs_formula.replace("{category}", `${catCol}${row}`)
+            ]];
+          }
+        }
+      }
+      await ctx.sync();
+    });
+  }
+
+  // ── auto_chart_best_fit ────────────────────────────────────────────────────
+  // Analyze data and create the most appropriate chart type.
+  // Claude picks the type in the system prompt; this delegates to add_chart.
+  // payload: { sheet?, range, chart_type?, title?, ... (same as add_chart) }
+  else if (type === "auto_chart_best_fit") {
+    await executeAction({
+      type: "add_chart",
+      payload: { ...payload, chart_type: payload.chart_type || "ColumnClustered" },
+    });
+  }
+
+  // ── trim_whitespace ────────────────────────────────────────────────────────
+  // Trim leading/trailing whitespace from all cells in a range.
+  // payload: { sheet?, range }
+  else if (type === "trim_whitespace") {
+    await Excel.run(async (ctx) => {
+      const { sheet: s, addr } = splitAddr(payload.range, payload.sheet);
+      const sheet = getSheet(ctx, s);
+      const range = sheet.getRange(addr);
+      range.load("values");
+      await ctx.sync();
+      const values = range.values;
+      let trimCount = 0;
+      const trimmed = values.map(row =>
+        row.map(cell => {
+          if (typeof cell === "string") {
+            const t = cell.trim();
+            if (t !== cell) trimCount++;
+            return t;
+          }
+          return cell;
+        })
+      );
+      range.values = trimmed;
+      await ctx.sync();
+      appendMessage("action", `Trimmed whitespace in ${trimCount} cell(s)`);
+    });
+  }
+
+  // ── find_replace_bulk ──────────────────────────────────────────────────────
+  // Find and replace multiple values at once across a range.
+  // payload: { sheet?, range, replacements: [{ find: "x", replace: "y" }, ...] }
+  else if (type === "find_replace_bulk") {
+    await Excel.run(async (ctx) => {
+      const { sheet: s, addr } = splitAddr(payload.range, payload.sheet);
+      const sheet = getSheet(ctx, s);
+      const range = sheet.getRange(addr);
+      range.load("values");
+      await ctx.sync();
+      const values = range.values;
+      let totalReplaced = 0;
+      const replacements = payload.replacements || [];
+      const updated = values.map(row =>
+        row.map(cell => {
+          if (typeof cell !== "string") return cell;
+          let val = cell;
+          for (const r of replacements) {
+            if (val.includes(r.find)) {
+              const before = val;
+              val = val.split(r.find).join(r.replace);
+              if (val !== before) totalReplaced++;
+            }
+          }
+          return val;
+        })
+      );
+      range.values = updated;
+      await ctx.sync();
+      appendMessage("action", `Replaced ${totalReplaced} occurrence(s) across ${replacements.length} pattern(s)`);
+    });
   }
 }
 
@@ -1011,14 +1450,26 @@ async function saveUserConfig(user) {
 // ── UI Helpers ────────────────────────────────────────────────────────────────
 
 function renderMarkdown(text) {
-  return text
+  let html = text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
+    .replace(/>/g, "&gt;");
+  // Code blocks (``` ... ```)
+  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, function(_, lang, code) {
+    const id = "cb_" + Math.random().toString(36).slice(2, 8);
+    return '<pre id="' + id + '"><button class="copy-btn" onclick="navigator.clipboard.writeText(document.getElementById(\'' + id + '\').textContent.replace(/^Copy\\n?/,\'\'))">Copy</button><code>' + code.trim() + '</code></pre>';
+  });
+  // Inline formatting
+  html = html
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
-    .replace(/`([^`]+)`/g, '<code style="background:#F1F5F9;padding:1px 4px;border-radius:3px;font-size:11px;">$1</code>')
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/^### (.+)$/gm, "<h4 style='margin:6px 0 2px;font-size:13px;'>$1</h4>")
+    .replace(/^## (.+)$/gm, "<h3 style='margin:8px 0 3px;font-size:14px;'>$1</h3>")
+    .replace(/^- (.+)$/gm, "<li style='margin-left:16px;list-style:disc;'>$1</li>")
+    .replace(/^\d+\. (.+)$/gm, "<li style='margin-left:16px;list-style:decimal;'>$1</li>")
     .replace(/\n/g, "<br>");
+  return html;
 }
 
 function appendMessage(role, text, images) {
@@ -1070,5 +1521,172 @@ function appendMessage(role, text, images) {
   history.scrollTop = history.scrollHeight;
 }
 
+function showTypingIndicator() {
+  const history = document.getElementById("chat-history");
+  const div = document.createElement("div");
+  div.id = "typing-indicator";
+  div.className = "typing-indicator";
+  div.innerHTML = "<span></span><span></span><span></span>";
+  history.appendChild(div);
+  history.scrollTop = history.scrollHeight;
+}
+
+function hideTypingIndicator() {
+  const el = document.getElementById("typing-indicator");
+  if (el) el.remove();
+}
+
 function setStatus(text)           { document.getElementById("status-bar").textContent = text; }
 function setSubmitEnabled(enabled) { document.getElementById("submit-btn").disabled = !enabled; }
+
+// ── Action Summary Helper ────────────────────────────────────────────────────
+
+function summarizeAction(action) {
+  const p = action.payload || {};
+  switch (action.type) {
+    case "write_cell": return `Wrote to ${p.cell || "?"} on ${p.sheet || "active"}`;
+    case "write_range": return `Wrote range ${p.range || "?"} on ${p.sheet || "active"}`;
+    case "write_formula": return `Formula in ${p.cell || "?"} on ${p.sheet || "active"}`;
+    case "fill_down": return `Fill down ${p.range || "?"} on ${p.sheet || "active"}`;
+    case "fill_right": return `Fill right ${p.range || "?"} on ${p.sheet || "active"}`;
+    case "navigate_sheet": return `Switched to "${p.sheet || "?"}"`;
+    case "format_range": return `Formatted ${p.range || "?"} on ${p.sheet || "active"}`;
+    case "add_chart": return `Created ${p.chart_type || "chart"} on ${p.sheet || "active"}`;
+    case "add_sheet": return `Created sheet "${p.name || "?"}"`;
+    case "create_slide": return `Created slide: ${p.title || "untitled"}`;
+    case "remove_duplicates": return `Removed duplicates in ${p.range || "?"} on ${p.sheet || "active"}`;
+    case "conditional_format_heatmap": return `Applied heatmap to ${p.range || "?"} on ${p.sheet || "active"}`;
+    case "create_pivot_summary": return `Created pivot summary on ${p.target_sheet || p.sheet || "active"}`;
+    case "auto_chart_best_fit": return `Auto-chart on ${p.range || "?"} (${p.chart_type || "auto"})`;
+    case "trim_whitespace": return `Trimmed whitespace in ${p.range || "?"} on ${p.sheet || "active"}`;
+    case "find_replace_bulk": return `Bulk find/replace in ${p.range || "?"} (${(p.replacements || []).length} patterns)`;
+    default: return JSON.stringify(p).slice(0, 80);
+  }
+}
+
+// ── Session Expiry Warning (Improvement 7) ───────────────────────────────────
+
+function checkSessionExpiry() {
+  try {
+    const state = supabase.auth;
+    // Try to get token from local storage
+    const sessionStr = localStorage.getItem("sb-dvynmzeyttwlmvunicqz-auth-token");
+    if (!sessionStr) return;
+    const session = JSON.parse(sessionStr);
+    const token = session?.access_token;
+    if (!token) return;
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    const expiresAt = payload.exp * 1000;
+    const minutesLeft = (expiresAt - Date.now()) / 60000;
+    const warning = document.getElementById("session-warning");
+    if (warning) {
+      warning.style.display = minutesLeft < 10 ? "block" : "none";
+    }
+  } catch (e) { /* silent */ }
+}
+
+// ── Auth Debug Panel (Improvement 10) ────────────────────────────────────────
+
+function updateDebugPanel() {
+  try {
+    const sessionStr = localStorage.getItem("sb-dvynmzeyttwlmvunicqz-auth-token");
+    if (sessionStr) {
+      const session = JSON.parse(sessionStr);
+      const token = session?.access_token;
+      if (token) {
+        const payload = JSON.parse(atob(token.split(".")[1]));
+        const expiry = new Date(payload.exp * 1000);
+        document.getElementById("dbg-expiry").textContent = expiry.toLocaleTimeString();
+      }
+    }
+  } catch (e) { document.getElementById("dbg-expiry").textContent = "error"; }
+  document.getElementById("dbg-last-sync").textContent = lastSyncTimestamp || "never";
+  document.getElementById("dbg-source").textContent = sessionSource;
+}
+
+// ── Undo Last Action (Improvement 11) ────────────────────────────────────────
+
+async function saveUndoState(rangeAddress, sheetName) {
+  try {
+    await Excel.run(async (ctx) => {
+      const sheet = sheetName
+        ? ctx.workbook.worksheets.getItem(sheetName)
+        : ctx.workbook.worksheets.getActiveWorksheet();
+      const range = sheet.getRange(rangeAddress);
+      range.load(["values", "formulas", "numberFormat"]);
+      sheet.load("name");
+      await ctx.sync();
+      undoStack.push({
+        sheet: sheet.name,
+        address: rangeAddress,
+        values: range.values,
+        formulas: range.formulas,
+        numberFormat: range.numberFormat,
+        timestamp: Date.now()
+      });
+      if (undoStack.length > MAX_UNDO) undoStack.shift();
+      const undoBtn = document.getElementById("undo-btn");
+      if (undoBtn) undoBtn.style.display = "inline-block";
+    });
+  } catch (e) { /* silent — undo state capture is best-effort */ }
+}
+
+async function handleUndo() {
+  if (undoStack.length === 0) {
+    appendMessage("action", "Nothing to undo.");
+    return;
+  }
+  const state = undoStack.pop();
+  try {
+    await Excel.run(async (ctx) => {
+      const sheet = ctx.workbook.worksheets.getItem(state.sheet);
+      const range = sheet.getRange(state.address);
+      range.formulas = state.formulas;
+      range.numberFormat = state.numberFormat;
+      await ctx.sync();
+    });
+    appendMessage("action", `Undid changes to ${state.sheet}!${state.address}`);
+  } catch (e) {
+    appendMessage("action", `Undo failed: ${e.message}`);
+  }
+  if (undoStack.length === 0) {
+    const undoBtn = document.getElementById("undo-btn");
+    if (undoBtn) undoBtn.style.display = "none";
+  }
+}
+
+// ── Action History (Improvement 12) ──────────────────────────────────────────
+
+function addToHistory(actionType, summary) {
+  const entry = {
+    time: new Date().toLocaleTimeString(),
+    type: actionType,
+    summary: summary
+  };
+  actionHistory.unshift(entry);
+  if (actionHistory.length > MAX_HISTORY) actionHistory.pop();
+  const list = document.getElementById("history-list");
+  if (list) {
+    list.innerHTML = actionHistory.map(h =>
+      `<div style="padding:2px 0;border-bottom:1px solid #f0f0f0;"><span style="color:#64748B;">${h.time}</span> <strong>${h.type}</strong>: ${h.summary}</div>`
+    ).join("");
+  }
+}
+
+// ── Progress Bar (Improvement 13) ────────────────────────────────────────────
+
+function showProgress(current, total) {
+  const wrap = document.getElementById("progress-bar-wrap");
+  const bar = document.getElementById("progress-bar");
+  const text = document.getElementById("progress-text");
+  if (!wrap || !bar || !text) return;
+  wrap.style.display = "block";
+  const pct = Math.round((current / total) * 100);
+  bar.style.width = pct + "%";
+  text.textContent = `Applying ${current}/${total} actions...`;
+}
+
+function hideProgress() {
+  const wrap = document.getElementById("progress-bar-wrap");
+  if (wrap) wrap.style.display = "none";
+}
