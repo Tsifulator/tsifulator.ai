@@ -22,7 +22,7 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 import re
 
-MODEL_FAST     = "claude-haiku-4-20250414"      # $1/$5 per M tokens
+MODEL_FAST     = "claude-sonnet-4-20250514"    # Using Sonnet as fallback (Haiku 4 not yet available)
 MODEL_STANDARD = "claude-sonnet-4-20250514"    # $3/$15 per M tokens
 MODEL_HEAVY    = "claude-opus-4-20250514"      # $15/$75 per M tokens
 
