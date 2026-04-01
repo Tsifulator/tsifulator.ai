@@ -6,6 +6,8 @@ sends to Claude, saves response, returns action(s).
 
 import hashlib
 import time
+import base64
+import os
 from collections import OrderedDict
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -13,6 +15,9 @@ from pydantic import BaseModel
 from services.claude import get_claude_response, get_claude_stream
 from services.usage import check_and_increment_usage
 from services.memory import save_message, get_recent_history, is_connected
+
+# File extensions that should be saved to /tmp/ for import_csv
+_SAVEABLE_EXTENSIONS = {".csv", ".tsv", ".txt", ".json", ".xml"}
 
 router = APIRouter()
 
@@ -155,14 +160,39 @@ async def chat(request: ChatRequest):
         session_id=request.session_id
     )
 
-    # 5. Send to Claude with context (+ images if attached)
+    # 5. Save uploaded data files (CSV, TSV, etc.) to /tmp/ so import_csv can use them
     images = [{"media_type": img.media_type, "data": img.data, "file_name": img.file_name} for img in request.images] if request.images else []
+    message = request.message
+    saved_file_paths = []
+    remaining_images = []
+    for img in images:
+        file_name = img.get("file_name", "")
+        ext = ("." + file_name.rsplit(".", 1)[-1].lower()) if "." in file_name else ""
+        if ext in _SAVEABLE_EXTENSIONS and img.get("data"):
+            # Save to /tmp/ for import_csv
+            safe_name = file_name.replace("/", "_").replace(" ", "_")
+            save_path = f"/tmp/{safe_name}"
+            try:
+                raw = base64.b64decode(img["data"])
+                with open(save_path, "wb") as f:
+                    f.write(raw)
+                saved_file_paths.append(save_path)
+            except Exception:
+                remaining_images.append(img)
+        else:
+            remaining_images.append(img)
+
+    # Inject saved file paths into the message so Claude uses import_csv
+    if saved_file_paths and app in {"excel", "google_sheets"}:
+        paths_str = ", ".join(saved_file_paths)
+        message = f"{message}\n\n[SYSTEM: The user uploaded data files that have been saved to the server. Use import_csv to import them into the spreadsheet. File paths: {paths_str}]"
+
     result = await get_claude_response(
-        message=request.message,
+        message=message,
         context=request.context,
         session_id=request.session_id,
         history=history,
-        images=images
+        images=remaining_images
     )
 
     # 6. Save Claude's reply to history and persistent memory
