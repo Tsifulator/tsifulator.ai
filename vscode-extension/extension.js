@@ -1,5 +1,5 @@
 /**
- * tsifl VS Code Extension v2.1.0
+ * tsifl VS Code Extension v2.2.0
  * Uses https module instead of fetch() for Node.js compatibility.
  */
 
@@ -390,7 +390,6 @@ class TsiflSidebarProvider {
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src https: wss:; font-src data:; img-src data: blob: https:;"/>
   <style>
     :root { --blue:#0D5EAF; --bh:#0A4896; --bl:#EBF3FB; --bg:var(--vscode-editor-background,#FFF); --sf:var(--vscode-sideBar-background,#F8FAFC); --bd:var(--vscode-panel-border,#E2E8F0); --tx:var(--vscode-foreground,#1E293B); --mu:var(--vscode-descriptionForeground,#64748B); --gn:#16A34A; --rd:#DC2626; --code-bg:#1E293B; --code-tx:#E2E8F0; }
     *{box-sizing:border-box;margin:0;padding:0;}
