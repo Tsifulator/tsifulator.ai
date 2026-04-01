@@ -22,7 +22,7 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 import re
 
-MODEL_FAST     = "claude-3-5-haiku-20241022"   # $0.80/$4 per M tokens
+MODEL_FAST     = "claude-haiku-4-20250414"      # $1/$5 per M tokens
 MODEL_STANDARD = "claude-sonnet-4-20250514"    # $3/$15 per M tokens
 MODEL_HEAVY    = "claude-opus-4-20250514"      # $15/$75 per M tokens
 
