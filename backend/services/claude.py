@@ -1381,7 +1381,9 @@ async def get_claude_response(message: str, context: dict,
         "yes", "no", "sure", "got it", "cool", "nice", "good",
     ])
     is_conversational = is_question or is_greeting
-    force_tool = not (is_browser_summary or is_notes or is_conversational)
+    # Use "auto" tool choice — lets Claude include explanatory text alongside actions.
+    # The system prompt ensures Claude uses execute_actions when actions are needed.
+    skip_tools = is_browser_summary or is_notes or is_conversational
 
     # Hybrid model selection
     selected_model = _select_model(message, context, has_attachments=bool(images))
@@ -1390,8 +1392,8 @@ async def get_claude_response(message: str, context: dict,
         model       = selected_model,
         max_tokens  = 16384,
         system      = SYSTEM_PROMPT,
-        tools       = TOOLS,
-        tool_choice = {"type": "tool", "name": "execute_actions"} if force_tool else {"type": "auto"},
+        tools       = [] if skip_tools else TOOLS,
+        tool_choice = {"type": "auto"} if not skip_tools else {"type": "auto"},
         messages    = messages,
     )
 
