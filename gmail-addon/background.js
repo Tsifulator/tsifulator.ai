@@ -24,6 +24,79 @@ chrome.runtime.onInstalled.addListener(() => {
   } catch (e) {
     console.warn("tsifl: setPanelBehavior failed on install:", e);
   }
+
+  // Set up recurring token refresh alarm (survives service worker idle)
+  chrome.alarms.create("tsifl-token-refresh", { periodInMinutes: 30 });
+});
+
+// Also create alarm on service worker start (in case install event was missed)
+chrome.alarms.get("tsifl-token-refresh", (alarm) => {
+  if (!alarm) {
+    chrome.alarms.create("tsifl-token-refresh", { periodInMinutes: 30 });
+  }
+});
+
+// ── Token Refresh Alarm ──────────────────────────────────────────────────
+// Keeps the session alive even when the side panel is closed.
+// MV3 service workers go idle, killing setInterval — alarms persist.
+
+const SUPABASE_URL = "https://dvynmzeyttwlmvunicqz.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR2eW5temV5dHR3bG12dW5pY3F6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2NTIwMTIsImV4cCI6MjA5MDIyODAxMn0.9j_f-2f1VswxWfqiuXy4bPnUi1qLk9nAeTDlodUBUZw";
+const BACKEND_URL = "https://focused-solace-production-6839.up.railway.app";
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== "tsifl-token-refresh") return;
+
+  try {
+    // Try backend session first (most up-to-date)
+    let refreshToken = null;
+    try {
+      const resp = await fetch(`${BACKEND_URL}/auth/get-session`);
+      const data = await resp.json();
+      if (data.session?.refresh_token) {
+        refreshToken = data.session.refresh_token;
+      }
+    } catch (e) {}
+
+    // Fall back to chrome.storage.local
+    if (!refreshToken) {
+      const stored = await chrome.storage.local.get("tsifl_session");
+      if (stored.tsifl_session?.refresh_token) {
+        refreshToken = stored.tsifl_session.refresh_token;
+      }
+    }
+
+    if (!refreshToken) return; // Not logged in
+
+    // Refresh the token via Supabase REST API
+    const resp = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "apikey": SUPABASE_ANON_KEY },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    const result = await resp.json();
+
+    if (result.access_token && result.user) {
+      // Save fresh tokens locally
+      chrome.storage.local.set({
+        tsifl_session: result,
+        tsifl_email: result.user.email,
+      });
+      // Sync to backend
+      await fetch(`${BACKEND_URL}/auth/set-session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          access_token: result.access_token,
+          refresh_token: result.refresh_token,
+          user_id: result.user?.id || "",
+          email: result.user?.email || "",
+        }),
+      });
+    }
+  } catch (e) {
+    console.warn("tsifl: background token refresh failed:", e);
+  }
 });
 
 // ── Keyboard Shortcut ───────────────────────────────────────────────────

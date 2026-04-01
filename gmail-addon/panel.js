@@ -77,7 +77,12 @@ async function restoreFromBackend() {
 }
 
 async function checkAuth() {
-  // Step 1: Check chrome.storage.local for saved session
+  // Step 1: Try backend session FIRST — always has the latest token
+  // (if user logged in via another add-in, backend has the freshest refresh_token)
+  const restored = await restoreFromBackend();
+  if (restored) return;
+
+  // Step 2: Fall back to chrome.storage.local
   let stored = null;
   try {
     stored = await new Promise((resolve) => {
@@ -104,24 +109,64 @@ async function checkAuth() {
     }
   }
 
-  // Step 2: Try to restore from backend (logged in via another add-in)
-  const restored = await restoreFromBackend();
-  if (!restored) {
-    // Pre-fill email if we remember it from a previous session
+  // Step 3: If we have a stored access_token that might still be valid, try using it directly
+  // (Supabase access tokens are valid for 1 hour even if refresh fails)
+  if (stored && stored.access_token) {
     try {
-      const savedEmail = await new Promise((resolve) => {
-        chrome.storage.local.get("tsifl_email", (data) => resolve(data.tsifl_email || ""));
-      });
-      if (savedEmail) {
-        document.getElementById("tsifl-auth-email").value = savedEmail;
-        document.getElementById("tsifl-auth-password").focus();
-        document.getElementById("tsifl-auth-error").textContent = "Session expired. Enter your password to continue.";
-        document.getElementById("tsifl-auth-error").style.color = "#64748B";
+      // Decode JWT to check expiry
+      const payload = JSON.parse(atob(stored.access_token.split(".")[1]));
+      const expiresAt = payload.exp * 1000;
+      if (Date.now() < expiresAt) {
+        // Token still valid — use it
+        const email = stored.user?.email || stored.email || "";
+        const uid = stored.user?.id || stored.user_id || "";
+        if (email) {
+          showChat({ id: uid, email });
+          return;
+        }
       }
-    } catch (e) {}
-    showLogin();
+    } catch (e) {
+      console.warn("tsifl: JWT decode failed:", e);
+    }
   }
+
+  // All failed — show login
+  // Pre-fill email if we remember it from a previous session
+  try {
+    const savedEmail = await new Promise((resolve) => {
+      chrome.storage.local.get("tsifl_email", (data) => resolve(data.tsifl_email || ""));
+    });
+    if (savedEmail) {
+      document.getElementById("tsifl-auth-email").value = savedEmail;
+      document.getElementById("tsifl-auth-password").focus();
+      document.getElementById("tsifl-auth-error").textContent = "Session expired. Enter your password to continue.";
+      document.getElementById("tsifl-auth-error").style.color = "#64748B";
+    }
+  } catch (e) {}
+  showLogin();
 }
+
+// Proactive token refresh every 45 minutes — keeps session alive
+// (matches Excel add-in behavior so tokens don't expire during use)
+setInterval(async () => {
+  if (!currentUser) return;
+  try {
+    const stored = await new Promise((resolve) => {
+      chrome.storage.local.get("tsifl_session", (data) => resolve(data.tsifl_session || null));
+    });
+    if (stored && stored.refresh_token) {
+      const result = await supabaseAuth("token?grant_type=refresh_token", {
+        refresh_token: stored.refresh_token,
+      });
+      if (result.access_token && result.user) {
+        chrome.storage.local.set({ tsifl_session: result, tsifl_email: result.user.email });
+        syncSessionToBackend(result);
+      }
+    }
+  } catch (e) {
+    console.warn("tsifl: proactive refresh failed:", e);
+  }
+}, 45 * 60 * 1000);
 
 async function handleSignIn() {
   const email = document.getElementById("tsifl-auth-email").value.trim();
@@ -129,7 +174,9 @@ async function handleSignIn() {
   const errEl = document.getElementById("tsifl-auth-error");
   errEl.textContent = "";
   errEl.style.color = "#DC2626";
-  if (!email || !password) { errEl.textContent = "Enter email and password."; return; }
+  // Validation (Improvement 9)
+  if (!email || !email.includes("@")) { errEl.textContent = "Enter a valid email address."; return; }
+  if (!password) { errEl.textContent = "Enter your password."; return; }
 
   try {
     const result = await supabaseAuth("token?grant_type=password", { email, password });
@@ -151,8 +198,8 @@ async function handleSignUp() {
   const errEl = document.getElementById("tsifl-auth-error");
   errEl.textContent = "";
   errEl.style.color = "#DC2626";
-  if (!email || !password) { errEl.textContent = "Enter email and password."; return; }
-  if (password.length < 6) { errEl.textContent = "Password must be 6+ characters."; return; }
+  if (!email || !email.includes("@")) { errEl.textContent = "Enter a valid email address."; return; }
+  if (password.length < 6) { errEl.textContent = "Password must be at least 6 characters."; return; }
 
   try {
     const result = await supabaseAuth("signup", { email, password });
@@ -167,6 +214,22 @@ async function handleSignUp() {
   }
 }
 
+// Forgot password (Improvement 5)
+async function handleForgotPassword() {
+  const email = document.getElementById("tsifl-auth-email").value.trim();
+  const errEl = document.getElementById("tsifl-auth-error");
+  if (!email || !email.includes("@")) { errEl.style.color = "#DC2626"; errEl.textContent = "Enter your email first."; return; }
+  try {
+    const resp = await fetch(`${SUPABASE_URL}/auth/v1/recover`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "apikey": SUPABASE_ANON_KEY },
+      body: JSON.stringify({ email }),
+    });
+    if (resp.ok) { errEl.style.color = "#16A34A"; errEl.textContent = "Check your email for a reset link."; }
+    else { errEl.style.color = "#DC2626"; errEl.textContent = "Could not send reset email."; }
+  } catch (e) { errEl.style.color = "#DC2626"; errEl.textContent = "Network error."; }
+}
+
 function showLogin() {
   document.getElementById("tsifl-login").style.display = "flex";
   document.getElementById("tsifl-chat-area").style.display = "none";
@@ -176,7 +239,12 @@ function showChat(user) {
   currentUser = user;
   document.getElementById("tsifl-login").style.display = "none";
   document.getElementById("tsifl-chat-area").style.display = "flex";
-  document.getElementById("tsifl-user-bar").textContent = user.email || "Signed in";
+  // User display with avatar initial (Improvement 8)
+  const initial = (user.email || "?")[0].toUpperCase();
+  document.getElementById("tsifl-user-bar").innerHTML =
+    `<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#0D5EAF;color:white;font-size:10px;font-weight:700;margin-right:4px;">${initial}</span>${user.email || "Signed in"}`;
+  // Update tab context display (Improvement 73)
+  updateTabContext();
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -225,29 +293,40 @@ function getPageText() {
 // IMAGES
 // ══════════════════════════════════════════════════════════════════════════
 
-function addImage(file) {
+function addFile(file) {
   const reader = new FileReader();
   reader.onload = () => {
     pendingImages.push({
-      media_type: file.type || "image/png",
+      media_type: file.type || (file.name && file.name.match(/\.(png|jpg|jpeg|gif|webp)$/i) ? "image/png" : "application/octet-stream"),
       data: reader.result.split(",")[1],
-      preview: reader.result,
+      preview: file.type.startsWith("image/") ? reader.result : null,
+      file_name: file.name || "",
     });
     updateImagePreview();
   };
   reader.readAsDataURL(file);
 }
 
+function addImage(file) { addFile(file); }
+
 function updateImagePreview() {
   const bar = document.getElementById("tsifl-image-preview-bar");
   if (!pendingImages.length) { bar.style.display = "none"; bar.innerHTML = ""; return; }
   bar.style.display = "flex";
-  bar.innerHTML = pendingImages.map((img, i) =>
-    `<div class="tsifl-image-preview-item">
-      <img src="${img.preview}"/>
-      <button class="tsifl-remove-img" data-i="${i}">\u00d7</button>
-    </div>`
-  ).join("");
+  bar.innerHTML = pendingImages.map((img, i) => {
+    if (img.preview && img.media_type.startsWith("image/")) {
+      return `<div class="tsifl-image-preview-item">
+        <img src="${img.preview}"/>
+        <button class="tsifl-remove-img" data-i="${i}">\u00d7</button>
+      </div>`;
+    } else {
+      const ext = img.file_name ? img.file_name.split(".").pop().toUpperCase() : "FILE";
+      return `<div class="tsifl-image-preview-item">
+        <div style="width:40px;height:40px;display:flex;align-items:center;justify-content:center;background:#F1F5F9;border-radius:4px;border:1px solid #E2E8F0;font-size:9px;font-weight:700;color:#0D5EAF;">${ext}</div>
+        <button class="tsifl-remove-img" data-i="${i}">\u00d7</button>
+      </div>`;
+    }
+  }).join("");
   bar.querySelectorAll(".tsifl-remove-img").forEach(b =>
     b.onclick = () => { pendingImages.splice(+b.dataset.i, 1); updateImagePreview(); }
   );
@@ -307,6 +386,7 @@ async function handleSubmit() {
     if (userBar && currentUser) userBar.textContent = `${currentUser.email} \u00b7 ${siteName}`;
 
     setStatus("Thinking...");
+    showTypingIndicator();
 
     // Send to backend with timeout
     const controller = new AbortController();
@@ -327,6 +407,7 @@ async function handleSubmit() {
     clearTimeout(fetchTimeout);
 
     if (!resp.ok) {
+      hideTypingIndicator();
       const err = await resp.json().catch(() => ({ detail: resp.statusText }));
       appendMessage("assistant", `Error: ${err.detail || "Request failed"}`);
       setSubmitEnabled(true);
@@ -335,6 +416,7 @@ async function handleSubmit() {
     }
 
     const result = await resp.json();
+    hideTypingIndicator();
 
     // Show the reply
     if (result.reply) {
@@ -360,6 +442,7 @@ async function handleSubmit() {
     }
 
   } catch (e) {
+    hideTypingIndicator();
     if (e.name === "AbortError") {
       appendMessage("assistant", "Request timed out. Please try again.");
     } else {
@@ -524,14 +607,39 @@ function appendMessage(role, text, imageCount) {
 }
 
 function renderMarkdown(text) {
-  return text
+  let html = text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
+    .replace(/>/g, "&gt;");
+  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, function(_, lang, code) {
+    const id = "cb_" + Math.random().toString(36).slice(2, 8);
+    return '<pre id="' + id + '"><button class="copy-btn" onclick="navigator.clipboard.writeText(document.getElementById(\'' + id + '\').textContent.replace(/^Copy\\n?/,\'\'))">Copy</button><code>' + code.trim() + '</code></pre>';
+  });
+  html = html
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
-    .replace(/`([^`]+)`/g, '<code style="background:#F1F5F9;padding:1px 4px;border-radius:3px;font-size:12px;">$1</code>')
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/^### (.+)$/gm, "<h4 style='margin:6px 0 2px;font-size:13px;'>$1</h4>")
+    .replace(/^## (.+)$/gm, "<h3 style='margin:8px 0 3px;font-size:14px;'>$1</h3>")
+    .replace(/^- (.+)$/gm, "<li style='margin-left:16px;list-style:disc;'>$1</li>")
+    .replace(/^\d+\. (.+)$/gm, "<li style='margin-left:16px;list-style:decimal;'>$1</li>")
     .replace(/\n/g, "<br>");
+  return html;
+}
+
+function showTypingIndicator() {
+  const history = document.getElementById("tsifl-chat-history");
+  const div = document.createElement("div");
+  div.id = "typing-indicator";
+  div.className = "typing-indicator";
+  div.innerHTML = "<span></span><span></span><span></span>";
+  history.appendChild(div);
+  history.scrollTop = history.scrollHeight;
+}
+
+function hideTypingIndicator() {
+  const el = document.getElementById("typing-indicator");
+  if (el) el.remove();
 }
 
 function setStatus(text) {
@@ -556,11 +664,40 @@ document.getElementById("tsifl-signup-btn").onclick = handleSignUp;
 document.getElementById("tsifl-submit-btn").onclick = handleSubmit;
 document.getElementById("tsifl-attach-btn").onclick = () => document.getElementById("tsifl-image-input").click();
 
-// Notes button
+// Password toggle (Improvement 9)
+const togglePw = document.getElementById("tsifl-toggle-pw");
+if (togglePw) {
+  togglePw.onclick = () => {
+    const pw = document.getElementById("tsifl-auth-password");
+    pw.type = pw.type === "password" ? "text" : "password";
+  };
+}
+
+// Forgot password (Improvement 5)
+const forgotPwBtn = document.getElementById("tsifl-forgot-pw");
+if (forgotPwBtn) forgotPwBtn.onclick = handleForgotPassword;
+
+// Screenshot button (Improvement 77)
+const screenshotBtn = document.getElementById("tsifl-screenshot-btn");
+if (screenshotBtn) {
+  screenshotBtn.onclick = async () => {
+    try {
+      const dataUrl = await chrome.tabs.captureVisibleTab(null, { format: "png" });
+      const base64 = dataUrl.split(",")[1];
+      pendingImages.push({ media_type: "image/png", data: base64, preview: dataUrl });
+      updateImagePreview();
+      setStatus("Screenshot captured");
+    } catch (e) {
+      setStatus("Screenshot failed: " + e.message);
+    }
+  };
+}
+
+// Notes button — open notes app directly
 const notesBtn = document.getElementById("tsifl-notes-btn");
 if (notesBtn) {
   notesBtn.onclick = () => {
-    sendToBackground("execute_browser_action", "open_url", { url: NOTES_URL }).catch(() => {
+    chrome.tabs.create({ url: NOTES_URL, active: true }).catch(() => {
       window.open(NOTES_URL, "_blank");
     });
   };
@@ -575,16 +712,16 @@ document.getElementById("tsifl-user-input").addEventListener("keydown", (e) => {
 });
 
 document.getElementById("tsifl-image-input").onchange = (e) => {
-  for (const file of e.target.files) addImage(file);
+  for (const file of e.target.files) addFile(file);
   e.target.value = "";
 };
 
-// Paste images
+// Paste images & files
 document.getElementById("tsifl-user-input").addEventListener("paste", (e) => {
   for (const item of (e.clipboardData || {}).items || []) {
-    if (item.type.startsWith("image/")) {
+    if (item.type.startsWith("image/") || item.kind === "file") {
       const file = item.getAsFile();
-      if (file) addImage(file);
+      if (file) addFile(file);
     }
   }
 });
@@ -597,6 +734,37 @@ document.getElementById("tsifl-user-bar").addEventListener("dblclick", () => {
   document.getElementById("tsifl-chat-history").innerHTML = "";
   showLogin();
 });
+
+// Quick action buttons
+document.querySelectorAll(".tsifl-quick-btn").forEach(function(btn) {
+  btn.addEventListener("click", function() {
+    var prompt = btn.getAttribute("data-prompt");
+    if (prompt) {
+      document.getElementById("tsifl-user-input").value = prompt;
+      handleSubmit();
+    }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// TAB CONTEXT (Improvement 73)
+// ══════════════════════════════════════════════════════════════════════════
+
+async function updateTabContext() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab) {
+      const ctxEl = document.getElementById("tsifl-tab-context");
+      const titleEl = document.getElementById("tsifl-tab-title");
+      const urlEl = document.getElementById("tsifl-tab-url");
+      if (ctxEl && titleEl && urlEl) {
+        ctxEl.style.display = "block";
+        titleEl.textContent = "On: " + (tab.title || "").slice(0, 60);
+        urlEl.textContent = (tab.url || "").slice(0, 80);
+      }
+    }
+  } catch (e) { /* silent */ }
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 // INIT
