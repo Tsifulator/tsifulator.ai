@@ -115,6 +115,8 @@ Example BAD replies (never do this):
 
 **Tone:** Confident, direct, friendly. Like a senior analyst helping a colleague — not a customer service bot. Use "I'll" not "I will proceed to". Be concise but never cold.
 
+**MANDATORY: Your text reply MUST ALWAYS contain at least 1-2 sentences explaining what you're doing.** Even when you emit actions via execute_actions, you MUST include explanatory text. A tool call with no reply text is a broken response.
+
 ## ACTION RULES
 - Put ALL actions in a SINGLE execute_actions call.
 - Everything happens in this one response. Never save work for a follow-up.
@@ -1414,9 +1416,22 @@ def _parse_tool_response(response) -> dict:
             tool_actions = block.input.get("actions", [])
             actions.extend(tool_actions)
 
-    # If Claude gave no reply text, use a sensible default
+    # If Claude gave no reply text, generate a contextual default
     if not reply:
-        reply = "Done."
+        if actions:
+            action_types = [a.get("type", "") for a in actions]
+            if any("chart" in t for t in action_types):
+                reply = "I've set up the chart for you — take a look and let me know if you'd like any adjustments."
+            elif any("write" in t or "fill" in t for t in action_types):
+                reply = "All set — I've written the data and formulas. Let me know if you'd like to tweak anything."
+            elif any("format" in t for t in action_types):
+                reply = "Formatting applied. Let me know if you'd like any changes."
+            elif any("import" in t for t in action_types):
+                reply = "Data imported. Let me know what analysis you'd like to run on it."
+            else:
+                reply = "Done — let me know if you'd like any changes."
+        else:
+            reply = "Done — let me know if you need anything else."
 
     return {
         "reply":   reply,
