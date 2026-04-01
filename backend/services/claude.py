@@ -1367,14 +1367,19 @@ async def get_claude_response(message: str, context: dict,
     app_name = context.get("app", "")
     is_browser_summary = app_name == "browser" and bool(context.get("full_page_text", ""))
     is_notes = app_name == "notes"
-    # Detect questions that don't need actions
+    # Detect messages that don't need actions (questions, greetings, chat)
     msg_lower = message.lower().strip()
     is_question = any(msg_lower.startswith(q) for q in [
         "what", "how", "why", "when", "where", "who", "can you", "do you",
         "tell me", "explain", "help", "describe", "summarize", "summary",
+        "compare", "analyze", "which", "should", "is it", "are there",
     ])
-    is_browser_question = app_name == "browser" and is_question
-    force_tool = not (is_browser_summary or is_notes or is_browser_question)
+    is_greeting = any(msg_lower.startswith(q) for q in [
+        "hi", "hey", "hello", "thanks", "thank you", "ok", "okay",
+        "yes", "no", "sure", "got it", "cool", "nice", "good",
+    ])
+    is_conversational = is_question or is_greeting
+    force_tool = not (is_browser_summary or is_notes or is_conversational)
 
     # Hybrid model selection
     selected_model = _select_model(message, context, has_attachments=bool(images))
@@ -1451,14 +1456,19 @@ async def get_claude_stream(message: str, context: dict,
     is_question = any(msg_lower.startswith(q) for q in [
         "what", "how", "why", "when", "where", "who", "can you", "do you",
         "tell me", "explain", "help", "describe", "summarize", "summary",
+        "compare", "analyze", "which", "should", "is it", "are there",
     ])
-    is_browser_question = app_name == "browser" and is_question
+    is_greeting = any(msg_lower.startswith(q) for q in [
+        "hi", "hey", "hello", "thanks", "thank you", "ok", "okay",
+        "yes", "no", "sure", "got it", "cool", "nice", "good",
+    ])
+    is_conversational = is_question or is_greeting
 
     # Hybrid model selection
     selected_model = _select_model(message, context, has_attachments=bool(images))
 
     # Only stream text-only responses (no tool use)
-    if is_browser_summary or is_notes or is_browser_question:
+    if is_browser_summary or is_notes or is_conversational:
         with client.messages.stream(
             model       = selected_model,
             max_tokens  = 16384,
