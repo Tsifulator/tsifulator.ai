@@ -5,11 +5,11 @@
  */
 
 import "./taskpane.css";
-import { supabase, getCurrentUser, signIn, signUp, signOut } from "./auth.js";
+import { supabase, getCurrentUser, signIn, signUp, signOut, resetPassword, syncSessionToBackend } from "./auth.js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const BACKEND_URL = "https://focused-solace-production-6839.up.railway.app";
-const BUILD_VERSION = "v2";
+const BUILD_VERSION = "v3";
 
 let CURRENT_USER = null;
 let pendingImages = [];
@@ -37,15 +37,37 @@ function showLoginScreen() {
 
   document.getElementById("login-btn").onclick = handleSignIn;
   document.getElementById("signup-btn").onclick = handleSignUp;
+  // Show/hide password toggle (Improvement 9)
+  const togglePw = document.getElementById("toggle-pw-btn");
+  if (togglePw) {
+    togglePw.onclick = () => {
+      const pwInput = document.getElementById("auth-password");
+      pwInput.type = pwInput.type === "password" ? "text" : "password";
+    };
+  }
+  // Forgot password (Improvement 5)
+  const forgotBtn = document.getElementById("forgot-pw-btn");
+  if (forgotBtn) {
+    forgotBtn.onclick = async () => {
+      const email = document.getElementById("auth-email").value.trim();
+      const errEl = document.getElementById("auth-error");
+      if (!email || !email.includes("@")) { errEl.style.color = "#DC2626"; errEl.textContent = "Enter your email first."; return; }
+      const { error } = await resetPassword(email);
+      if (error) { errEl.style.color = "#DC2626"; errEl.textContent = error.message; return; }
+      errEl.style.color = "#16A34A"; errEl.textContent = "Check your email for a reset link.";
+    };
+  }
 }
 
 async function handleSignIn() {
   const email = document.getElementById("auth-email").value.trim();
   const password = document.getElementById("auth-password").value;
   const errEl = document.getElementById("auth-error");
+  errEl.style.color = "#DC2626";
   errEl.textContent = "";
 
-  if (!email || !password) { errEl.textContent = "Enter email and password."; return; }
+  if (!email || !email.includes("@")) { errEl.textContent = "Enter a valid email address."; return; }
+  if (!password) { errEl.textContent = "Enter your password."; return; }
 
   const { user, error } = await signIn(email, password);
   if (error) { errEl.textContent = error.message; return; }
@@ -56,24 +78,27 @@ async function handleSignUp() {
   const email = document.getElementById("auth-email").value.trim();
   const password = document.getElementById("auth-password").value;
   const errEl = document.getElementById("auth-error");
+  errEl.style.color = "#DC2626";
   errEl.textContent = "";
 
-  if (!email || !password) { errEl.textContent = "Enter email and password."; return; }
-  if (password.length < 6) { errEl.textContent = "Password must be 6+ characters."; return; }
+  if (!email || !email.includes("@")) { errEl.textContent = "Enter a valid email address."; return; }
+  if (password.length < 6) { errEl.textContent = "Password must be at least 6 characters."; return; }
 
   const { user, error } = await signUp(email, password);
   if (error) { errEl.textContent = error.message; return; }
-  if (user) {
-    errEl.style.color = "var(--green)";
-    errEl.textContent = "Check your email to confirm, then sign in.";
-  }
+  errEl.style.color = "#16A34A";
+  errEl.textContent = "Check your email to confirm, then sign in.";
 }
 
 function showChatScreen(user) {
   CURRENT_USER = user;
   document.getElementById("login-screen").style.display = "none";
   document.getElementById("chat-screen").style.display = "flex";
-  document.getElementById("user-bar").textContent = `${user.email} · ${BUILD_VERSION}`;
+
+  // User display with avatar initial (Improvement 8)
+  const initial = (user.email || "?")[0].toUpperCase();
+  document.getElementById("user-bar").innerHTML =
+    `<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#0D5EAF;color:white;font-size:10px;font-weight:700;margin-right:4px;">${initial}</span>${user.email} &middot; ${BUILD_VERSION}`;
 
   saveUserConfig(user);
 
@@ -103,17 +128,118 @@ function showChatScreen(user) {
     e.preventDefault();
     inputArea.style.background = "";
     for (const file of e.dataTransfer.files) {
-      if (file.type.startsWith("image/")) addImage(file);
+      addFile(file);
     }
   });
 
   document.getElementById("user-input").addEventListener("paste", (e) => {
     for (const item of (e.clipboardData || {}).items || []) {
-      if (item.type.startsWith("image/")) addImage(item.getAsFile());
+      if (item.type.startsWith("image/") || item.kind === "file") {
+        const f = item.getAsFile();
+        if (f) addFile(f);
+      }
     }
   });
 
+  // Notes button
+  document.getElementById("notes-btn").onclick = () => {
+    window.open(`${BACKEND_URL}/notes-app`, "_blank");
+  };
+
+  // Templates dropdown (Improvement 30)
+  const templatesBtn = document.getElementById("templates-btn");
+  const templatesDd = document.getElementById("templates-dropdown");
+  if (templatesBtn && templatesDd) {
+    templatesBtn.onclick = (e) => {
+      e.stopPropagation();
+      templatesDd.style.display = templatesDd.style.display === "none" ? "block" : "none";
+    };
+    document.querySelectorAll(".template-item").forEach(item => {
+      item.onclick = () => {
+        document.getElementById("user-input").value = `Create a ${item.dataset.template} document with professional formatting`;
+        templatesDd.style.display = "none";
+        handleSubmit();
+      };
+    });
+    document.addEventListener("click", () => { templatesDd.style.display = "none"; });
+  }
+
+  // Document outline toggle (Improvement 26)
+  const outlineToggle = document.getElementById("outline-toggle");
+  if (outlineToggle) {
+    outlineToggle.onclick = () => {
+      const panel = document.getElementById("outline-panel");
+      panel.style.display = panel.style.display === "none" ? "block" : "none";
+      if (panel.style.display === "block") loadDocumentOutline();
+    };
+  }
+
+  // Quick action buttons
+  document.querySelectorAll(".quick-btn").forEach(btn => {
+    btn.onclick = () => {
+      document.getElementById("user-input").value = btn.dataset.prompt;
+      handleSubmit();
+    };
+  });
+
+  // Auto-resize textarea
+  document.getElementById("user-input").addEventListener("input", (e) => {
+    e.target.style.height = "auto";
+    e.target.style.height = Math.min(e.target.scrollHeight, 100) + "px";
+  });
+
+  // Escape to clear input
+  document.getElementById("user-input").addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { e.target.value = ""; e.target.style.height = "auto"; }
+  });
+
   setStatus("Ready");
+  updateWordCount();
+}
+
+// Document outline (Improvement 26)
+async function loadDocumentOutline() {
+  try {
+    await Word.run(async (ctx) => {
+      const paragraphs = ctx.document.body.paragraphs;
+      paragraphs.load("items/text,items/style");
+      await ctx.sync();
+      const headings = [];
+      for (const p of paragraphs.items) {
+        if (p.style && p.style.match(/^Heading\s?[1-3]$/i)) {
+          const level = parseInt(p.style.replace(/\D/g, "")) || 1;
+          headings.push({ text: p.text, level });
+        }
+      }
+      const list = document.getElementById("outline-list");
+      if (headings.length === 0) {
+        list.innerHTML = '<div style="color:#94A3B8;font-style:italic;">No headings found</div>';
+      } else {
+        list.innerHTML = headings.map(h =>
+          `<div style="padding:2px 0;padding-left:${(h.level - 1) * 12}px;cursor:pointer;color:#0D5EAF;" class="outline-item">${h.text}</div>`
+        ).join("");
+      }
+    });
+  } catch (e) {
+    document.getElementById("outline-list").innerHTML = `<div style="color:#DC2626;">${e.message}</div>`;
+  }
+}
+
+// Word count update (Improvement 27)
+async function updateWordCount() {
+  try {
+    await Word.run(async (ctx) => {
+      const body = ctx.document.body;
+      body.load("text");
+      await ctx.sync();
+      const text = body.text || "";
+      const words = text.trim().split(/\s+/).filter(w => w.length > 0).length;
+      const chars = text.length;
+      const readTime = Math.max(1, Math.ceil(words / 250));
+      const bar = document.getElementById("word-count-bar");
+      if (bar) bar.textContent = `${words} words \u00b7 ${chars} characters \u00b7 ~${readTime} min read`;
+    });
+  } catch (e) { /* silent */ }
 }
 
 async function saveUserConfig(user) {
@@ -128,19 +254,23 @@ async function saveUserConfig(user) {
 
 // ── Image Handling ──────────────────────────────────────────────────────────
 
-function addImage(file) {
+function addFile(file) {
   const reader = new FileReader();
   reader.onload = () => {
     const base64 = reader.result.split(",")[1];
     pendingImages.push({
-      media_type: file.type || "image/png",
+      media_type: file.type || (file.name && file.name.match(/\.(png|jpg|jpeg|gif|webp)$/i) ? "image/png" : "application/octet-stream"),
       data: base64,
       preview: reader.result,
+      file_name: file.name || "",
     });
     updateImagePreview();
   };
   reader.readAsDataURL(file);
 }
+
+// Backward compat alias
+function addImage(file) { addFile(file); }
 
 /** Render base64 image data onto a canvas element (bypasses all CSP img-src restrictions) */
 async function renderImageToCanvas(base64Data, mediaType, maxW, maxH) {
@@ -176,25 +306,34 @@ function updateImagePreview() {
   if (pendingImages.length === 0) {
     bar.style.display = "none";
     attachBtn.textContent = "+";
-    attachBtn.title = "Attach image";
+    attachBtn.title = "Attach file";
     return;
   }
 
   attachBtn.textContent = `${pendingImages.length}`;
-  attachBtn.title = `${pendingImages.length} image${pendingImages.length > 1 ? "s" : ""} attached — click to add more`;
+  attachBtn.title = `${pendingImages.length} file${pendingImages.length > 1 ? "s" : ""} attached — click to add more`;
 
   bar.style.display = "flex";
   pendingImages.forEach((img, i) => {
     const wrapper = document.createElement("div");
     wrapper.className = "image-preview-item";
+    const isImage = img.media_type.startsWith("image/");
 
-    renderImageToCanvas(img.data, img.media_type, 48, 48).then(canvas => {
-      if (canvas) {
-        canvas.style.borderRadius = "4px";
-        canvas.style.border = "1px solid var(--border)";
-        wrapper.insertBefore(canvas, wrapper.firstChild);
-      }
-    });
+    if (isImage) {
+      renderImageToCanvas(img.data, img.media_type, 48, 48).then(canvas => {
+        if (canvas) {
+          canvas.style.borderRadius = "4px";
+          canvas.style.border = "1px solid var(--border)";
+          wrapper.insertBefore(canvas, wrapper.firstChild);
+        }
+      });
+    } else {
+      const docIcon = document.createElement("div");
+      const ext = img.file_name ? img.file_name.split(".").pop().toUpperCase() : "FILE";
+      docIcon.style.cssText = "width:48px;height:48px;display:flex;align-items:center;justify-content:center;background:#F1F5F9;border-radius:4px;border:1px solid var(--border);font-size:9px;font-weight:700;color:#0D5EAF;text-align:center;";
+      docIcon.textContent = ext;
+      wrapper.insertBefore(docIcon, wrapper.firstChild);
+    }
 
     const removeBtn = document.createElement("button");
     removeBtn.className = "remove-img";
@@ -284,6 +423,7 @@ async function handleSubmit() {
   input.value = "";
   setSubmitEnabled(false);
   setStatus("Thinking...");
+  showTypingIndicator();
 
   const imageCount = pendingImages.length;
   appendMessage("user", message, imageCount);
@@ -295,9 +435,12 @@ async function handleSubmit() {
   try {
     const context = await getWordContext();
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 120000);
     const resp = await fetch(`${BACKEND_URL}/chat/`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
       body: JSON.stringify({
         user_id: CURRENT_USER.id,
         message,
@@ -306,6 +449,7 @@ async function handleSubmit() {
         images,
       }),
     });
+    clearTimeout(timeout);
 
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({ detail: resp.statusText }));
@@ -318,11 +462,11 @@ async function handleSubmit() {
       document.getElementById("tasks-remaining").textContent = `${result.tasks_remaining} tasks left`;
     }
 
+    hideTypingIndicator();
     appendMessage("assistant", result.reply);
 
     const actions = result.actions?.length ? result.actions : (result.action?.type ? [result.action] : []);
     if (actions.length > 0) {
-      appendMessage("action", `Executing ${actions.length} action(s): ${actions.map(a => a.type).join(", ")}`);
       let success = 0, failed = 0;
       for (const action of actions) {
         try {
@@ -333,13 +477,14 @@ async function handleSubmit() {
           failed++;
         }
       }
-      appendMessage("action", failed > 0
-        ? `Done: ${success} succeeded, ${failed} failed`
-        : `Done: ${success} action(s) completed`);
+      if (failed > 0) {
+        appendMessage("action", `${success} succeeded, ${failed} failed`);
+      }
     }
 
     setStatus("Ready");
   } catch (e) {
+    hideTypingIndicator();
     appendMessage("assistant", `Error: ${e.message}`);
     setStatus("Error — try again");
   }
@@ -612,12 +757,21 @@ async function executeAction(action) {
       }
       break;
 
+    case "create_document":
+      try {
+        // Note: Word.createDocument() requires specific APIs
+        appendMessage("action", "create_document: Please create a new document in Word first");
+      } catch (e) {
+        appendMessage("action", `create_document: ${e.message}`);
+      }
+      break;
+
     case "create_note":
       try {
         const resp = await fetch(`${BACKEND_URL}/notes/`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_id: currentUser?.id || "unknown", title: payload.title || "Untitled", content: payload.content || "", folder: "General" }),
+          body: JSON.stringify({ user_id: CURRENT_USER?.id || "unknown", title: payload.title || "Untitled", content: payload.content || "", folder: "General" }),
         });
         const note = await resp.json();
         appendMessage("action", `Note created: "${note.title}"`);
@@ -632,14 +786,24 @@ async function executeAction(action) {
 // ── UI Helpers ──────────────────────────────────────────────────────────────
 
 function renderMarkdown(text) {
-  return text
+  let html = text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
+    .replace(/>/g, "&gt;");
+  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, function(_, lang, code) {
+    const id = "cb_" + Math.random().toString(36).slice(2, 8);
+    return '<pre id="' + id + '"><button class="copy-btn" onclick="navigator.clipboard.writeText(document.getElementById(\'' + id + '\').textContent.replace(/^Copy\\n?/,\'\'))">Copy</button><code>' + code.trim() + '</code></pre>';
+  });
+  html = html
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
-    .replace(/`([^`]+)`/g, '<code style="background:#F1F5F9;padding:1px 4px;border-radius:3px;font-size:11px;">$1</code>')
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/^### (.+)$/gm, "<h4 style='margin:6px 0 2px;font-size:13px;'>$1</h4>")
+    .replace(/^## (.+)$/gm, "<h3 style='margin:8px 0 3px;font-size:14px;'>$1</h3>")
+    .replace(/^- (.+)$/gm, "<li style='margin-left:16px;list-style:disc;'>$1</li>")
+    .replace(/^\d+\. (.+)$/gm, "<li style='margin-left:16px;list-style:decimal;'>$1</li>")
     .replace(/\n/g, "<br>");
+  return html;
 }
 
 function appendMessage(role, text, imageCount) {
@@ -661,6 +825,63 @@ function appendMessage(role, text, imageCount) {
 
   history.appendChild(div);
   history.scrollTop = history.scrollHeight;
+}
+
+const _thinkingMessages = [
+  'Reading your question...',
+  'Thinking about this...',
+  'Processing that thought...',
+  'Crafting the perfect response...',
+  'Hold on, almost there...',
+  'Consulting my inner Shakespeare...',
+  'This one requires some brainpower...',
+  'Typing faster than you can read...',
+  'If I had hands I would be rubbing them together...',
+  'My circuits are tingling...',
+  'Give me a sec, genius takes time...',
+  'Loading witty response...',
+  'Brew yourself a coffee, this is gonna be good...',
+  'My keyboard is on fire right now...',
+  'Almost done, don\'t go anywhere...',
+];
+
+let _thinkingInterval = null;
+
+function showTypingIndicator() {
+  hideTypingIndicator();
+  const history = document.getElementById("chat-history");
+  const div = document.createElement("div");
+  div.id = "typing-indicator";
+  div.className = "thinking-bubble";
+  div.innerHTML = '<div class="thinking-orb"></div><span class="thinking-text"></span>';
+  history.appendChild(div);
+  history.scrollTop = history.scrollHeight;
+
+  let idx = 0;
+  function showNext() {
+    const el = document.querySelector('#typing-indicator .thinking-text');
+    if (!el) return;
+    const msg = _thinkingMessages[idx % _thinkingMessages.length];
+    el.style.opacity = '0';
+    el.style.transform = 'translateY(4px)';
+    setTimeout(() => {
+      el.textContent = msg;
+      el.style.opacity = '1';
+      el.style.transform = 'translateY(0)';
+    }, 200);
+    const chat = document.getElementById("chat-history");
+    if (chat) chat.scrollTop = chat.scrollHeight;
+    idx++;
+  }
+
+  setTimeout(showNext, 100);
+  _thinkingInterval = setInterval(showNext, 2500);
+}
+
+function hideTypingIndicator() {
+  if (_thinkingInterval) { clearInterval(_thinkingInterval); _thinkingInterval = null; }
+  const el = document.getElementById("typing-indicator");
+  if (el) el.remove();
 }
 
 function setStatus(text) {

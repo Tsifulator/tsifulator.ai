@@ -1515,14 +1515,24 @@ async def get_claude_response(message: str, context: dict,
     is_rstudio_with_images = app_name == "rstudio" and bool(images)
     tool_choice = {"type": "any"} if (is_rstudio_with_images and not skip_tools) else {"type": "auto"}
 
-    response = client.messages.create(
-        model       = selected_model,
-        max_tokens  = 16384,
-        system      = SYSTEM_PROMPT,
-        tools       = [] if skip_tools else TOOLS,
-        tool_choice = tool_choice,
-        messages    = messages,
-    )
+    try:
+        response = client.messages.create(
+            model       = selected_model,
+            max_tokens  = 16384,
+            system      = SYSTEM_PROMPT,
+            tools       = [] if skip_tools else TOOLS,
+            tool_choice = tool_choice,
+            messages    = messages,
+        )
+    except anthropic.BadRequestError as e:
+        if "content filtering" in str(e).lower() or "blocked" in str(e).lower():
+            return {
+                "reply": "I can't generate that exact content due to API content policies, but I can help you rephrase or approach it differently. Try rewording your request.",
+                "action": {},
+                "actions": [],
+                "model_used": selected_model,
+            }
+        raise
 
     result = _parse_tool_response(response)
     result["model_used"] = selected_model
