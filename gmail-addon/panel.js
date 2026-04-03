@@ -842,32 +842,6 @@ if (togglePw) {
 const forgotPwBtn = document.getElementById("tsifl-forgot-pw");
 if (forgotPwBtn) forgotPwBtn.onclick = handleForgotPassword;
 
-// Screenshot button (Improvement 77)
-const screenshotBtn = document.getElementById("tsifl-screenshot-btn");
-if (screenshotBtn) {
-  screenshotBtn.onclick = async () => {
-    try {
-      const dataUrl = await chrome.tabs.captureVisibleTab(null, { format: "png" });
-      const base64 = dataUrl.split(",")[1];
-      pendingImages.push({ media_type: "image/png", data: base64, preview: dataUrl });
-      updateImagePreview();
-      setStatus("Screenshot captured");
-    } catch (e) {
-      setStatus("Screenshot failed: " + e.message);
-    }
-  };
-}
-
-// Notes button — open notes app directly
-const notesBtn = document.getElementById("tsifl-notes-btn");
-if (notesBtn) {
-  notesBtn.onclick = () => {
-    chrome.tabs.create({ url: NOTES_URL, active: true }).catch(() => {
-      window.open(NOTES_URL, "_blank");
-    });
-  };
-}
-
 document.getElementById("tsifl-auth-password").addEventListener("keydown", (e) => {
   if (e.key === "Enter") handleSignIn();
 });
@@ -898,17 +872,6 @@ document.getElementById("tsifl-user-bar").addEventListener("dblclick", () => {
   currentUser = null;
   document.getElementById("tsifl-chat-history").innerHTML = "";
   showLogin();
-});
-
-// Quick action buttons
-document.querySelectorAll(".tsifl-quick-btn").forEach(function(btn) {
-  btn.addEventListener("click", function() {
-    var prompt = btn.getAttribute("data-prompt");
-    if (prompt) {
-      document.getElementById("tsifl-user-input").value = prompt;
-      handleSubmit();
-    }
-  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════

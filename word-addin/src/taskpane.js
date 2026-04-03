@@ -141,47 +141,6 @@ function showChatScreen(user) {
     }
   });
 
-  // Notes button
-  document.getElementById("notes-btn").onclick = () => {
-    window.open(`${BACKEND_URL}/notes-app`, "_blank");
-  };
-
-  // Templates dropdown (Improvement 30)
-  const templatesBtn = document.getElementById("templates-btn");
-  const templatesDd = document.getElementById("templates-dropdown");
-  if (templatesBtn && templatesDd) {
-    templatesBtn.onclick = (e) => {
-      e.stopPropagation();
-      templatesDd.style.display = templatesDd.style.display === "none" ? "block" : "none";
-    };
-    document.querySelectorAll(".template-item").forEach(item => {
-      item.onclick = () => {
-        document.getElementById("user-input").value = `Create a ${item.dataset.template} document with professional formatting`;
-        templatesDd.style.display = "none";
-        handleSubmit();
-      };
-    });
-    document.addEventListener("click", () => { templatesDd.style.display = "none"; });
-  }
-
-  // Document outline toggle (Improvement 26)
-  const outlineToggle = document.getElementById("outline-toggle");
-  if (outlineToggle) {
-    outlineToggle.onclick = () => {
-      const panel = document.getElementById("outline-panel");
-      panel.style.display = panel.style.display === "none" ? "block" : "none";
-      if (panel.style.display === "block") loadDocumentOutline();
-    };
-  }
-
-  // Quick action buttons
-  document.querySelectorAll(".quick-btn").forEach(btn => {
-    btn.onclick = () => {
-      document.getElementById("user-input").value = btn.dataset.prompt;
-      handleSubmit();
-    };
-  });
-
   // Auto-resize textarea
   document.getElementById("user-input").addEventListener("input", (e) => {
     e.target.style.height = "auto";

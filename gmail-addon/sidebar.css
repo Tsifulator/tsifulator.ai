@@ -381,19 +381,6 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* Quick action buttons */
-#tsifl-quick-actions {
-  display: flex; gap: 4px; padding: 6px 12px; flex-wrap: wrap;
-  border-bottom: 1px solid #E2E8F0;
-}
-.tsifl-quick-btn {
-  background: #F8FAFC; color: #64748B; border: 1px solid #E2E8F0;
-  border-radius: 12px; padding: 3px 10px; font-size: 10px;
-  cursor: pointer; transition: all 0.15s; white-space: nowrap;
-}
-.tsifl-quick-btn:hover {
-  background: #EBF3FB; color: #0D5EAF; border-color: #0D5EAF;
-}
 
 /* Context display — shows captured context summary */
 #tsifl-context-display {

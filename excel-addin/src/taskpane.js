@@ -111,65 +111,6 @@ function showChatScreen(user) {
     input.style.height = Math.min(input.scrollHeight, 100) + "px";
   });
 
-  // Notes button
-  document.getElementById("notes-btn").addEventListener("click", () => {
-    window.open(`${BACKEND_URL}/notes-app`, "_blank");
-  });
-
-  // Quick action buttons
-  document.querySelectorAll(".quick-btn").forEach(btn => {
-    if (btn.id === "explain-formula-btn") return; // handled separately
-    btn.addEventListener("click", () => {
-      const prompt = btn.getAttribute("data-prompt");
-      if (prompt) {
-        document.getElementById("user-input").value = prompt;
-        handleSubmit();
-      }
-    });
-  });
-
-  // Explain formula button (Improvement 15)
-  const explainBtn = document.getElementById("explain-formula-btn");
-  if (explainBtn) {
-    explainBtn.addEventListener("click", async () => {
-      try {
-        await Excel.run(async (ctx) => {
-          const cell = ctx.workbook.getActiveCell();
-          cell.load("formulas");
-          await ctx.sync();
-          const formula = cell.formulas[0][0];
-          if (formula && formula.startsWith("=")) {
-            document.getElementById("user-input").value = `Explain this Excel formula: ${formula}`;
-            handleSubmit();
-          } else {
-            appendMessage("action", "Active cell does not contain a formula.");
-          }
-        });
-      } catch (e) {
-        appendMessage("action", "Could not read active cell: " + e.message);
-      }
-    });
-  }
-
-  // Templates dropdown (Improvement 14)
-  const templatesBtn = document.getElementById("templates-btn");
-  const templatesDd = document.getElementById("templates-dropdown");
-  if (templatesBtn && templatesDd) {
-    templatesBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      templatesDd.style.display = templatesDd.style.display === "none" ? "block" : "none";
-    });
-    document.querySelectorAll(".template-item").forEach(item => {
-      item.addEventListener("click", () => {
-        const name = item.getAttribute("data-template");
-        document.getElementById("user-input").value = `Create a ${name} with sample data in this workbook`;
-        templatesDd.style.display = "none";
-        handleSubmit();
-      });
-    });
-    document.addEventListener("click", () => { templatesDd.style.display = "none"; });
-  }
-
   // Undo button (Improvement 11)
   const undoBtn = document.getElementById("undo-btn");
   if (undoBtn) {
