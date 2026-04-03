@@ -71,9 +71,9 @@ def _select_model(message: str, context: dict, has_attachments: bool = False) ->
             return MODEL_HEAVY
         return MODEL_STANDARD
 
-    # Short messages (< 15 chars) that match fast patterns → Haiku
+    # Short messages that match fast patterns → Sonnet (Haiku can't use tools reliably)
     if len(msg) < 80 and _FAST_PATTERNS.search(msg):
-        return MODEL_FAST
+        return MODEL_STANDARD
 
     # Complex queries → Opus
     if _HEAVY_PATTERNS.search(msg):
