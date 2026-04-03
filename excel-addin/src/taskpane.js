@@ -449,12 +449,14 @@ async function handleSubmit() {
           if (allActions.length > 2) showProgress(applied + failed, allActions.length);
         } catch (err) {
           failed++;
-          appendMessage("action", `⚠️ ${action.type} → ${err.message} | payload: ${JSON.stringify(action.payload || {}).slice(0, 120)}`);
+          console.error(`${action.type} failed:`, err.message);
         }
       }
       hideProgress();
       hideTypingIndicator();
-      appendMessage("action", `${applied} applied${failed > 0 ? ` · ${failed} failed` : ""}`);
+      if (failed > 0) {
+        appendMessage("assistant", `${applied} actions applied, ${failed} failed. Try rephrasing your request.`);
+      }
     }
 
     setStatus("Done");
@@ -680,7 +682,7 @@ async function executeAction(action) {
       await ctx.sync();
       const existing = range.values[0][0];
       if (existing !== null && existing !== "" && existing !== 0) {
-        appendMessage("action", `\u26A0\uFE0F Overwrote existing data in ${addr}`);
+        console.log(`Overwrote existing data in ${addr}`);
       }
       const val   = payload.formula ?? payload.value ?? "";
       if (typeof val === "string" && val.startsWith("=")) {
@@ -1059,15 +1061,27 @@ async function executeAction(action) {
   // ── launch_app ──────────────────────────────────────────────────────────────
   else if (type === "launch_app") {
     try {
-      const resp = await fetch(`${BACKEND_URL}/launch-app`, {
+      // Use local proxy to launch apps on the user's machine (not Railway)
+      const resp = await fetch(`/local-api/launch-app`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ app_name: payload.app_name }),
       });
       const result = await resp.json();
-      appendMessage("action", `launch_app: ${result.message || "Requested"}`);
+      if (result.status === "error") {
+        appendMessage("assistant", result.message || "Could not open the app.");
+      }
     } catch (e) {
-      appendMessage("action", `launch_app: ${e.message}`);
+      // Local backend not running — try Railway as fallback
+      try {
+        await fetch(`${BACKEND_URL}/launch-app`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ app_name: payload.app_name }),
+        });
+      } catch (_) {
+        appendMessage("assistant", "Couldn't open the app — make sure the local backend is running.");
+      }
     }
   }
 
@@ -1076,9 +1090,8 @@ async function executeAction(action) {
     const url = type === "open_notes" ? `${BACKEND_URL}/notes-app` : payload.url;
     try {
       window.open(url, "_blank");
-      appendMessage("action", `Opened: ${url}`);
     } catch (e) {
-      appendMessage("action", `open: ${e.message}`);
+      console.error("open failed:", e);
     }
   }
 
@@ -1096,9 +1109,9 @@ async function executeAction(action) {
         }),
       });
       const note = await resp.json();
-      appendMessage("action", `Note created: "${note.title || "Untitled"}"`);
+      // note created silently
     } catch (e) {
-      appendMessage("action", `create_note: ${e.message}`);
+      console.error("create_note failed:", e);
     }
   }
 
@@ -1106,9 +1119,9 @@ async function executeAction(action) {
   else if (type === "create_workbook") {
     try {
       await Excel.createWorkbook();
-      appendMessage("action", "create_workbook: New workbook created");
+      // workbook created silently
     } catch (e) {
-      appendMessage("action", `create_workbook: ${e.message}`);
+      console.error("create_workbook failed:", e);
     }
   }
 
@@ -1154,7 +1167,8 @@ async function executeAction(action) {
         const isPng = cleanBase64.startsWith("iVBOR");
         const isJpeg = cleanBase64.startsWith("/9j/");
         if (!isPng && !isJpeg) {
-          appendMessage("action", `⚠️ Image data appears corrupt (starts with: ${cleanBase64.substring(0, 10)}..., len: ${cleanBase64.length})`);
+          console.warn(`Image data appears corrupt (starts with: ${cleanBase64.substring(0, 10)}...)`);
+          appendMessage("assistant", "The image data looks corrupt — try generating the plot again in R.");
         } else {
           await Excel.run(async (ctx) => {
             const sheet = payload.sheet
@@ -1166,13 +1180,12 @@ async function executeAction(action) {
             image.top = 200;
             await ctx.sync();
           });
-          appendMessage("action", `✅ Image inserted into ${payload.sheet || "active sheet"}`);
         }
       } else {
-        appendMessage("action", "⚠️ No R plot found. Generate a plot in RStudio first, then try again.");
+        appendMessage("assistant", "No R plot found. Generate a plot in RStudio first, then try again.");
       }
     } catch (e) {
-      appendMessage("action", `import_image: ${e.message}`);
+      console.error("import_image failed:", e);
     }
   }
 
@@ -1217,7 +1230,7 @@ async function executeAction(action) {
         clearRange.clear(Excel.ClearApplyTo.contents);
       }
       await ctx.sync();
-      appendMessage("action", `Removed ${values.length - unique.length} duplicate rows`);
+      console.log( `Removed ${values.length - unique.length} duplicate rows`);
     });
   }
 
@@ -1310,7 +1323,7 @@ async function executeAction(action) {
       );
       range.values = trimmed;
       await ctx.sync();
-      appendMessage("action", `Trimmed whitespace in ${trimCount} cell(s)`);
+      console.log( `Trimmed whitespace in ${trimCount} cell(s)`);
     });
   }
 
@@ -1343,7 +1356,7 @@ async function executeAction(action) {
       );
       range.values = updated;
       await ctx.sync();
-      appendMessage("action", `Replaced ${totalReplaced} occurrence(s) across ${replacements.length} pattern(s)`);
+      console.log( `Replaced ${totalReplaced} occurrence(s) across ${replacements.length} pattern(s)`);
     });
   }
 }
@@ -1646,7 +1659,7 @@ async function saveUndoState(rangeAddress, sheetName) {
 
 async function handleUndo() {
   if (undoStack.length === 0) {
-    appendMessage("action", "Nothing to undo.");
+    console.log( "Nothing to undo.");
     return;
   }
   const state = undoStack.pop();
@@ -1658,9 +1671,9 @@ async function handleUndo() {
       range.numberFormat = state.numberFormat;
       await ctx.sync();
     });
-    appendMessage("action", `Undid changes to ${state.sheet}!${state.address}`);
+    console.log( `Undid changes to ${state.sheet}!${state.address}`);
   } catch (e) {
-    appendMessage("action", `Undo failed: ${e.message}`);
+    console.log( `Undo failed: ${e.message}`);
   }
   if (undoStack.length === 0) {
     const undoBtn = document.getElementById("undo-btn");

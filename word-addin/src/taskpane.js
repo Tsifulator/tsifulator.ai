@@ -732,15 +732,27 @@ async function executeAction(action) {
 
     case "launch_app":
       try {
-        const resp = await fetch(`${BACKEND_URL}/launch-app`, {
+        // Use local proxy to launch apps on the user's machine (not Railway)
+        const resp = await fetch(`/local-api/launch-app`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ app_name: payload.app_name }),
         });
         const result = await resp.json();
-        appendMessage("action", `launch_app: ${result.message || "Requested"}`);
+        if (result.status === "error") {
+          appendMessage("assistant", result.message || "Could not open the app.");
+        }
       } catch (e) {
-        appendMessage("action", `launch_app: ${e.message}`);
+        // Local backend not running — try Railway as fallback
+        try {
+          await fetch(`${BACKEND_URL}/launch-app`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ app_name: payload.app_name }),
+          });
+        } catch (_) {
+          appendMessage("assistant", "Couldn't open the app — make sure the local backend is running.");
+        }
       }
       break;
 
@@ -749,31 +761,19 @@ async function executeAction(action) {
       try {
         const url = type === "open_notes" ? `${BACKEND_URL}/notes-app` : (payload.url || "");
         if (url) window.open(url, "_blank");
-        appendMessage("action", `Opened: ${url}`);
       } catch (e) {
-        appendMessage("action", `open: ${e.message}`);
-      }
-      break;
-
-    case "create_document":
-      try {
-        // Note: Word.createDocument() requires specific APIs
-        appendMessage("action", "create_document: Please create a new document in Word first");
-      } catch (e) {
-        appendMessage("action", `create_document: ${e.message}`);
+        console.error("open failed:", e);
       }
       break;
 
     case "create_note":
       try {
-        const resp = await fetch(`${BACKEND_URL}/notes/`, {
+        await fetch(`${BACKEND_URL}/notes/`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ user_id: CURRENT_USER?.id || "unknown", title: payload.title || "Untitled", content: payload.content || "", folder: "General" }),
         });
-        const note = await resp.json();
-        appendMessage("action", `Note created: "${note.title}"`);
-      } catch (e) { appendMessage("action", `create_note: ${e.message}`); }
+      } catch (e) { console.error("create_note failed:", e); }
       break;
 
     default:
