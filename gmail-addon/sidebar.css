@@ -186,14 +186,7 @@ body {
   box-shadow: 0 1px 2px rgba(0,0,0,0.04);
 }
 
-.tsifl-msg.action {
-  background: rgba(22, 163, 74, 0.08);
-  border-left: 2px solid #16A34A;
-  font-size: 11px;
-  color: #16A34A;
-  font-family: monospace;
-  padding: 6px 12px;
-}
+/* action messages hidden — actions execute silently */
 
 /* Input area */
 #tsifl-input-area {
@@ -326,15 +319,37 @@ body {
   border: 1px solid rgba(13, 94, 175, 0.2);
 }
 
-/* Thinking animation */
-@keyframes tsifl-pulse {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 1; }
+/* Thinking animation — shimmer orb */
+@keyframes tsifl-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.thinking-bubble {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  animation: tsifl-fadeIn 0.3s ease;
+}
+.thinking-bubble .thinking-orb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: linear-gradient(90deg, #94A3B8 25%, #E2E8F0 50%, #94A3B8 75%);
+  background-size: 200% 100%;
+  animation: tsifl-shimmer 1.8s ease-in-out infinite;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.thinking-bubble .thinking-text {
+  font-size: 13px;
+  color: #94A3B8;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  line-height: 1.4;
 }
 
 #tsifl-status-bar.thinking {
   color: #0D5EAF;
-  animation: tsifl-pulse 1.5s ease-in-out infinite;
 }
 
 /* Assistant message markdown */
@@ -442,18 +457,7 @@ body {
   font-size: 11px; font-family: "SF Mono", Consolas, monospace;
 }
 
-/* Typing indicator */
-.typing-indicator { display: flex; gap: 4px; padding: 10px 12px; }
-.typing-indicator span {
-  width: 7px; height: 7px; background: #94A3B8;
-  border-radius: 50%; animation: pulse 1.4s infinite ease-in-out;
-}
-.typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
-.typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
-@keyframes pulse {
-  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
-  40% { transform: scale(1); opacity: 1; }
-}
+/* Legacy typing indicator removed — using thinking bubble instead */
 
 /* Dark mode */
 @media (prefers-color-scheme: dark) {

@@ -480,9 +480,9 @@ async function executeAction(action) {
         body: JSON.stringify(payload),
       });
       const result = await resp.json();
-      appendMessage("action", `${type}: ${result.status || "Done"}`);
+      // action executed silently
     } catch (e) {
-      appendMessage("action", `${type}: Failed \u2014 ${e.message}`);
+      console.error(`${type} failed:`, e);
     }
     return;
   }
@@ -497,9 +497,9 @@ async function executeAction(action) {
   if (browserActions.includes(type)) {
     try {
       const result = await sendToBackground("execute_browser_action", type, payload);
-      appendMessage("action", `${type}: ${result?.message || "Done"}`);
+      // action executed silently
     } catch (e) {
-      appendMessage("action", `${type}: Failed \u2014 ${e.message}`);
+      console.error(`${type} failed:`, e);
     }
     return;
   }
@@ -513,9 +513,9 @@ async function executeAction(action) {
         body: JSON.stringify(payload),
       });
       const result = await resp.json();
-      appendMessage("action", `launch_app: ${result.message || result.status || "Requested"}`);
+      // action executed silently
     } catch (e) {
-      appendMessage("action", `launch_app: ${e.message}`);
+      console.error("launch_app failed:", e);
     }
     return;
   }
@@ -524,9 +524,9 @@ async function executeAction(action) {
   if (type === "open_notes") {
     try {
       await sendToBackground("execute_browser_action", "open_url", { url: NOTES_URL });
-      appendMessage("action", "Opened Notes");
+      // action executed silently
     } catch (e) {
-      appendMessage("action", `open_notes: ${e.message}`);
+      console.error("open_notes failed:", e);
     }
     return;
   }
@@ -545,15 +545,15 @@ async function executeAction(action) {
         }),
       });
       const note = await resp.json();
-      appendMessage("action", `Note created: "${note.title || "Untitled"}"`);
+      // action executed silently
     } catch (e) {
-      appendMessage("action", `create_note: ${e.message}`);
+      console.error("create_note failed:", e);
     }
     return;
   }
 
-  // Fallback — show action as text
-  appendMessage("action", `${type}: Done`);
+  // Fallback — execute silently
+  console.log(`Action executed: ${type}`);
 }
 
 /**
@@ -631,17 +631,54 @@ function renderMarkdown(text) {
   return html;
 }
 
+const _thinkingMessages = [
+  'Reading your question...',
+  'Thinking about this...',
+  'Processing that thought...',
+  'Crafting the perfect response...',
+  'Hold on, almost there...',
+  'Consulting my inner Shakespeare...',
+  'This one requires some brainpower...',
+  'Typing faster than you can read...',
+  'If I had hands I would be rubbing them together...',
+  'Brew yourself a coffee, this is gonna be good...',
+  'Give me a sec, genius takes time...',
+  'Loading witty response...',
+  'Warming up the neural networks...',
+  'My therapist said I should take on more challenges...',
+  'Running calculations at the speed of thought...',
+  'Almost there, just dotting my i\'s...',
+  'The answer is forming... like a beautiful butterfly...',
+  'Consulting the ancient scrolls of knowledge...',
+  'McKinsey would charge you $50k for this...',
+];
+
+let _thinkingInterval = null;
+
 function showTypingIndicator() {
   const history = document.getElementById("tsifl-chat-history");
   const div = document.createElement("div");
   div.id = "typing-indicator";
-  div.className = "typing-indicator";
-  div.innerHTML = "<span></span><span></span><span></span>";
+  div.className = "thinking-bubble";
+  div.innerHTML = '<div class="thinking-orb"></div><div class="thinking-text"></div>';
   history.appendChild(div);
   history.scrollTop = history.scrollHeight;
+
+  const textEl = div.querySelector(".thinking-text");
+  let idx = 0;
+  textEl.textContent = _thinkingMessages[0];
+  _thinkingInterval = setInterval(() => {
+    idx = (idx + 1) % _thinkingMessages.length;
+    textEl.style.opacity = "0";
+    setTimeout(() => {
+      textEl.textContent = _thinkingMessages[idx];
+      textEl.style.opacity = "1";
+    }, 200);
+  }, 3000);
 }
 
 function hideTypingIndicator() {
+  if (_thinkingInterval) { clearInterval(_thinkingInterval); _thinkingInterval = null; }
   const el = document.getElementById("typing-indicator");
   if (el) el.remove();
 }
