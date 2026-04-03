@@ -143,7 +143,7 @@ async def chat(request: ChatRequest):
                 reply=cached["reply"],
                 action=cached.get("action", {}),
                 actions=cached.get("actions", []),
-                tasks_remaining=usage["remaining"],
+                tasks_remaining=-1,
                 memory_active=is_connected()
             )
 
@@ -235,7 +235,7 @@ async def chat(request: ChatRequest):
         reply=result["reply"],
         action=result.get("action", {}),
         actions=result.get("actions", []),
-        tasks_remaining=usage["remaining"],
+        tasks_remaining=-1,
         memory_active=is_connected(),
         model_used=result.get("model_used", "")
     )
