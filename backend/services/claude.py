@@ -22,9 +22,9 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 import re
 
-MODEL_FAST     = "claude-sonnet-4-20250514"    # Using Sonnet as fallback (Haiku 4 not yet available)
+MODEL_FAST     = "claude-haiku-4-5-20251001"   # $1/$5 per M tokens — greetings, simple lookups
 MODEL_STANDARD = "claude-sonnet-4-20250514"    # $3/$15 per M tokens
-MODEL_HEAVY    = "claude-opus-4-20250514"      # $15/$75 per M tokens
+MODEL_HEAVY    = "claude-opus-4-20250514"      # $15/$75 per M tokens — complex analysis, debugging
 
 # Patterns that indicate a simple/fast query
 _FAST_PATTERNS = re.compile(
@@ -59,6 +59,10 @@ def _select_model(message: str, context: dict, has_attachments: bool = False) ->
     """Pick the right model tier based on message complexity and context."""
     msg = message.strip()
     app = context.get("app", "")
+
+    # RStudio + images = homework/analysis screenshots → always use Opus
+    if has_attachments and app == "rstudio":
+        return MODEL_HEAVY
 
     # Attachments (documents/images) need at least standard for vision/analysis
     if has_attachments:
@@ -121,6 +125,8 @@ Example BAD replies (never do this):
 - Put ALL actions in a SINGLE execute_actions call.
 - Everything happens in this one response. Never save work for a follow-up.
 - Complete EVERY task in the user's message. If the user lists 11 steps across 5 sheets, emit actions for ALL 11 steps across ALL 5 sheets.
+- **FOR RSTUDIO: ALWAYS emit exactly ONE run_r_code action** with all R code combined into a single code string. NEVER split R code across multiple actions — combine everything into one code block separated by newlines. This is critical — multiple run_r_code actions cause errors.
+- **FOR RSTUDIO + IMAGES/SCREENSHOTS: You MUST ALWAYS generate a run_r_code action.** When the user sends screenshots (homework, plots, data, questions), your job is to write R code that answers/solves what's shown. NEVER just describe the screenshot without generating code. A text-only reply to an RStudio image request is ALWAYS wrong.
 
 ## NEVER WRITE ROW-BY-ROW — Use fill_down
 This is the most important rule. When a formula repeats down a column:
@@ -713,6 +719,13 @@ All tsifl integrations share the same user session and can open each other.
 
 ## RSTUDIO — COMPREHENSIVE R GUIDE
 
+### ABSOLUTE RULE: NO EXPLORATORY CODE FOR HOMEWORK
+When the user sends screenshots of homework/assignment questions with "answer" or similar:
+- DO NOT generate str(), head(), summary(), or other exploratory code.
+- GO STRAIGHT TO THE ANALYSIS: lm(), t.test(), anova(), diagnostic plots, coefficient extraction.
+- The user wants ANSWERS, not data exploration. Build the model IMMEDIATELY.
+- If you generate exploratory code instead of analysis code, YOU HAVE FAILED.
+
 ### FIRST THING: Check env_objects
 Before generating ANY R code, check the env_objects field in context. This tells you what data and variables the user has loaded. ALWAYS use the exact names from env_objects, not what the user typed.
 
@@ -720,11 +733,60 @@ Before generating ANY R code, check the env_objects field in context. This tells
 - Action type: run_r_code with payload {code: "..."}.
 - NEVER include library() calls for packages already listed in "Loaded packages" in the context — they are already loaded. Only add library() for packages NOT in that list.
 - Always use <- for assignment, not =.
-- When the user shares a screenshot of homework/assignment questions: 1) Read the question carefully 2) Write the EXACT R code needed 3) Run the code 4) Provide the answer with full interpretation 5) Explain the reasoning step by step. ALWAYS show the numerical answer prominently in your reply text.
 - Combine all code into ONE run_r_code action. Never split across multiple actions.
+- NEVER generate import-only code. If data needs importing, include the import AND the analysis/plot in the SAME code block. A code block that only loads data without doing what the user asked is ALWAYS wrong.
 - When data is already loaded (visible in Global environment context), use that object directly — don't reload it.
 - Use pipe operator |> (base R 4.1+) or %>% (tidyverse) depending on what's loaded.
+- NEVER use functions from packages that aren't loaded. Common mistakes: str_to_title() (stringr), str_replace() (stringr). Use base R equivalents: tools::toTitleCase(), gsub(), sub(). Check the "Loaded packages" list before using any function.
+- Keep plot code SIMPLE. Don't over-engineer with fancy labels/themes unless asked. A basic boxplot() or ggplot is fine.
 - Default plot size: width=800, height=600. For wide plots (time series), use width=1000, height=400. For square plots (scatter, correlation), use width=600, height=600. Set via png(width=W, height=H) or ggplot size options.
+
+### TWO-PHASE ANSWER SYSTEM — CRITICAL
+When the user asks questions that need computed answers (statistics, p-values, coefficients, test results, model summaries):
+1. **Phase 1 (this response):** Generate R code that PRINTS all relevant output. Your text reply should explain WHAT you're computing and WHY, but say "I'll run the code and interpret the results for you" instead of guessing values.
+2. **Phase 2 (automatic):** After the code runs, the system captures the output and sends it back to you as [R OUTPUT INTERPRETATION]. When you receive this, provide the DEFINITIVE answer with actual numbers from the output.
+
+**CRITICAL for Phase 1 code generation:**
+- Always end your code with explicit print() or cat() calls for the key results
+- For model summaries: print(summary(model))
+- For specific values: cat("F-statistic p-value:", pf(summary(model)$fstatistic[1], summary(model)$fstatistic[2], summary(model)$fstatistic[3], lower.tail=FALSE), "\n")
+- For t-tests: print(t.test(...))
+- For coefficients: print(coef(summary(model)))
+- Make sure ALL requested values are printed — the follow-up can only answer based on what was printed
+
+**When you receive [R OUTPUT INTERPRETATION]:**
+- ONLY use values that appear LITERALLY in the R output. NEVER guess or estimate.
+- If a value is not in the output, say "Not in output — re-run with print()" instead of making up a number.
+- Copy exact numbers from the output — do not round unless the question asks you to.
+- Match answers to the SPECIFIC questions asked, section by section.
+- If the R output is empty or minimal, say "Output capture failed — please check the R console for results."
+- NEVER fabricate p-values, coefficients, R-squared, or test statistics. This is the #1 rule.
+
+### Homework / Assignment Questions
+When the user shares a screenshot of homework/assignment questions:
+1. Read EVERY question carefully — don't skip any
+2. Write R code that answers ALL parts (a, b, c, d, etc.) — you MUST emit a run_r_code action
+3. Print output for each part with clear labels: cat("--- Part a ---\n")
+4. Your Phase 1 reply should be 1-2 sentences max: "Running the analysis now — I'll have your answers shortly."
+5. Phase 2 will provide the actual answers with specific values
+6. NEVER just describe the screenshot or say "I can see you have..." without generating code. That is ALWAYS wrong. Generate the code and run it.
+
+### RESPONSE STYLE FOR R
+- Be concise. Give the answer, not a lecture.
+- For homework: just list the answers by part (a, b, c...) with the values. No extra commentary.
+- Don't describe the dataset unless asked. Don't explain what BMI means. Don't offer "key findings" unless requested.
+- Format: "**a.** sex, smoker (categorical)" not three paragraphs about each variable.
+- If the user asks "answer this", give the answer. Period.
+
+### CRITICAL: Generate COMPLETE Analysis Code
+When the user asks you to answer questions (especially homework/assignments):
+- Generate ALL the R code needed to FULLY answer every question in ONE run_r_code action.
+- Do NOT generate just exploratory code (str, head, summary). Generate the ACTUAL analysis.
+- If questions ask about regression: build the model with lm(), print summary(), create diagnostic plots, extract coefficients and p-values.
+- If questions ask about t-tests: run the t.test(), print results.
+- If questions ask about plots: create ALL the requested plots.
+- The output capture system will read the printed output, so PRINT everything: summary(model), coef(model), confint(model), etc.
+- NEVER generate code that only explores the data when the user wants answers. Go straight to the analysis.
 
 ### CRITICAL: Fuzzy Matching & Object Resolution
 The user's R environment objects are listed in context under "env_objects" with their names, classes, dimensions, and column names.
@@ -736,8 +798,32 @@ The user's R environment objects are listed in context under "env_objects" with 
   - Underscore/camel: "loan_data" ↔ "LoanData" ↔ "loandata"
   - Similar names: "helium" → "helium2"
 - When you find the likely match, USE THE EXACT env_object name in the code (not the user's misspelling).
-- If the object name the user mentioned is NOT in env_objects, add a check at the start of your code:
-  if (!exists("ObjectName")) { cat("Object 'ObjectName' not found in environment.\\nAvailable objects:", paste(ls(), collapse=", "), "\\n") } else { ... }
+- If the object name the user mentioned is NOT in env_objects and no fuzzy match exists:
+  1. NEVER silently substitute a different dataset. Using hsb2 when they asked for LoanData is ALWAYS wrong.
+  2. Generate code that AUTO-IMPORTS the data by searching common locations. Put this at the TOP of your code:
+  ```r
+  if (!exists("DataName")) {
+    # Try to find and load from common locations
+    search_paths <- c(
+      "~/Downloads/DataName.csv", "~/Downloads/DataName (1).csv", "~/Downloads/DataName (2).csv",
+      "~/Desktop/DataName.csv", "~/Documents/DataName.csv",
+      paste0(getwd(), "/DataName.csv")
+    )
+    found <- FALSE
+    for (p in search_paths) {
+      if (file.exists(p)) { DataName <- read.csv(p); cat("Loaded from:", p, "\\n"); found <- TRUE; break }
+    }
+    if (!found) {
+      # Also try case-insensitive search in Downloads
+      dl_files <- list.files("~/Downloads", pattern = "DataName", ignore.case = TRUE, full.names = TRUE)
+      csv_files <- grep("\\\\.(csv|tsv|txt)$", dl_files, value = TRUE)
+      if (length(csv_files) > 0) { DataName <- read.csv(csv_files[1]); cat("Loaded from:", csv_files[1], "\\n"); found <- TRUE }
+    }
+    if (!found) cat("Could not find DataName. Please load it manually.\\n")
+  }
+  ```
+  3. Replace "DataName" with the actual dataset name the user mentioned. Use readr::read_csv() if readr is loaded.
+  4. CRITICAL: After the auto-import block, IMMEDIATELY include the actual analysis/plot code IN THE SAME run_r_code action. NEVER generate import-only code. NEVER split import and analysis into separate steps. The user asked for a graph/analysis — deliver it in ONE code block that imports AND does the work. Example: if user says "boxplot of loandata", your SINGLE code block must: import loandata → then create the boxplot. No stopping after the import.
 - If the user references a dataset name that looks like it could be from a loaded package (e.g., "mtcars", "iris", "gifted"), try data(datasetname) first.
 - The "col_names" field in env_objects shows the first 10 column names — use these to understand what data the user has.
 - If the user says "the data I have open" or "my data", look at env_objects to find data.frames and tibbles.
@@ -1416,19 +1502,25 @@ async def get_claude_response(message: str, context: dict,
         "yes", "no", "sure", "got it", "cool", "nice", "good",
     ])
     is_conversational = is_question or is_greeting
-    # Use "auto" tool choice — lets Claude include explanatory text alongside actions.
-    # The system prompt ensures Claude uses execute_actions when actions are needed.
-    skip_tools = is_browser_summary or is_notes or is_conversational
+    # Only skip tools for contexts that never need actions (browser summaries, notes).
+    # For all other apps, include tools with tool_choice=auto so Claude decides.
+    # This ensures VS Code "fix errors" and Excel "how do I format?" still get actions.
+    skip_tools = is_browser_summary or is_notes or (is_greeting and not is_question)
 
     # Hybrid model selection
     selected_model = _select_model(message, context, has_attachments=bool(images))
+
+    # Force tool use for RStudio with images — there's no scenario where
+    # a screenshot-based RStudio request doesn't need code generation.
+    is_rstudio_with_images = app_name == "rstudio" and bool(images)
+    tool_choice = {"type": "any"} if (is_rstudio_with_images and not skip_tools) else {"type": "auto"}
 
     response = client.messages.create(
         model       = selected_model,
         max_tokens  = 16384,
         system      = SYSTEM_PROMPT,
         tools       = [] if skip_tools else TOOLS,
-        tool_choice = {"type": "auto"} if not skip_tools else {"type": "auto"},
+        tool_choice = tool_choice,
         messages    = messages,
     )
 
@@ -1515,12 +1607,13 @@ async def get_claude_stream(message: str, context: dict,
         "yes", "no", "sure", "got it", "cool", "nice", "good",
     ])
     is_conversational = is_question or is_greeting
+    skip_tools = is_browser_summary or is_notes or (is_greeting and not is_question)
 
     # Hybrid model selection
     selected_model = _select_model(message, context, has_attachments=bool(images))
 
     # Only stream text-only responses (no tool use)
-    if is_browser_summary or is_notes or is_conversational:
+    if skip_tools:
         with client.messages.stream(
             model       = selected_model,
             max_tokens  = 16384,
@@ -1536,7 +1629,7 @@ async def get_claude_stream(message: str, context: dict,
             max_tokens  = 16384,
             system      = SYSTEM_PROMPT,
             tools       = TOOLS,
-            tool_choice = {"type": "tool", "name": "execute_actions"},
+            tool_choice = {"type": "auto"},
             messages    = messages,
         )
         result = _parse_tool_response(response)

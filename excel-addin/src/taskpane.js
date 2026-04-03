@@ -455,7 +455,7 @@ async function handleSubmit() {
   try {
     const excelContext = await getExcelContext();
     setStatus("Thinking...");
-    showTypingIndicator();
+    showTypingIndicator("thinking");
 
     const response = await fetch(`${BACKEND_URL}/chat/`, {
       method:  "POST",
@@ -488,12 +488,9 @@ async function handleSubmit() {
     if (data.actions && data.actions.length > 0) allActions.push(...data.actions);
     else if (data.action && data.action.type && data.action.type !== "none") allActions.push(data.action);
 
-    // Always show how many actions Claude returned — helps diagnose "no changes" issues
-    appendMessage("action", `📋 ${BUILD_VER} · Claude returned ${allActions.length} action${allActions.length !== 1 ? "s" : ""}` +
-      (allActions.length > 0 ? `: ${[...new Set(allActions.map(a => a.type))].join(", ")}` : " — text-only reply"));
-
     if (allActions.length > 0) {
       setStatus(`Applying ${allActions.length} action${allActions.length > 1 ? "s" : ""}...`);
+      showTypingIndicator("applying");
       if (allActions.length > 2) showProgress(0, allActions.length);
       let applied = 0;
       let failed  = 0;
@@ -515,7 +512,8 @@ async function handleSubmit() {
         }
       }
       hideProgress();
-      appendMessage("action", `✅ ${applied} applied${failed > 0 ? ` · ⚠️ ${failed} failed` : ""}`);
+      hideTypingIndicator();
+      appendMessage("action", `${applied} applied${failed > 0 ? ` · ${failed} failed` : ""}`);
     }
 
     setStatus("Done");
@@ -1178,24 +1176,27 @@ async function executeAction(action) {
     try {
       let imageData = payload.image_data;
 
-      // If transfer_id provided, fetch that specific transfer
+      // If transfer_id provided, fetch that specific transfer (only if it's an image)
       if (payload.transfer_id) {
         const resp = await fetch(`${BACKEND_URL}/transfer/${payload.transfer_id}`);
         if (resp.ok) {
           const transfer = await resp.json();
-          imageData = transfer.data;
+          if (transfer.data_type === "image") {
+            imageData = transfer.data;
+          }
         }
       }
 
-      // If no image yet, check for pending R→Excel transfers
+      // If no image yet, check for pending R→Excel image transfers
       if (!imageData) {
         const pendingResp = await fetch(`${BACKEND_URL}/transfer/pending/excel`);
         if (pendingResp.ok) {
           const pendingData = await pendingResp.json();
           const pending = pendingData.pending || [];
-          if (pending.length > 0) {
-            // Grab the most recent one
-            const latest = pending[pending.length - 1];
+          // Filter for image transfers only — don't grab data snapshots
+          const imagePending = pending.filter(p => p.data_type === "image");
+          if (imagePending.length > 0) {
+            const latest = imagePending[imagePending.length - 1];
             const tResp = await fetch(`${BACKEND_URL}/transfer/${latest.transfer_id}`);
             if (tResp.ok) {
               const transfer = await tResp.json();
@@ -1206,14 +1207,26 @@ async function executeAction(action) {
       }
 
       if (imageData) {
-        await Excel.run(async (ctx) => {
-          const sheet = payload.sheet
-            ? ctx.workbook.worksheets.getItem(payload.sheet)
-            : ctx.workbook.worksheets.getActiveWorksheet();
-          sheet.shapes.addImage("data:image/png;base64," + imageData);
-          await ctx.sync();
-        });
-        appendMessage("action", `✅ Image inserted into ${payload.sheet || "active sheet"}`);
+        // Strip data URI prefix if present — addImage wants pure base64
+        const cleanBase64 = imageData.replace(/^data:image\/[a-z+]+;base64,/, "");
+        // Validate: must start with PNG or JPEG magic bytes in base64
+        const isPng = cleanBase64.startsWith("iVBOR");
+        const isJpeg = cleanBase64.startsWith("/9j/");
+        if (!isPng && !isJpeg) {
+          appendMessage("action", `⚠️ Image data appears corrupt (starts with: ${cleanBase64.substring(0, 10)}..., len: ${cleanBase64.length})`);
+        } else {
+          await Excel.run(async (ctx) => {
+            const sheet = payload.sheet
+              ? ctx.workbook.worksheets.getItem(payload.sheet)
+              : ctx.workbook.worksheets.getActiveWorksheet();
+            const image = sheet.shapes.addImage(cleanBase64);
+            image.name = "R_Plot";
+            image.left = 10;
+            image.top = 200;
+            await ctx.sync();
+          });
+          appendMessage("action", `✅ Image inserted into ${payload.sheet || "active sheet"}`);
+        }
       } else {
         appendMessage("action", "⚠️ No R plot found. Generate a plot in RStudio first, then try again.");
       }
@@ -1521,17 +1534,76 @@ function appendMessage(role, text, images) {
   history.scrollTop = history.scrollHeight;
 }
 
-function showTypingIndicator() {
+// ── Thinking bubble with rotating punchlines ─────────────────────────────────
+const _thinkingMessages = {
+  thinking: [
+    'Reading your question...',
+    'Analyzing the spreadsheet...',
+    'Understanding what you need...',
+    'Consulting the Excel gods...',
+    'Thinking really hard right now...',
+    'Running the numbers in my head...',
+    'Formulating the perfect approach...',
+    'Checking if VLOOKUP is still alive...',
+    'Warren Buffett would be proud of this one...',
+    'Goldman called, they want their model back...',
+    'JP Morgan wants to know your location...',
+    'McKinsey would charge you $500k for this slide...',
+    'This spreadsheet is about to go crazy...',
+    'Building your empire one cell at a time...',
+  ],
+  applying: [
+    'Writing to your spreadsheet...',
+    'Dropping values like a hedge fund drops stocks...',
+    'Making Excel do the heavy lifting...',
+    'Your spreadsheet is getting a glow-up...',
+    'Applying changes faster than a market crash...',
+    'Cells are being populated as we speak...',
+    'Morgan Stanley called, they want to hire me...',
+    'This is the fun part...',
+  ]
+};
+
+let _thinkingInterval = null;
+let _thinkingPhase = null;
+
+function showTypingIndicator(phase) {
+  hideTypingIndicator();
+  _thinkingPhase = phase || 'thinking';
   const history = document.getElementById("chat-history");
   const div = document.createElement("div");
   div.id = "typing-indicator";
-  div.className = "typing-indicator";
-  div.innerHTML = "<span></span><span></span><span></span>";
+  div.className = "thinking-bubble";
+  div.innerHTML = '<div class="thinking-orb"></div><span class="thinking-text"></span>';
   history.appendChild(div);
   history.scrollTop = history.scrollHeight;
+
+  const msgs = _thinkingMessages[_thinkingPhase] || _thinkingMessages.thinking;
+  let idx = 0;
+
+  function showNext() {
+    const el = document.querySelector('#typing-indicator .thinking-text');
+    if (!el) return;
+    const msg = msgs[idx % msgs.length];
+    el.style.opacity = '0';
+    el.style.transform = 'translateY(4px)';
+    setTimeout(() => {
+      el.textContent = msg;
+      el.style.opacity = '1';
+      el.style.transform = 'translateY(0)';
+    }, 200);
+    const chat = document.getElementById("chat-history");
+    if (chat) chat.scrollTop = chat.scrollHeight;
+    idx++;
+  }
+
+  setTimeout(showNext, 100);
+  _thinkingInterval = setInterval(showNext, 2500);
 }
 
 function hideTypingIndicator() {
+  if (_thinkingInterval) { clearInterval(_thinkingInterval); _thinkingInterval = null; }
+  _thinkingPhase = null;
   const el = document.getElementById("typing-indicator");
   if (el) el.remove();
 }

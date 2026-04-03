@@ -119,18 +119,24 @@ async def debug():
 
 @router.post("/", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    # 1. Check usage limit
-    usage = await check_and_increment_usage(request.user_id)
-    if not usage["allowed"]:
-        raise HTTPException(
-            status_code=429,
-            detail="Monthly task limit reached. Upgrade to Pro for unlimited tasks."
-        )
+    # Skip usage check for automatic follow-up interpretation requests
+    is_followup = request.message.startswith("[R OUTPUT INTERPRETATION]")
 
-    # 2. Check cache for identical recent query (Improvement 91)
+    # TODO: re-enable usage limits when product is ready for sale
+    # if is_followup:
+    #     usage = {"allowed": True, "remaining": -1}
+    # else:
+    #     usage = await check_and_increment_usage(request.user_id)
+    # if not usage["allowed"]:
+    #     raise HTTPException(
+    #         status_code=429,
+    #         detail="Monthly task limit reached. Upgrade to Pro for unlimited tasks."
+    #     )
+
+    # 2. Check cache for identical recent query (skip for follow-ups)
     app = request.context.get("app", "excel")
     cache_k = _cache_key(request.user_id, request.message, app)
-    if not request.images:
+    if not request.images and not is_followup:
         cached = _get_cached_response(cache_k)
         if cached:
             return ChatResponse(
@@ -144,21 +150,23 @@ async def chat(request: ChatRequest):
     # 3. Get session-scoped history (last 10 messages for this session)
     # For heavy action apps (excel, rstudio, powerpoint), skip history
     # to avoid teaching Claude to return abbreviated actions.
+    # For follow-ups, skip history — the message already contains full context.
     heavy_action_apps = {"excel", "rstudio", "powerpoint", "google_sheets"}
-    if app in heavy_action_apps:
+    if app in heavy_action_apps or is_followup:
         history = []
     else:
         history = _get_session_history(request.session_id)
 
-    # 4. Save the user's message
-    _add_to_history(request.session_id, "user", request.message)
-    await save_message(
-        user_id=request.user_id,
-        role="user",
-        content=request.message,
-        app=app,
-        session_id=request.session_id
-    )
+    # 4. Save the user's message (skip for auto follow-ups)
+    if not is_followup:
+        _add_to_history(request.session_id, "user", request.message)
+        await save_message(
+            user_id=request.user_id,
+            role="user",
+            content=request.message,
+            app=app,
+            session_id=request.session_id
+        )
 
     # 5. Save uploaded data files (CSV, TSV, etc.) to /tmp/ so import_csv can use them
     images = [{"media_type": img.media_type, "data": img.data, "file_name": img.file_name} for img in request.images] if request.images else []
@@ -208,18 +216,19 @@ async def chat(request: ChatRequest):
         images=remaining_images
     )
 
-    # 6. Save Claude's reply to history and persistent memory
-    _add_to_history(request.session_id, "assistant", result["reply"])
-    await save_message(
-        user_id=request.user_id,
-        role="assistant",
-        content=result["reply"],
-        app=app,
-        session_id=request.session_id
-    )
+    # 6. Save Claude's reply to history and persistent memory (skip for follow-ups)
+    if not is_followup:
+        _add_to_history(request.session_id, "assistant", result["reply"])
+        await save_message(
+            user_id=request.user_id,
+            role="assistant",
+            content=result["reply"],
+            app=app,
+            session_id=request.session_id
+        )
 
-    # 7. Cache the response (Improvement 91)
-    if not request.images:
+    # 7. Cache the response (skip for follow-ups)
+    if not request.images and not is_followup:
         _set_cached_response(cache_k, result)
 
     return ChatResponse(
@@ -236,12 +245,13 @@ async def chat(request: ChatRequest):
 @router.post("/stream")
 async def chat_stream(request: ChatRequest):
     """Stream Claude's text response as Server-Sent Events."""
-    usage = await check_and_increment_usage(request.user_id)
-    if not usage["allowed"]:
-        raise HTTPException(
-            status_code=429,
-            detail="Monthly task limit reached. Upgrade to Pro for unlimited tasks."
-        )
+    # TODO: re-enable usage limits when product is ready for sale
+    # usage = await check_and_increment_usage(request.user_id)
+    # if not usage["allowed"]:
+    #     raise HTTPException(
+    #         status_code=429,
+    #         detail="Monthly task limit reached. Upgrade to Pro for unlimited tasks."
+    #     )
 
     app = request.context.get("app", "excel")
     heavy_action_apps = {"excel", "rstudio", "powerpoint", "google_sheets"}
