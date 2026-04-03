@@ -1510,10 +1510,12 @@ async def get_claude_response(message: str, context: dict,
     # Hybrid model selection
     selected_model = _select_model(message, context, has_attachments=bool(images))
 
-    # Force tool use for RStudio with images — there's no scenario where
-    # a screenshot-based RStudio request doesn't need code generation.
+    # Force tool use for action-heavy apps when the user is asking for content/changes.
+    # With "auto", models sometimes reply with text only and skip the tools.
     is_rstudio_with_images = app_name == "rstudio" and bool(images)
-    tool_choice = {"type": "any"} if (is_rstudio_with_images and not skip_tools) else {"type": "auto"}
+    is_action_app = app_name in ("excel", "rstudio", "powerpoint", "word", "google_sheets")
+    force_tools = (is_rstudio_with_images or (is_action_app and not is_greeting)) and not skip_tools
+    tool_choice = {"type": "any"} if force_tools else {"type": "auto"}
 
     try:
         response = client.messages.create(
