@@ -682,7 +682,8 @@ Structure: Executive Summary → Company Overview → Financial Analysis → Leg
 - In PowerPoint, Word, Gmail, VS Code, Google Sheets/Docs/Slides: NEVER use run_shell_command or run_r_code. Use the dedicated action types for each app.
 
 ## CROSS-APP REQUESTS
-When the user asks to get data from another app (e.g., "grab data from R" while in Excel):
+When the user asks to get data from another app (e.g., "paste the R plot", "grab data from R"):
+- If there's no [CROSS-APP CONTEXT] in the message, the other app isn't open or hasn't shared any data. Tell the user: "It looks like R/Excel isn't open right now, or hasn't shared any data yet. Open it up and run your analysis first, then I can pull it in."
 - If they uploaded a file, use import_csv (the file is saved to /tmp/).
 - If they want R-generated data, tell them: "I'll need you to save the data in R first (e.g., `write.csv(LoanData, '/tmp/LoanData.csv')`), then I can import it here. Or you can use tsifl in RStudio to export it."
 - If they want an R plot in Excel, use import_image to check for exported plots from the transfer endpoint.

@@ -445,7 +445,13 @@ async function handleSubmit() {
     setStatus("Ready");
   } catch (e) {
     hideTypingIndicator();
-    appendMessage("assistant", `Error: ${e.message}`);
+    if (e.name === "AbortError") {
+      appendMessage("assistant", "Request timed out — the backend may be busy. Try again in a moment.");
+    } else if (e.message === "Load failed" || e.message === "Failed to fetch") {
+      appendMessage("assistant", "Can't reach the server right now — it may be restarting. Try again in a few seconds.");
+    } else {
+      appendMessage("assistant", `Error: ${e.message}`);
+    }
     setStatus("Error — try again");
   }
 
