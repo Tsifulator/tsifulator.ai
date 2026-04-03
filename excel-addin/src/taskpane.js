@@ -1058,6 +1058,140 @@ async function executeAction(action) {
     lastNavigatedSheet = targetSheetName;
   }
 
+  // ── add_chart ────────────────────────────────────────────────────────────────
+  else if (type === "add_chart") {
+    await Excel.run(async (ctx) => {
+      const sheet = getSheet(ctx, payload.sheet);
+      const dataRange = sheet.getRange(payload.data_range);
+      const chartType = payload.chart_type || "ColumnClustered";
+      const chart = sheet.charts.add(chartType, dataRange, Excel.ChartSeriesBy.auto);
+      if (payload.title) chart.title.text = payload.title;
+      if (payload.width) chart.width = payload.width;
+      if (payload.height) chart.height = payload.height;
+      if (payload.position) {
+        const posRange = sheet.getRange(payload.position);
+        chart.setPosition(posRange);
+      }
+      if (payload.series_names && payload.series_names.length > 0) {
+        chart.series.load("count");
+        await ctx.sync();
+        for (let i = 0; i < Math.min(payload.series_names.length, chart.series.count); i++) {
+          chart.series.getItemAt(i).name = payload.series_names[i];
+        }
+      }
+      await ctx.sync();
+    });
+  }
+
+  // ── add_data_validation ─────────────────────────────────────────────────────
+  else if (type === "add_data_validation") {
+    await Excel.run(async (ctx) => {
+      const { sheet: s, addr } = splitAddr(payload.range, payload.sheet);
+      const sheet = getSheet(ctx, s);
+      const range = sheet.getRange(addr);
+      range.dataValidation.clear();
+
+      if (payload.type === "list") {
+        range.dataValidation.rule = {
+          list: {
+            inCellDropDown: true,
+            source: payload.formula || "",
+          },
+        };
+      } else if (payload.type === "whole_number" || payload.type === "decimal") {
+        range.dataValidation.rule = {
+          wholeNumber: payload.type === "whole_number" ? {
+            formula1: payload.min !== undefined ? payload.min : 0,
+            formula2: payload.max !== undefined ? payload.max : 999999,
+            operator: Excel.DataValidationOperator.between,
+          } : undefined,
+          decimal: payload.type === "decimal" ? {
+            formula1: payload.min !== undefined ? payload.min : 0,
+            formula2: payload.max !== undefined ? payload.max : 999999,
+            operator: Excel.DataValidationOperator.between,
+          } : undefined,
+        };
+      }
+      await ctx.sync();
+    });
+  }
+
+  // ── add_conditional_format ──────────────────────────────────────────────────
+  else if (type === "add_conditional_format") {
+    await Excel.run(async (ctx) => {
+      const { sheet: s, addr } = splitAddr(payload.range, payload.sheet);
+      const sheet = getSheet(ctx, s);
+      const range = sheet.getRange(addr);
+
+      if (payload.rule_type === "color_scale") {
+        const cf = range.conditionalFormats.add(Excel.ConditionalFormatType.colorScale);
+        const criteria = {
+          minimum: { color: payload.min_color || "#FF0000", type: "LowestValue" },
+          maximum: { color: payload.max_color || "#00FF00", type: "HighestValue" },
+        };
+        if (payload.mid_color) {
+          criteria.midpoint = { color: payload.mid_color, type: "Percentile", value: 50 };
+        }
+        cf.colorScale.criteria = criteria;
+      } else if (payload.rule_type === "data_bar") {
+        const cf = range.conditionalFormats.add(Excel.ConditionalFormatType.dataBar);
+        cf.dataBar.barDirection = Excel.ConditionalDataBarDirection.context;
+        if (payload.bar_color) {
+          cf.dataBar.positiveFormat.fillColor = payload.bar_color;
+        }
+      } else if (payload.rule_type === "icon_set") {
+        const cf = range.conditionalFormats.add(Excel.ConditionalFormatType.iconSet);
+        const styleMap = {
+          threeArrows: Excel.IconSet.threeArrows,
+          threeTrafficLights: Excel.IconSet.threeTrafficLights1,
+          fourArrows: Excel.IconSet.fourArrows,
+        };
+        cf.iconSet.style = styleMap[payload.icon_style] || Excel.IconSet.threeArrows;
+      } else if (payload.rule_type === "cell_value") {
+        const cf = range.conditionalFormats.add(Excel.ConditionalFormatType.cellValue);
+        const opMap = {
+          greaterThan: Excel.ConditionalCellValueOperator.greaterThan,
+          lessThan: Excel.ConditionalCellValueOperator.lessThan,
+          equal: Excel.ConditionalCellValueOperator.equalTo,
+          between: Excel.ConditionalCellValueOperator.between,
+        };
+        const rule = {
+          formula1: String(payload.values?.[0] ?? 0),
+          operator: opMap[payload.operator] || Excel.ConditionalCellValueOperator.greaterThan,
+        };
+        if (payload.operator === "between" && payload.values?.[1] !== undefined) {
+          rule.formula2 = String(payload.values[1]);
+        }
+        cf.cellValue.rule = rule;
+        const fmt = payload.format || {};
+        if (fmt.font_color) cf.cellValue.format.font.color = fmt.font_color;
+        if (fmt.color || fmt.fill) cf.cellValue.format.fill.color = fmt.color || fmt.fill;
+      } else if (payload.rule_type === "top_bottom") {
+        const cf = range.conditionalFormats.add(Excel.ConditionalFormatType.topBottom);
+        cf.topBottom.rule = {
+          rank: payload.rank || 10,
+          type: payload.top !== false ? "TopItems" : "BottomItems",
+        };
+        if (payload.percent) {
+          cf.topBottom.rule.type = payload.top !== false ? "TopPercent" : "BottomPercent";
+        }
+        const fmt = payload.format || {};
+        if (fmt.font_color) cf.topBottom.format.font.color = fmt.font_color;
+        if (fmt.color) cf.topBottom.format.fill.color = fmt.color;
+      } else if (payload.rule_type === "text_contains") {
+        const cf = range.conditionalFormats.add(Excel.ConditionalFormatType.containsText);
+        cf.textComparison.rule = {
+          operator: Excel.ConditionalTextOperator.contains,
+          text: payload.text || "",
+        };
+        const fmt = payload.format || {};
+        if (fmt.font_color) cf.textComparison.format.font.color = fmt.font_color;
+        if (fmt.color) cf.textComparison.format.fill.color = fmt.color;
+      }
+      await ctx.sync();
+    });
+  }
+
   // ── launch_app ──────────────────────────────────────────────────────────────
   else if (type === "launch_app") {
     try {
