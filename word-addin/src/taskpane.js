@@ -467,12 +467,19 @@ async function handleSubmit() {
 
     const actions = result.actions?.length ? result.actions : (result.action?.type ? [result.action] : []);
     if (actions.length > 0) {
+      setStatus(`Executing ${actions.length} actions...`);
+      let ok = 0, fail = 0, errors = [];
       for (const action of actions) {
         try {
           await executeAction(action);
+          ok++;
         } catch (e) {
-          console.error("Action failed:", action.type, e);
+          fail++;
+          errors.push(`${action.type}: ${e.message}`);
         }
+      }
+      if (fail > 0) {
+        appendMessage("assistant", `Debug: ${ok} ok, ${fail} failed. Errors: ${errors.slice(0,3).join("; ")}`);
       }
     }
 
@@ -582,28 +589,30 @@ async function executeAction(action) {
       break;
 
     case "format_text":
-      await Word.run(async (ctx) => {
-        const term = payload.range_description || "";
-        if (!term) return;
-        console.log("format_text: searching for", JSON.stringify(term));
-        const searchResults = ctx.document.body.search(term, { matchCase: false });
-        searchResults.load("items");
-        await ctx.sync();
-        console.log("format_text: found", searchResults.items.length, "matches for", term);
+      try {
+        await Word.run(async (ctx) => {
+          const term = payload.range_description || "";
+          if (!term) return;
+          const searchResults = ctx.document.body.search(term, { matchCase: false });
+          searchResults.load("items");
+          await ctx.sync();
 
-        // Normalize highlight color — Word API requires title case
-        const highlightMap = {
-          yellow: "Yellow", green: "Green", cyan: "Cyan", magenta: "Magenta",
-          blue: "Blue", red: "Red", darkblue: "DarkBlue", darkred: "DarkRed",
-          darkgreen: "DarkGreen", darkyellow: "DarkYellow", gray: "Gray",
-          lightgray: "LightGray", black: "Black", white: "White",
-        };
-        const hlColor = payload.highlight_color
-          ? (highlightMap[payload.highlight_color.toLowerCase()] || payload.highlight_color)
-          : null;
+          setStatus(`Formatting "${term}" — ${searchResults.items.length} found`);
 
-        for (let i = 0; i < searchResults.items.length; i++) {
-          try {
+          const hlMap = {
+            yellow: "Yellow", green: "Green", cyan: "Cyan", magenta: "Magenta",
+            blue: "Blue", red: "Red", darkblue: "DarkBlue", darkred: "DarkRed",
+            darkgreen: "DarkGreen", darkyellow: "DarkYellow", gray: "Gray",
+            lightgray: "LightGray", black: "Black", white: "White",
+            "#ffff00": "Yellow", "#00ff00": "Green", "#00ffff": "Cyan",
+            "#ff00ff": "Magenta", "#0000ff": "Blue", "#ff0000": "Red",
+            "#808080": "Gray", "#000000": "Black", "#ffffff": "White",
+          };
+          const hlColor = payload.highlight_color
+            ? (hlMap[payload.highlight_color.toLowerCase()] || payload.highlight_color)
+            : null;
+
+          for (let i = 0; i < searchResults.items.length; i++) {
             const font = searchResults.items[i].font;
             if (payload.bold !== undefined) font.bold = payload.bold;
             if (payload.italic !== undefined) font.italic = payload.italic;
@@ -612,13 +621,13 @@ async function executeAction(action) {
             if (payload.font_color) font.color = payload.font_color;
             if (payload.font_name) font.name = payload.font_name;
             if (hlColor) font.highlightColor = hlColor;
-          } catch (e) {
-            console.error("format_text: error on match", i, e);
           }
-        }
-        await ctx.sync();
-        console.log("format_text: done applying formatting");
-      });
+          await ctx.sync();
+        });
+      } catch (e) {
+        setStatus(`format_text error: ${e.message}`);
+        throw e;
+      }
       break;
 
     case "insert_header":

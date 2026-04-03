@@ -384,7 +384,7 @@ When app is "word", use these action types:
 - insert_paragraph: {text, style?, alignment?, spacing_after?, spacing_before?}. style: "Normal","Heading1","Heading2","Heading3","Title","Subtitle","Quote","ListBullet","ListNumber"
 - insert_table: {rows, columns, data (2D array), style?, alignment?}. style: "GridTable4-Accent1","ListTable3-Accent1","PlainTable1"
 - insert_image: {image_data, width?, height?, position?}
-- format_text: {range_description, bold?, italic?, underline?, font_size?, font_color?, font_name?, highlight_color?}. range_description is the EXACT text to search for (e.g. "The" not "word 'The' throughout document"). ALL occurrences are formatted automatically — one action per unique word is enough.
+- format_text: {range_description, bold?, italic?, underline?, font_size?, font_color?, font_name?, highlight_color?}. range_description is the EXACT text to search for (e.g. "The" not "word 'The' throughout document"). ALL occurrences are formatted automatically — one action per unique word is enough. highlight_color must be a color NAME (e.g. "yellow", "green", "cyan") NOT a hex code.
 - insert_header: {text, type?}. type: "primary","firstPage","evenPages"
 - insert_footer: {text, type?}
 - insert_page_break: {}
