@@ -1498,10 +1498,13 @@ async def get_claude_response(message: str, context: dict,
         "tell me", "explain", "help", "describe", "summarize", "summary",
         "compare", "analyze", "which", "should", "is it", "are there",
     ])
-    is_greeting = any(msg_lower.startswith(q) for q in [
-        "hi", "hey", "hello", "thanks", "thank you", "ok", "okay",
-        "yes", "no", "sure", "got it", "cool", "nice", "good",
-    ])
+    # Word-boundary matching: "hi" matches "hi" or "hi there" but NOT "highlight"
+    _greet = ["hi", "hey", "hello", "thanks", "thank you", "ok", "okay",
+              "yes", "no", "sure", "got it", "cool", "nice", "good"]
+    is_greeting = any(
+        msg_lower == g or msg_lower.startswith(g + " ") or msg_lower.startswith(g + ",") or msg_lower.startswith(g + "!")
+        for g in _greet
+    )
     is_conversational = is_question or is_greeting
     # Only skip tools for contexts that never need actions (browser summaries, notes).
     # For all other apps, include tools with tool_choice=auto so Claude decides.
@@ -1615,10 +1618,13 @@ async def get_claude_stream(message: str, context: dict,
         "tell me", "explain", "help", "describe", "summarize", "summary",
         "compare", "analyze", "which", "should", "is it", "are there",
     ])
-    is_greeting = any(msg_lower.startswith(q) for q in [
-        "hi", "hey", "hello", "thanks", "thank you", "ok", "okay",
-        "yes", "no", "sure", "got it", "cool", "nice", "good",
-    ])
+    # Word-boundary matching: "hi" matches "hi" or "hi there" but NOT "highlight"
+    _greet = ["hi", "hey", "hello", "thanks", "thank you", "ok", "okay",
+              "yes", "no", "sure", "got it", "cool", "nice", "good"]
+    is_greeting = any(
+        msg_lower == g or msg_lower.startswith(g + " ") or msg_lower.startswith(g + ",") or msg_lower.startswith(g + "!")
+        for g in _greet
+    )
     is_conversational = is_question or is_greeting
     skip_tools = is_browser_summary or is_notes or (is_greeting and not is_question)
 
