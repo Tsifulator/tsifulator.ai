@@ -583,21 +583,41 @@ async function executeAction(action) {
 
     case "format_text":
       await Word.run(async (ctx) => {
-        const searchResults = ctx.document.body.search(payload.range_description || "", { matchCase: !!payload.match_case });
+        const term = payload.range_description || "";
+        if (!term) return;
+        console.log("format_text: searching for", JSON.stringify(term));
+        const searchResults = ctx.document.body.search(term, { matchCase: false });
         searchResults.load("items");
         await ctx.sync();
+        console.log("format_text: found", searchResults.items.length, "matches for", term);
 
-        for (const range of searchResults.items) {
-          const font = range.font;
-          if (payload.bold !== undefined) font.bold = payload.bold;
-          if (payload.italic !== undefined) font.italic = payload.italic;
-          if (payload.underline !== undefined) font.underline = payload.underline ? "Single" : "None";
-          if (payload.font_size) font.size = payload.font_size;
-          if (payload.font_color) font.color = payload.font_color;
-          if (payload.font_name) font.name = payload.font_name;
-          if (payload.highlight_color) font.highlightColor = payload.highlight_color;
+        // Normalize highlight color — Word API requires title case
+        const highlightMap = {
+          yellow: "Yellow", green: "Green", cyan: "Cyan", magenta: "Magenta",
+          blue: "Blue", red: "Red", darkblue: "DarkBlue", darkred: "DarkRed",
+          darkgreen: "DarkGreen", darkyellow: "DarkYellow", gray: "Gray",
+          lightgray: "LightGray", black: "Black", white: "White",
+        };
+        const hlColor = payload.highlight_color
+          ? (highlightMap[payload.highlight_color.toLowerCase()] || payload.highlight_color)
+          : null;
+
+        for (let i = 0; i < searchResults.items.length; i++) {
+          try {
+            const font = searchResults.items[i].font;
+            if (payload.bold !== undefined) font.bold = payload.bold;
+            if (payload.italic !== undefined) font.italic = payload.italic;
+            if (payload.underline !== undefined) font.underline = payload.underline ? "Single" : "None";
+            if (payload.font_size) font.size = payload.font_size;
+            if (payload.font_color) font.color = payload.font_color;
+            if (payload.font_name) font.name = payload.font_name;
+            if (hlColor) font.highlightColor = hlColor;
+          } catch (e) {
+            console.error("format_text: error on match", i, e);
+          }
         }
         await ctx.sync();
+        console.log("format_text: done applying formatting");
       });
       break;
 
