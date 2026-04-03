@@ -1501,17 +1501,20 @@ async def get_claude_response(message: str, context: dict,
         "tell me", "explain", "help", "describe", "summarize", "summary",
         "compare", "analyze", "which", "should", "is it", "are there",
     ]
-    is_question = any(
-        msg_lower == q or msg_lower.startswith(q + " ") or msg_lower.startswith(q + ",") or msg_lower.startswith(q + "!") or msg_lower.startswith(q + "?")
-        for q in _questions
-    )
+    def _word_boundary_match(text, word):
+        """Check if text starts with word at a word boundary."""
+        if text == word:
+            return True
+        for sep in (" ", ",", "!", "?", ".", ";", ":"):
+            if text.startswith(word + sep):
+                return True
+        return False
+
+    is_question = any(_word_boundary_match(msg_lower, q) for q in _questions)
     # Word-boundary matching: "hi" matches "hi" or "hi there" but NOT "highlight"
     _greet = ["hi", "hey", "hello", "thanks", "thank you", "ok", "okay",
               "yes", "no", "sure", "got it", "cool", "nice", "good"]
-    is_greeting = any(
-        msg_lower == g or msg_lower.startswith(g + " ") or msg_lower.startswith(g + ",") or msg_lower.startswith(g + "!")
-        for g in _greet
-    )
+    is_greeting = any(_word_boundary_match(msg_lower, g) for g in _greet)
     is_conversational = is_question or is_greeting
     # Only skip tools for contexts that never need actions (browser summaries, notes).
     # For all other apps, include tools with tool_choice=auto so Claude decides.
@@ -1626,17 +1629,20 @@ async def get_claude_stream(message: str, context: dict,
         "tell me", "explain", "help", "describe", "summarize", "summary",
         "compare", "analyze", "which", "should", "is it", "are there",
     ]
-    is_question = any(
-        msg_lower == q or msg_lower.startswith(q + " ") or msg_lower.startswith(q + ",") or msg_lower.startswith(q + "!") or msg_lower.startswith(q + "?")
-        for q in _questions
-    )
+    def _word_boundary_match(text, word):
+        """Check if text starts with word at a word boundary."""
+        if text == word:
+            return True
+        for sep in (" ", ",", "!", "?", ".", ";", ":"):
+            if text.startswith(word + sep):
+                return True
+        return False
+
+    is_question = any(_word_boundary_match(msg_lower, q) for q in _questions)
     # Word-boundary matching: "hi" matches "hi" or "hi there" but NOT "highlight"
     _greet = ["hi", "hey", "hello", "thanks", "thank you", "ok", "okay",
               "yes", "no", "sure", "got it", "cool", "nice", "good"]
-    is_greeting = any(
-        msg_lower == g or msg_lower.startswith(g + " ") or msg_lower.startswith(g + ",") or msg_lower.startswith(g + "!")
-        for g in _greet
-    )
+    is_greeting = any(_word_boundary_match(msg_lower, g) for g in _greet)
     is_conversational = is_question or is_greeting
     skip_tools = is_browser_summary or is_notes or (is_greeting and not is_question)
 

@@ -1461,6 +1461,54 @@ async function executeAction(action) {
     });
   }
 
+  // ── find_and_replace ────────────────────────────────────────────────────────
+  // Find and replace a single value across the used range (or a specified range).
+  // payload: { sheet?, range?, find_text, replace_text, match_case? }
+  else if (type === "find_and_replace") {
+    await Excel.run(async (ctx) => {
+      const sheet = getSheet(ctx, payload.sheet);
+      let range;
+      if (payload.range) {
+        range = sheet.getRange(splitAddr(payload.range, payload.sheet).addr);
+      } else {
+        range = sheet.getUsedRangeOrNullObject();
+        range.load("isNullObject");
+        await ctx.sync();
+        if (range.isNullObject) return;
+      }
+      range.load("values");
+      await ctx.sync();
+      const values = range.values;
+      const findText = payload.find_text || "";
+      const replaceText = payload.replace_text || "";
+      const matchCase = payload.match_case || false;
+      let totalReplaced = 0;
+      const updated = values.map(row =>
+        row.map(cell => {
+          if (typeof cell !== "string") return cell;
+          if (matchCase) {
+            if (cell.includes(findText)) {
+              totalReplaced++;
+              return cell.split(findText).join(replaceText);
+            }
+          } else {
+            const lowerCell = cell.toLowerCase();
+            const lowerFind = findText.toLowerCase();
+            if (lowerCell.includes(lowerFind)) {
+              totalReplaced++;
+              // Case-insensitive replace
+              return cell.replace(new RegExp(findText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), replaceText);
+            }
+          }
+          return cell;
+        })
+      );
+      range.values = updated;
+      await ctx.sync();
+      console.log(`find_and_replace: replaced ${totalReplaced} cell(s)`);
+    });
+  }
+
   // ── find_replace_bulk ──────────────────────────────────────────────────────
   // Find and replace multiple values at once across a range.
   // payload: { sheet?, range, replacements: [{ find: "x", replace: "y" }, ...] }
