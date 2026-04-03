@@ -639,14 +639,14 @@ async function executeAction(action) {
 
     case "insert_section_break":
       await Word.run(async (ctx) => {
-        const typeMap = {
-          continuous: "Continuous",
-          nextPage: "Next",
-          evenPage: "EvenPage",
-          oddPage: "OddPage",
+        const breakMap = {
+          continuous: "SectionContinuous",
+          nextPage: "SectionNext",
+          evenPage: "SectionEven",
+          oddPage: "SectionOdd",
         };
-        const breakType = typeMap[payload.type || "nextPage"] || "Next";
-        ctx.document.body.insertBreak(breakType === "Continuous" ? "SectionContinuous" : "SectionNext", "End");
+        const breakType = breakMap[payload.type || "nextPage"] || "SectionNext";
+        ctx.document.body.insertBreak(breakType, "End");
         await ctx.sync();
       });
       break;
