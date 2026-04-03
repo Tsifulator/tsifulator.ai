@@ -467,18 +467,12 @@ async function handleSubmit() {
 
     const actions = result.actions?.length ? result.actions : (result.action?.type ? [result.action] : []);
     if (actions.length > 0) {
-      let success = 0, failed = 0;
       for (const action of actions) {
         try {
           await executeAction(action);
-          success++;
         } catch (e) {
           console.error("Action failed:", action.type, e);
-          failed++;
         }
-      }
-      if (failed > 0) {
-        appendMessage("action", `${success} succeeded, ${failed} failed`);
       }
     }
 
@@ -524,7 +518,16 @@ async function executeAction(action) {
         const para = body.insertParagraph(payload.text || "", "End");
 
         if (payload.style) {
-          para.style = payload.style;
+          const styleMap = {
+            "ListBullet": "List Bullet", "ListNumber": "List Number",
+            "Heading1": "Heading 1", "Heading2": "Heading 2", "Heading3": "Heading 3",
+            "Heading4": "Heading 4", "IntenseQuote": "Intense Quote",
+          };
+          try {
+            para.style = styleMap[payload.style] || payload.style;
+          } catch (_) {
+            // Style not available in this locale/template — skip silently
+          }
         }
         if (payload.alignment) {
           const alignMap = { left: "Left", center: "Centered", right: "Right", justify: "Justified" };
@@ -580,13 +583,11 @@ async function executeAction(action) {
 
     case "format_text":
       await Word.run(async (ctx) => {
-        // Use search to find the range described
-        const searchResults = ctx.document.body.search(payload.range_description || "", { matchCase: true });
+        const searchResults = ctx.document.body.search(payload.range_description || "", { matchCase: !!payload.match_case });
         searchResults.load("items");
         await ctx.sync();
 
-        if (searchResults.items.length > 0) {
-          const range = searchResults.items[0];
+        for (const range of searchResults.items) {
           const font = range.font;
           if (payload.bold !== undefined) font.bold = payload.bold;
           if (payload.italic !== undefined) font.italic = payload.italic;
@@ -595,8 +596,8 @@ async function executeAction(action) {
           if (payload.font_color) font.color = payload.font_color;
           if (payload.font_name) font.name = payload.font_name;
           if (payload.highlight_color) font.highlightColor = payload.highlight_color;
-          await ctx.sync();
         }
+        await ctx.sync();
       });
       break;
 

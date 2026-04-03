@@ -384,7 +384,7 @@ When app is "word", use these action types:
 - insert_paragraph: {text, style?, alignment?, spacing_after?, spacing_before?}. style: "Normal","Heading1","Heading2","Heading3","Title","Subtitle","Quote","ListBullet","ListNumber"
 - insert_table: {rows, columns, data (2D array), style?, alignment?}. style: "GridTable4-Accent1","ListTable3-Accent1","PlainTable1"
 - insert_image: {image_data, width?, height?, position?}
-- format_text: {range_description, bold?, italic?, underline?, font_size?, font_color?, font_name?, highlight_color?}
+- format_text: {range_description, bold?, italic?, underline?, font_size?, font_color?, font_name?, highlight_color?}. range_description is the EXACT text to search for (e.g. "The" not "word 'The' throughout document"). ALL occurrences are formatted automatically — one action per unique word is enough.
 - insert_header: {text, type?}. type: "primary","firstPage","evenPages"
 - insert_footer: {text, type?}
 - insert_page_break: {}
@@ -408,6 +408,7 @@ When app is "word", use these action types:
 - Page numbers: bottom center or bottom right for formal documents
 - Date format: "March 29, 2026" for formal docs, "3/29/26" for internal memos
 - When inserting multiple paragraphs, use insert_paragraph for each to maintain proper styling
+- Keep your text reply SHORT (1-2 sentences max). The actions do the work — don't explain what you're doing in detail.
 - Always start formal documents with set_page_margins before adding content
 - When track changes is on (indicated in context), inform the user that changes will be tracked
 - For citation formatting: support APA (Author, Year), MLA (Author Page), and Chicago (footnotes) styles
