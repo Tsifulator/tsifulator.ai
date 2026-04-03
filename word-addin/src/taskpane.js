@@ -589,44 +589,47 @@ async function executeAction(action) {
       break;
 
     case "format_text":
-      try {
-        await Word.run(async (ctx) => {
-          const term = payload.range_description || "";
-          if (!term) return;
-          const searchResults = ctx.document.body.search(term, { matchCase: false });
-          searchResults.load("items");
-          await ctx.sync();
+      {
+        const term = payload.range_description || "";
+        if (!term) break;
+        let matchCount = 0;
+        try {
+          await Word.run(async (ctx) => {
+            const results = ctx.document.body.search(term, { matchCase: false });
+            results.load("items");
+            await ctx.sync();
+            matchCount = results.items.length;
 
-          setStatus(`Formatting "${term}" — ${searchResults.items.length} found`);
+            if (matchCount === 0) return;
 
-          const hlMap = {
-            yellow: "Yellow", green: "Green", cyan: "Cyan", magenta: "Magenta",
-            blue: "Blue", red: "Red", darkblue: "DarkBlue", darkred: "DarkRed",
-            darkgreen: "DarkGreen", darkyellow: "DarkYellow", gray: "Gray",
-            lightgray: "LightGray", black: "Black", white: "White",
-            "#ffff00": "Yellow", "#00ff00": "Green", "#00ffff": "Cyan",
-            "#ff00ff": "Magenta", "#0000ff": "Blue", "#ff0000": "Red",
-            "#808080": "Gray", "#000000": "Black", "#ffffff": "White",
-          };
-          const hlColor = payload.highlight_color
-            ? (hlMap[payload.highlight_color.toLowerCase()] || payload.highlight_color)
-            : null;
+            const hlMap = {
+              yellow: "Yellow", green: "Green", cyan: "Cyan", magenta: "Magenta",
+              blue: "Blue", red: "Red", darkblue: "DarkBlue", darkred: "DarkRed",
+              darkgreen: "DarkGreen", darkyellow: "DarkYellow", gray: "Gray",
+              lightgray: "LightGray", black: "Black", white: "White",
+              "#ffff00": "Yellow", "#00ff00": "Green", "#00ffff": "Cyan",
+              "#ff00ff": "Magenta", "#0000ff": "Blue", "#ff0000": "Red",
+              "#808080": "Gray", "#000000": "Black", "#ffffff": "White",
+            };
+            const hlColor = payload.highlight_color
+              ? (hlMap[payload.highlight_color.toLowerCase()] || payload.highlight_color)
+              : null;
 
-          for (let i = 0; i < searchResults.items.length; i++) {
-            const font = searchResults.items[i].font;
-            if (payload.bold !== undefined) font.bold = payload.bold;
-            if (payload.italic !== undefined) font.italic = payload.italic;
-            if (payload.underline !== undefined) font.underline = payload.underline ? "Single" : "None";
-            if (payload.font_size) font.size = payload.font_size;
-            if (payload.font_color) font.color = payload.font_color;
-            if (payload.font_name) font.name = payload.font_name;
-            if (hlColor) font.highlightColor = hlColor;
-          }
-          await ctx.sync();
-        });
-      } catch (e) {
-        setStatus(`format_text error: ${e.message}`);
-        throw e;
+            for (let i = 0; i < results.items.length; i++) {
+              const font = results.items[i].font;
+              if (payload.bold !== undefined) font.bold = payload.bold;
+              if (payload.font_color) font.color = payload.font_color;
+              if (payload.italic !== undefined) font.italic = payload.italic;
+              if (payload.underline !== undefined) font.underline = payload.underline ? "Single" : "None";
+              if (payload.font_size) font.size = payload.font_size;
+              if (payload.font_name) font.name = payload.font_name;
+              if (hlColor) font.highlightColor = hlColor;
+            }
+            await ctx.sync();
+          });
+        } catch (e) {
+          console.error(`format_text error for "${term}":`, e);
+        }
       }
       break;
 
