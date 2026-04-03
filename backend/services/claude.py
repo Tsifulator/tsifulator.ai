@@ -1495,11 +1495,16 @@ async def get_claude_response(message: str, context: dict,
     is_notes = app_name == "notes"
     # Detect messages that don't need actions (questions, greetings, chat)
     msg_lower = message.lower().strip()
-    is_question = any(msg_lower.startswith(q) for q in [
+    # Word-boundary matching for question detection: "how" matches "how do I" but NOT "however"
+    _questions = [
         "what", "how", "why", "when", "where", "who", "can you", "do you",
         "tell me", "explain", "help", "describe", "summarize", "summary",
         "compare", "analyze", "which", "should", "is it", "are there",
-    ])
+    ]
+    is_question = any(
+        msg_lower == q or msg_lower.startswith(q + " ") or msg_lower.startswith(q + ",") or msg_lower.startswith(q + "!") or msg_lower.startswith(q + "?")
+        for q in _questions
+    )
     # Word-boundary matching: "hi" matches "hi" or "hi there" but NOT "highlight"
     _greet = ["hi", "hey", "hello", "thanks", "thank you", "ok", "okay",
               "yes", "no", "sure", "got it", "cool", "nice", "good"]
@@ -1615,11 +1620,16 @@ async def get_claude_stream(message: str, context: dict,
     is_browser_summary = app_name == "browser" and bool(context.get("full_page_text", ""))
     is_notes = app_name == "notes"
     msg_lower = message.lower().strip()
-    is_question = any(msg_lower.startswith(q) for q in [
+    # Word-boundary matching for question detection: "how" matches "how do I" but NOT "however"
+    _questions = [
         "what", "how", "why", "when", "where", "who", "can you", "do you",
         "tell me", "explain", "help", "describe", "summarize", "summary",
         "compare", "analyze", "which", "should", "is it", "are there",
-    ])
+    ]
+    is_question = any(
+        msg_lower == q or msg_lower.startswith(q + " ") or msg_lower.startswith(q + ",") or msg_lower.startswith(q + "!") or msg_lower.startswith(q + "?")
+        for q in _questions
+    )
     # Word-boundary matching: "hi" matches "hi" or "hi there" but NOT "highlight"
     _greet = ["hi", "hey", "hello", "thanks", "thank you", "ok", "okay",
               "yes", "no", "sure", "got it", "cool", "nice", "good"]
