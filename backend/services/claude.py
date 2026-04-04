@@ -1891,28 +1891,9 @@ def _parse_tool_response(response) -> dict:
                     p[field] = val.replace("Transactions!$A$4:$D$29", "Stats").replace("Transactions!$A4:$D29", "Stats")
                     logger.info("[HW-FIX] Replaced Transactions! with Stats in DSUM: %s", p[field])
 
-    # Fix C16: ensure it has the correct INDEX/XMATCH formula
-    c16_fixed = False
-    for i, a in enumerate(actions):
-        p = a.get("payload", {})
-        cell = (p.get("cell") or "").upper()
-        sheet = (p.get("sheet") or "").lower()
-        if cell == "C16" and "transactions stats" in sheet:
-            # Whatever Claude wrote, replace with the correct formula
-            actions[i] = {
-                "type": "write_formula",
-                "payload": {
-                    "cell": "C16",
-                    "formula": "=INDEX(Transactions!$C$5:$C$29,XMATCH(B16,Transactions!$A$5:$A$29))",
-                    "sheet": p.get("sheet", "Transactions Stats")
-                }
-            }
-            c16_fixed = True
-            logger.info("[HW-FIX] Forced C16 to INDEX/XMATCH formula (was type=%s)", a.get("type"))
-
-    # If Claude never wrote to C16 at all, inject the action
-    if has_named_range and not c16_fixed:
-        # Find where Transactions Stats actions are and insert after them
+    # Fix C16: ALWAYS append INDEX/XMATCH formula at the END so it overwrites any prior writes
+    # (Claude may write C16 as part of a write_range or write_cell with a plain value)
+    if has_named_range:
         actions.append({
             "type": "write_formula",
             "payload": {
@@ -1921,7 +1902,15 @@ def _parse_tool_response(response) -> dict:
                 "sheet": "Transactions Stats"
             }
         })
-        logger.info("[HW-FIX] Injected missing C16 INDEX/XMATCH formula action")
+        actions.append({
+            "type": "set_number_format",
+            "payload": {
+                "range": "C16",
+                "format": "#,##0",
+                "sheet": "Transactions Stats"
+            }
+        })
+        logger.info("[HW-FIX] Appended C16 INDEX/XMATCH formula + format at end of actions")
 
     # If Claude gave no reply text, generate a contextual default
     if not reply:
