@@ -1992,6 +1992,41 @@ def _parse_tool_response(response) -> dict:
                 and "SUMIFS" in str(a.get("payload", {}).get("formula", "")).upper()
             )
         ]
+        # Smart SUMIFS fix: match formula column to label
+        # "# of Dependents" → $E$ (col E), "# of Claims" → $F$ (col F)
+        # Build a map of label cells (C25:C28) written in this batch
+        label_map = {}  # cell -> label text (e.g. "C25" -> "# of Dependents")
+        for a in actions:
+            p = a.get("payload", {})
+            if p.get("sheet", "").lower() != "employee insurance":
+                continue
+            cell = p.get("cell", "").upper()
+            if cell in ("C25", "C26", "C27", "C28"):
+                val = p.get("value", "") or ""
+                label_map[cell] = val.lower()
+
+        # Now fix SUMIFS in E25:E28 to match their label
+        for a in actions:
+            p = a.get("payload", {})
+            if p.get("sheet", "").lower() != "employee insurance":
+                continue
+            cell = p.get("cell", "").upper()
+            if cell not in ("E25", "E26", "E27", "E28"):
+                continue
+            for field in ("formula", "value"):
+                val = p.get(field, "")
+                if not isinstance(val, str) or "SUMIFS" not in val.upper():
+                    continue
+                # Determine correct column from label
+                label_cell = "C" + cell[1:]  # E25 -> C25
+                label = label_map.get(label_cell, "")
+                if "claim" in label and "$E$4:$E$23" in val:
+                    p[field] = val.replace("$E$4:$E$23", "$F$4:$F$23")
+                    logger.info("[HW-FIX] SUMIFS %s: label=Claims, fixed $E$ → $F$", cell)
+                elif "depend" in label and "$F$4:$F$23" in val:
+                    p[field] = val.replace("$F$4:$F$23", "$E$4:$E$23")
+                    logger.info("[HW-FIX] SUMIFS %s: label=Dependents, fixed $F$ → $E$", cell)
+
         logger.info("[HW-FIX] Employee Insurance post-processing complete")
 
     # If Claude gave no reply text, generate a contextual default

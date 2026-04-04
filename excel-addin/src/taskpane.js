@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v47";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v48";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -623,6 +623,28 @@ async function handleSubmit() {
             // Clear stray #,##0 format on B10:C10 (text cells)
             const r = ws.getRange("B10:C10");
             r.numberFormat = [["General", "General"]];
+
+            // Smart SUMIFS fix: match formula column to label in C
+            // "# of Dependents" → $E$, "# of Claims" → $F$
+            const labels = ws.getRange("C25:C28");
+            const formulas = ws.getRange("E25:E28");
+            labels.load("values");
+            formulas.load("formulas");
+            await ctx.sync();
+
+            for (let i = 0; i < 4; i++) {
+              const label = (labels.values[i][0] || "").toLowerCase();
+              const formula = formulas.formulas[i][0] || "";
+              if (typeof formula !== "string" || !formula.includes("SUMIFS")) continue;
+
+              if (label.includes("depend") && formula.includes("$F$4:$F$23")) {
+                formulas.getCell(i, 0).formulas = [[formula.replace(/\$F\$4:\$F\$23/g, "$E$4:$E$23")]];
+                console.log(`[tsifl] Fixed E${25+i} SUMIFS: label=Dependents, $F$ → $E$`);
+              } else if (label.includes("claim") && formula.includes("$E$4:$E$23")) {
+                formulas.getCell(i, 0).formulas = [[formula.replace(/\$E\$4:\$E\$23/g, "$F$4:$F$23")]];
+                console.log(`[tsifl] Fixed E${25+i} SUMIFS: label=Claims, $E$ → $F$`);
+              }
+            }
 
             // Clear duplicate SUMIFS in F27:F28 (should be empty)
             const f27f28 = ws.getRange("F27:F28");
