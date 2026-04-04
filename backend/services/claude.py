@@ -1743,9 +1743,13 @@ async def get_claude_response(message: str, context: dict,
         homework_reminder = """
 
 CRITICAL REMINDERS FOR THIS ASSIGNMENT:
-1. If instructions mention "name cells as Stats" or "range name Stats": emit {"type":"create_named_range","payload":{"name":"Stats","range":"A4:D29","sheet":"Transactions"}} BEFORE any DSUM formulas. Then use =DSUM(Stats,3,...) NOT =DSUM(Transactions!$A$4:$D$29,3,...).
-2. If instructions mention "INDEX and XMATCH function": emit {"type":"write_formula","payload":{"cell":"C16","formula":"=INDEX(Transactions!$C$5:$C$29,XMATCH(B16,Transactions!$A$5:$A$29))","sheet":"Transactions Stats"}}. NEVER write a plain number.
-3. If instructions mention "Comma Style": emit {"type":"set_number_format","payload":{"range":"B7:C10","format":"#,##0","sheet":"Transactions Stats"}} and same for C16.
+1. NAMED RANGE: If instructions mention "name cells as Stats", emit create_named_range FIRST, then EVERY DSUM formula MUST use Stats as the database argument — NEVER Transactions!$A$4:$D$29.
+   WRONG: =DSUM(Transactions!$A$4:$D$29,3,Criteria!$B$1:$B$2)
+   RIGHT: =DSUM(Stats,3,Criteria!$B$1:$B$2)
+   If you write Transactions!$A$4:$D$29 in ANY DSUM formula, the student loses points.
+2. INDEX/XMATCH: If instructions say "nested INDEX and XMATCH function", cell C16 MUST contain a FORMULA, not a number. Write:
+   {"type":"write_formula","payload":{"cell":"C16","formula":"=INDEX(Transactions!$C$5:$C$29,XMATCH(B16,Transactions!$A$5:$A$29))","sheet":"Transactions Stats"}}
+3. COMMA STYLE: Format B7:C10 AND C16 with "#,##0".
 """
         user_text = user_text + homework_reminder
 
@@ -1910,9 +1914,13 @@ async def get_claude_stream(message: str, context: dict,
         homework_reminder = """
 
 CRITICAL REMINDERS FOR THIS ASSIGNMENT:
-1. If instructions mention "name cells as Stats" or "range name Stats": emit {"type":"create_named_range","payload":{"name":"Stats","range":"A4:D29","sheet":"Transactions"}} BEFORE any DSUM formulas. Then use =DSUM(Stats,3,...) NOT =DSUM(Transactions!$A$4:$D$29,3,...).
-2. If instructions mention "INDEX and XMATCH function": emit {"type":"write_formula","payload":{"cell":"C16","formula":"=INDEX(Transactions!$C$5:$C$29,XMATCH(B16,Transactions!$A$5:$A$29))","sheet":"Transactions Stats"}}. NEVER write a plain number.
-3. If instructions mention "Comma Style": emit {"type":"set_number_format","payload":{"range":"B7:C10","format":"#,##0","sheet":"Transactions Stats"}} and same for C16.
+1. NAMED RANGE: If instructions mention "name cells as Stats", emit create_named_range FIRST, then EVERY DSUM formula MUST use Stats as the database argument — NEVER Transactions!$A$4:$D$29.
+   WRONG: =DSUM(Transactions!$A$4:$D$29,3,Criteria!$B$1:$B$2)
+   RIGHT: =DSUM(Stats,3,Criteria!$B$1:$B$2)
+   If you write Transactions!$A$4:$D$29 in ANY DSUM formula, the student loses points.
+2. INDEX/XMATCH: If instructions say "nested INDEX and XMATCH function", cell C16 MUST contain a FORMULA, not a number. Write:
+   {"type":"write_formula","payload":{"cell":"C16","formula":"=INDEX(Transactions!$C$5:$C$29,XMATCH(B16,Transactions!$A$5:$A$29))","sheet":"Transactions Stats"}}
+3. COMMA STYLE: Format B7:C10 AND C16 with "#,##0".
 """
         user_text = user_text + homework_reminder
 

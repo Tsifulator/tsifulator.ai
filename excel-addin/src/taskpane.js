@@ -507,7 +507,7 @@ async function handleSubmit() {
               for (let r = 0; r < vals.length; r++) {
                 for (let c = 0; c < vals[r].length; c++) {
                   const v = vals[r][c];
-                  if (typeof v === "string" && /^#(DIV\/0!|NAME\?|REF!|VALUE!|NULL!)$/.test(v)) {
+                  if (typeof v === "string" && /^#(DIV\/0!|REF!|NULL!)$/.test(v)) {
                     // Clear the error cell
                     const cell = used.getCell(r, c);
                     cell.values = [[""]];
