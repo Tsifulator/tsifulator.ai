@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v46";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v47";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -603,17 +603,12 @@ async function handleSubmit() {
             );
             r3.numberFormat = fmt3;
 
-            // B15:C15 are text headers — reset to General (Claude applies 0.00)
-            const r4 = ws.getRange("B15:C15");
-            r4.load("rowCount,columnCount");
-            await ctx.sync();
-            const fmt4 = Array.from({ length: r4.rowCount }, () =>
-              Array.from({ length: r4.columnCount }, () => "General")
-            );
-            r4.numberFormat = fmt4;
+            // B15:B16 and C15 are text cells — reset to General (Claude applies 0.00)
+            ws.getRange("B15:B16").numberFormat = [["General"], ["General"]];
+            ws.getRange("C15").numberFormat = [["General"]];
 
             await ctx.sync();
-            console.log("[tsifl] Homework format safety net applied: Comma Style + Percent Style + B15:C15 General");
+            console.log("[tsifl] Homework format safety net applied: Comma Style + Percent Style + text cells General");
           });
         } catch (e) { console.warn("[tsifl] Format safety net failed:", e.message); }
 
@@ -627,27 +622,7 @@ async function handleSubmit() {
 
             // Clear stray #,##0 format on B10:C10 (text cells)
             const r = ws.getRange("B10:C10");
-            r.load("rowCount,columnCount");
-            await ctx.sync();
             r.numberFormat = [["General", "General"]];
-
-            // Fix SUMIFS in E27:E28 — should reference $E$ (Dependents), not $F$ (Claims)
-            const e27 = ws.getRange("E27");
-            const e28 = ws.getRange("E28");
-            e27.load("formulas");
-            e28.load("formulas");
-            await ctx.sync();
-
-            const f27 = e27.formulas[0][0];
-            if (typeof f27 === "string" && f27.includes("$F$4:$F$23")) {
-              e27.formulas = [[f27.replace(/\$F\$4:\$F\$23/g, "$E$4:$E$23")]];
-              console.log("[tsifl] Fixed E27 SUMIFS: $F$ → $E$");
-            }
-            const f28 = e28.formulas[0][0];
-            if (typeof f28 === "string" && f28.includes("$F$4:$F$23")) {
-              e28.formulas = [[f28.replace(/\$F\$4:\$F\$23/g, "$E$4:$E$23")]];
-              console.log("[tsifl] Fixed E28 SUMIFS: $F$ → $E$");
-            }
 
             // Clear duplicate SUMIFS in F27:F28 (should be empty)
             const f27f28 = ws.getRange("F27:F28");
