@@ -1375,6 +1375,9 @@ sink("output.txt"); print(summary(model)); sink()
 8. Splitting actions across multiple tool calls — put ALL actions in ONE execute_actions call.
 9. Using structured table references (TableName[Column]) in Excel — use named ranges directly.
 10. Importing derived/analysis CSVs that don't exist — import_csv ONCE for the source file only.
+11. HOMEWORK CRITICAL — Using Transactions!$A$4:$D$29 in DSUM instead of a named range — when instructions say "use the range name Stats", you MUST first emit create_named_range (name="Stats", range="A4:D29", sheet="Transactions"), THEN write =DSUM(Stats,3,Criteria!$B$1:$B$2). NEVER skip the named range.
+12. HOMEWORK CRITICAL — Not writing INDEX/XMATCH formula — when instructions say "Create a nested INDEX and XMATCH function", ALWAYS write a formula like =INDEX(Transactions!$C$5:$C$29,XMATCH(B16,Transactions!$A$5:$A$29)). NEVER leave the cell empty or write a plain value.
+13. HOMEWORK CRITICAL — Not formatting result cells as Comma Style — when instructions say "Comma Style with no decimal places", ALWAYS emit set_number_format with format="#,##0" for ALL result cells (DSUM outputs, INDEX results, SUM totals). Missing this loses points.
 """
 
 # ── Tool Definition ───────────────────────────────────────────────────────────
