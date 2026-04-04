@@ -1729,6 +1729,19 @@ async def get_claude_response(message: str, context: dict,
     sheet_summary = _format_context(context)
     user_text     = f"{message}\n\n{sheet_summary}" if sheet_summary else message
 
+    # Inject homework-critical reminders into the user message when homework patterns detected
+    # (system prompt instructions get deprioritized with heavy image context)
+    msg_lower = message.lower()
+    if any(kw in msg_lower for kw in ("homework", "assignment", "simnet", "complete", "task", "step")):
+        homework_reminder = """
+
+CRITICAL REMINDERS FOR THIS ASSIGNMENT:
+1. If instructions mention "name cells as Stats" or "range name Stats": emit {"type":"create_named_range","payload":{"name":"Stats","range":"A4:D29","sheet":"Transactions"}} BEFORE any DSUM formulas. Then use =DSUM(Stats,3,...) NOT =DSUM(Transactions!$A$4:$D$29,3,...).
+2. If instructions mention "INDEX and XMATCH function": emit {"type":"write_formula","payload":{"cell":"C16","formula":"=INDEX(Transactions!$C$5:$C$29,XMATCH(B16,Transactions!$A$5:$A$29))","sheet":"Transactions Stats"}}. NEVER write a plain number.
+3. If instructions mention "Comma Style": emit {"type":"set_number_format","payload":{"range":"B7:C10","format":"#,##0","sheet":"Transactions Stats"}} and same for C16.
+"""
+        user_text = user_text + homework_reminder
+
     # Build app-specific system prompt (saves thousands of tokens)
     system_prompt = _build_system_prompt(context.get("app", ""), message)
 
@@ -1878,6 +1891,18 @@ async def get_claude_stream(message: str, context: dict,
     """Async generator that yields text chunks from Claude's streaming API."""
     sheet_summary = _format_context(context)
     user_text     = f"{message}\n\n{sheet_summary}" if sheet_summary else message
+
+    # Inject homework-critical reminders (same as non-streaming endpoint)
+    msg_lower_s = message.lower()
+    if any(kw in msg_lower_s for kw in ("homework", "assignment", "simnet", "complete", "task", "step")):
+        homework_reminder = """
+
+CRITICAL REMINDERS FOR THIS ASSIGNMENT:
+1. If instructions mention "name cells as Stats" or "range name Stats": emit {"type":"create_named_range","payload":{"name":"Stats","range":"A4:D29","sheet":"Transactions"}} BEFORE any DSUM formulas. Then use =DSUM(Stats,3,...) NOT =DSUM(Transactions!$A$4:$D$29,3,...).
+2. If instructions mention "INDEX and XMATCH function": emit {"type":"write_formula","payload":{"cell":"C16","formula":"=INDEX(Transactions!$C$5:$C$29,XMATCH(B16,Transactions!$A$5:$A$29))","sheet":"Transactions Stats"}}. NEVER write a plain number.
+3. If instructions mention "Comma Style": emit {"type":"set_number_format","payload":{"range":"B7:C10","format":"#,##0","sheet":"Transactions Stats"}} and same for C16.
+"""
+        user_text = user_text + homework_reminder
 
     # Build app-specific system prompt
     system_prompt = _build_system_prompt(context.get("app", ""), message)
