@@ -122,6 +122,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.action === "execute_workspace_action") {
+    handleWorkspaceAction(msg.type, msg.payload)
+      .then(result => sendResponse(result))
+      .catch(e => sendResponse({ success: false, message: e.message }));
+    return true;
+  }
+
   if (msg.action === "get_page_text") {
     handleGetPageText()
       .then(result => sendResponse(result))
@@ -235,6 +242,26 @@ async function handleBrowserAction(type, payload) {
 
     default:
       return { success: false, message: `Unknown browser action: ${type}` };
+  }
+}
+
+// ── Google Workspace Action Execution ───────────────────────────────
+
+async function handleWorkspaceAction(type, payload) {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) return { success: false, message: "No active tab" };
+
+  await safeInjectContentScript(tab.id);
+
+  try {
+    const response = await sendToTab(tab.id, {
+      action: "execute_workspace_action",
+      type,
+      payload,
+    });
+    return response || { success: false, message: "No response from content script" };
+  } catch (e) {
+    return { success: false, message: `Workspace action failed: ${e.message}` };
   }
 }
 

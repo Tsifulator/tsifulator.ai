@@ -487,6 +487,28 @@ async function executeAction(action) {
     return;
   }
 
+  // Google Workspace actions — route through content script via background.js
+  const workspaceActions = [
+    "format_text", "insert_text", "insert_paragraph", "insert_table",
+    "find_and_replace", "insert_page_break", "insert_header", "insert_footer",
+    "write_cell", "write_range", "format_range", "add_sheet", "navigate_sheet",
+    "sort_range", "add_chart", "clear_range", "set_number_format", "freeze_panes",
+    "autofit", "create_slide", "add_text_box", "add_shape", "delete_slide",
+    "set_slide_background", "apply_style",
+  ];
+
+  if (workspaceActions.includes(type)) {
+    try {
+      const result = await sendToBackground("execute_workspace_action", type, payload);
+      if (result && !result.success) {
+        appendMessage("assistant", result.message || "Action could not be completed on this page.");
+      }
+    } catch (e) {
+      console.error(`workspace ${type} failed:`, e);
+    }
+    return;
+  }
+
   // Browser/DOM actions — route through background.js
   const browserActions = [
     "open_url", "open_url_current_tab", "search_web",

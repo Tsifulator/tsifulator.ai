@@ -118,6 +118,8 @@ if (!window.__tsifl_content_loaded) {
     const ctx = {};
     const title = document.querySelector('.docs-title-input')?.value || document.title;
     ctx.sheet_title = title;
+    const idMatch = location.pathname.match(/\/d\/([a-zA-Z0-9-_]+)/);
+    if (idMatch) ctx.document_id = idMatch[1];
     const cellInput = document.querySelector('#t-formula-bar-input .cell-input');
     if (cellInput) ctx.formula_bar = cellInput.textContent?.trim()?.slice(0, 500);
     const tabs = document.querySelectorAll('.docs-sheet-tab .docs-sheet-tab-name');
@@ -129,6 +131,8 @@ if (!window.__tsifl_content_loaded) {
     const ctx = {};
     const title = document.querySelector('.docs-title-input')?.value || document.title;
     ctx.doc_title = title;
+    const idMatch = location.pathname.match(/\/d\/([a-zA-Z0-9-_]+)/);
+    if (idMatch) ctx.document_id = idMatch[1];
     const editor = document.querySelector('.kix-appview-editor');
     if (editor) ctx.doc_content = editor.textContent?.trim()?.slice(0, 3000);
     return ctx;
@@ -136,6 +140,8 @@ if (!window.__tsifl_content_loaded) {
 
   function getGoogleSlidesContext() {
     const ctx = {};
+    const idMatch = location.pathname.match(/\/d\/([a-zA-Z0-9-_]+)/);
+    if (idMatch) ctx.document_id = idMatch[1];
     const slides = document.querySelectorAll('.punch-filmstrip-thumbnail');
     ctx.slide_count = slides.length || 0;
     const current = document.querySelector('.punch-viewer-svgpage-svgcontainer');
@@ -348,6 +354,226 @@ if (!window.__tsifl_content_loaded) {
     return parts.join('\n');
   }
 
+  // ── Google Workspace Action Handlers ────────────────────────────────────
+  // DOM automation for Google Docs/Sheets/Slides editing.
+  // These simulate user interactions since direct API access isn't available
+  // from a content script.
+
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  function getGDocsEventTarget() {
+    // Google Docs listens for key events on an iframe's body
+    const iframe = document.querySelector('.docs-texteventtarget-iframe');
+    if (iframe && iframe.contentDocument) return iframe.contentDocument.body;
+    return null;
+  }
+
+  function dispatchKey(target, key, opts = {}) {
+    const base = { key, bubbles: true, cancelable: true, ...opts };
+    target.dispatchEvent(new KeyboardEvent('keydown', base));
+    target.dispatchEvent(new KeyboardEvent('keyup', base));
+  }
+
+  async function handleWorkspaceAction(type, payload) {
+    const site = detectSite();
+
+    // ── Google Docs Actions ─────────────────────────────────────────────
+    if (site === "google_docs") {
+      switch (type) {
+        case "find_and_replace": {
+          // Open Find & Replace dialog with Ctrl+H
+          const target = getGDocsEventTarget() || document.body;
+          dispatchKey(target, 'h', { ctrlKey: true, metaKey: navigator.platform.includes('Mac') });
+          await sleep(500);
+
+          // Find the dialog inputs
+          const inputs = document.querySelectorAll('.docs-findandreplacedialog input[type="text"]');
+          if (inputs.length >= 2) {
+            // Fill "Find" field
+            inputs[0].focus();
+            inputs[0].value = payload.find_text || '';
+            inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+            await sleep(200);
+
+            // Fill "Replace with" field
+            inputs[1].focus();
+            inputs[1].value = payload.replace_text || '';
+            inputs[1].dispatchEvent(new Event('input', { bubbles: true }));
+            await sleep(200);
+
+            // Click "Replace all" button
+            const buttons = document.querySelectorAll('.docs-findandreplacedialog button');
+            const replaceAllBtn = Array.from(buttons).find(b =>
+              b.textContent.trim().toLowerCase().includes('replace all')
+            );
+            if (replaceAllBtn) {
+              replaceAllBtn.click();
+              await sleep(300);
+              // Close dialog
+              const closeBtn = document.querySelector('.docs-findandreplacedialog .modal-dialog-title-close');
+              if (closeBtn) closeBtn.click();
+              return { success: true, message: "Find and replace completed" };
+            }
+            return { success: false, message: "Could not find Replace All button" };
+          }
+          return { success: false, message: "Could not open Find & Replace dialog" };
+        }
+
+        case "format_text": {
+          // Try to find and format text using Find (Ctrl+F) then toolbar buttons
+          const term = payload.range_description || '';
+          if (!term) return { success: false, message: "No text specified" };
+
+          const target = getGDocsEventTarget() || document.body;
+
+          // Open Find bar with Ctrl+F
+          dispatchKey(target, 'f', { ctrlKey: true, metaKey: navigator.platform.includes('Mac') });
+          await sleep(400);
+
+          // Type search term into find input
+          const findInput = document.querySelector('.docs-findinput-input input') ||
+                           document.querySelector('[aria-label="Find in document"]');
+          if (findInput) {
+            findInput.focus();
+            findInput.value = term;
+            findInput.dispatchEvent(new Event('input', { bubbles: true }));
+            await sleep(300);
+
+            // Press Enter to find and select
+            findInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+            await sleep(300);
+
+            // Close find bar — text should stay selected
+            dispatchKey(findInput, 'Escape', {});
+            await sleep(200);
+
+            // Apply formatting via keyboard shortcuts
+            if (payload.bold) dispatchKey(target, 'b', { ctrlKey: true, metaKey: navigator.platform.includes('Mac') });
+            if (payload.italic) dispatchKey(target, 'i', { ctrlKey: true, metaKey: navigator.platform.includes('Mac') });
+            if (payload.underline) dispatchKey(target, 'u', { ctrlKey: true, metaKey: navigator.platform.includes('Mac') });
+
+            // For highlight color — try clicking toolbar highlight button
+            if (payload.highlight_color) {
+              const highlightBtn = document.querySelector('[aria-label*="Highlight"]') ||
+                                  document.querySelector('[data-tooltip*="Highlight"]');
+              if (highlightBtn) {
+                highlightBtn.click();
+                await sleep(200);
+                // Try to find color option in dropdown
+                const colorCell = document.querySelector(`[data-color="${payload.highlight_color}"]`) ||
+                                 document.querySelector(`[aria-label*="${payload.highlight_color}"]`);
+                if (colorCell) colorCell.click();
+              }
+            }
+
+            return { success: true, message: `Formatted "${term}"` };
+          }
+          return { success: false, message: "Could not open Find bar" };
+        }
+
+        case "insert_text": {
+          // Focus editor and type text
+          const target = getGDocsEventTarget();
+          if (target) {
+            target.focus();
+            // Use document.execCommand as a best-effort for the text event target
+            document.execCommand('insertText', false, payload.text || '');
+            return { success: true, message: "Text inserted" };
+          }
+          return { success: false, message: "Could not find Docs editor" };
+        }
+
+        default:
+          return { success: false, message: `Unsupported Google Docs action: ${type}. For full editing, install the Google Workspace add-on.` };
+      }
+    }
+
+    // ── Google Sheets Actions ───────────────────────────────────────────
+    if (site === "google_sheets") {
+      switch (type) {
+        case "write_cell": {
+          const cell = payload.cell || 'A1';
+          const value = payload.formula || payload.value || '';
+
+          // Navigate to cell using the Name Box
+          const nameBox = document.querySelector('#t-name-box input') ||
+                         document.querySelector('.waffle-name-box input') ||
+                         document.querySelector('[aria-label="Name Box"]');
+          if (nameBox) {
+            nameBox.click();
+            await sleep(100);
+            nameBox.focus();
+            nameBox.value = cell;
+            nameBox.dispatchEvent(new Event('input', { bubbles: true }));
+            nameBox.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
+            await sleep(300);
+
+            // Type the value into the cell
+            const editor = document.querySelector('.cell-input') ||
+                          document.querySelector('[contenteditable="true"]') ||
+                          document.activeElement;
+            if (editor) {
+              editor.focus();
+              // Clear existing content
+              document.execCommand('selectAll', false, null);
+              document.execCommand('insertText', false, value.toString());
+              // Press Enter to commit
+              editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
+              await sleep(200);
+              return { success: true, message: `Wrote "${value}" to ${cell}` };
+            }
+            return { success: false, message: "Could not find cell editor" };
+          }
+          return { success: false, message: "Could not find Name Box" };
+        }
+
+        case "navigate_sheet": {
+          const sheetName = payload.sheet || '';
+          const tabs = document.querySelectorAll('.docs-sheet-tab');
+          for (const tab of tabs) {
+            const name = tab.querySelector('.docs-sheet-tab-name');
+            if (name && name.textContent.trim() === sheetName) {
+              tab.click();
+              return { success: true, message: `Navigated to ${sheetName}` };
+            }
+          }
+          return { success: false, message: `Sheet "${sheetName}" not found` };
+        }
+
+        case "find_and_replace": {
+          // Use Ctrl+H for Sheets too
+          const target = document.activeElement || document.body;
+          dispatchKey(target, 'h', { ctrlKey: true, metaKey: navigator.platform.includes('Mac') });
+          await sleep(500);
+          const inputs = document.querySelectorAll('[aria-label="Find"], [aria-label="Replace with"]');
+          if (inputs.length >= 2) {
+            inputs[0].value = payload.find_text || '';
+            inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+            inputs[1].value = payload.replace_text || '';
+            inputs[1].dispatchEvent(new Event('input', { bubbles: true }));
+            await sleep(200);
+            const replaceAll = Array.from(document.querySelectorAll('button')).find(b =>
+              b.textContent.toLowerCase().includes('replace all')
+            );
+            if (replaceAll) { replaceAll.click(); await sleep(300); }
+            return { success: true, message: "Find and replace completed" };
+          }
+          return { success: false, message: "Could not open Find & Replace" };
+        }
+
+        default:
+          return { success: false, message: `Unsupported Google Sheets action: ${type}. For full editing, install the Google Workspace add-on.` };
+      }
+    }
+
+    // ── Google Slides Actions ───────────────────────────────────────────
+    if (site === "google_slides") {
+      return { success: false, message: `Google Slides editing via Chrome extension coming soon. Install the Google Workspace add-on for full functionality.` };
+    }
+
+    return { success: false, message: `Not on a Google Workspace app` };
+  }
+
   // Handle DOM actions
   function handleDomAction(type, payload) {
     switch (type) {
@@ -395,6 +621,12 @@ if (!window.__tsifl_content_loaded) {
     if (msg.action === "execute_dom_action") {
       sendResponse(handleDomAction(msg.type, msg.payload));
       return;
+    }
+    if (msg.action === "execute_workspace_action") {
+      handleWorkspaceAction(msg.type, msg.payload)
+        .then(result => sendResponse(result))
+        .catch(e => sendResponse({ success: false, message: e.message }));
+      return true; // keep channel open for async
     }
     if (msg.action === "get_full_page_text") {
       sendResponse({ text: getFullPageText() });
