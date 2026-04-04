@@ -1867,6 +1867,13 @@ def _parse_tool_response(response) -> dict:
     actions = [a for a in actions if isinstance(a, dict)]
 
     # ── Homework action post-processing ──────────────────────────────────────
+    # Log all actions for debugging
+    for idx, a in enumerate(actions):
+        logger.info("[ACTIONS] %d: type=%s payload_keys=%s cell=%s formula=%s value=%s",
+                     idx, a.get("type"), list(a.get("payload", {}).keys()),
+                     a.get("payload", {}).get("cell", ""),
+                     str(a.get("payload", {}).get("formula", ""))[:80],
+                     str(a.get("payload", {}).get("value", ""))[:40])
     # Fix known issues that Claude consistently gets wrong despite prompting:
     # 1. Replace Transactions!$A$4:$D$29 with Stats in DSUM formulas
     # 2. Ensure C16 has INDEX/XMATCH formula (not a plain value)
@@ -1884,30 +1891,37 @@ def _parse_tool_response(response) -> dict:
                     p[field] = val.replace("Transactions!$A$4:$D$29", "Stats").replace("Transactions!$A4:$D29", "Stats")
                     logger.info("[HW-FIX] Replaced Transactions! with Stats in DSUM: %s", p[field])
 
-    # Fix C16: if it's written as a plain value, replace with INDEX/XMATCH formula
+    # Fix C16: ensure it has the correct INDEX/XMATCH formula
+    c16_fixed = False
     for i, a in enumerate(actions):
         p = a.get("payload", {})
         cell = (p.get("cell") or "").upper()
         sheet = (p.get("sheet") or "").lower()
         if cell == "C16" and "transactions stats" in sheet:
-            if a.get("type") == "write_cell" and "formula" not in p and p.get("value") is not None:
-                # Claude wrote a plain value — replace with formula
-                actions[i] = {
-                    "type": "write_formula",
-                    "payload": {
-                        "cell": "C16",
-                        "formula": "=INDEX(Transactions!$C$5:$C$29,XMATCH(B16,Transactions!$A$5:$A$29))",
-                        "sheet": p.get("sheet", "Transactions Stats")
-                    }
+            # Whatever Claude wrote, replace with the correct formula
+            actions[i] = {
+                "type": "write_formula",
+                "payload": {
+                    "cell": "C16",
+                    "formula": "=INDEX(Transactions!$C$5:$C$29,XMATCH(B16,Transactions!$A$5:$A$29))",
+                    "sheet": p.get("sheet", "Transactions Stats")
                 }
-                logger.info("[HW-FIX] Replaced C16 plain value with INDEX/XMATCH formula")
-            elif a.get("type") == "write_formula":
-                # Claude wrote a formula but might be wrong — force correct one
-                expected = "=INDEX(Transactions!$C$5:$C$29,XMATCH(B16,Transactions!$A$5:$A$29))"
-                actual = p.get("formula", "")
-                if actual.upper().count("XMATCH") > 1 or "Stats" in actual:
-                    p["formula"] = expected
-                    logger.info("[HW-FIX] Replaced bad C16 formula with correct INDEX/XMATCH")
+            }
+            c16_fixed = True
+            logger.info("[HW-FIX] Forced C16 to INDEX/XMATCH formula (was type=%s)", a.get("type"))
+
+    # If Claude never wrote to C16 at all, inject the action
+    if has_named_range and not c16_fixed:
+        # Find where Transactions Stats actions are and insert after them
+        actions.append({
+            "type": "write_formula",
+            "payload": {
+                "cell": "C16",
+                "formula": "=INDEX(Transactions!$C$5:$C$29,XMATCH(B16,Transactions!$A$5:$A$29))",
+                "sheet": "Transactions Stats"
+            }
+        })
+        logger.info("[HW-FIX] Injected missing C16 INDEX/XMATCH formula action")
 
     # If Claude gave no reply text, generate a contextual default
     if not reply:
