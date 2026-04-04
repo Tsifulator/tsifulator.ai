@@ -1375,9 +1375,18 @@ sink("output.txt"); print(summary(model)); sink()
 8. Splitting actions across multiple tool calls — put ALL actions in ONE execute_actions call.
 9. Using structured table references (TableName[Column]) in Excel — use named ranges directly.
 10. Importing derived/analysis CSVs that don't exist — import_csv ONCE for the source file only.
-11. HOMEWORK CRITICAL — Using Transactions!$A$4:$D$29 in DSUM instead of a named range — when instructions say "use the range name Stats", you MUST first emit create_named_range (name="Stats", range="A4:D29", sheet="Transactions"), THEN write =DSUM(Stats,3,Criteria!$B$1:$B$2). NEVER skip the named range.
-12. HOMEWORK CRITICAL — Not writing INDEX/XMATCH formula — when instructions say "Create a nested INDEX and XMATCH function", ALWAYS write a formula like =INDEX(Transactions!$C$5:$C$29,XMATCH(B16,Transactions!$A$5:$A$29)). NEVER leave the cell empty or write a plain value.
-13. HOMEWORK CRITICAL — Not formatting result cells as Comma Style — when instructions say "Comma Style with no decimal places", ALWAYS emit set_number_format with format="#,##0" for ALL result cells (DSUM outputs, INDEX results, SUM totals). Missing this loses points.
+11. HOMEWORK CRITICAL — Named ranges: when instructions say "name cells A4:D29 as Stats", emit this EXACT action:
+    {"type":"create_named_range","payload":{"name":"Stats","range":"A4:D29","sheet":"Transactions"}}
+    This creates an Excel named range. Do NOT write the word "Stats" as text in a cell. Do NOT skip this action.
+    Then ALL DSUM formulas must use Stats (not Transactions!$A$4:$D$29):
+    {"type":"write_formula","payload":{"cell":"B7","formula":"=DSUM(Stats,3,Criteria!$B$1:$B$2)","sheet":"Transactions Stats"}}
+12. HOMEWORK CRITICAL — INDEX/XMATCH: when instructions say "Create a nested INDEX and XMATCH function to display the number of transactions by city", emit:
+    {"type":"write_formula","payload":{"cell":"C16","formula":"=INDEX(Transactions!$C$5:$C$29,XMATCH(B16,Transactions!$A$5:$A$29))","sheet":"Transactions Stats"}}
+    NEVER write a plain number value like 1420. ALWAYS write the formula. The cell MUST contain a formula, not a value.
+13. HOMEWORK CRITICAL — Comma Style formatting: when instructions say "Comma Style with no decimal places", emit:
+    {"type":"set_number_format","payload":{"range":"B7:C10","format":"#,##0","sheet":"Transactions Stats"}}
+    {"type":"set_number_format","payload":{"range":"C16","format":"#,##0","sheet":"Transactions Stats"}}
+    Apply to ALL cells with DSUM results, INDEX results, and SUM totals.
 """
 
 # ── Tool Definition ───────────────────────────────────────────────────────────
