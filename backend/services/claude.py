@@ -1729,10 +1729,17 @@ async def get_claude_response(message: str, context: dict,
     sheet_summary = _format_context(context)
     user_text     = f"{message}\n\n{sheet_summary}" if sheet_summary else message
 
-    # Inject homework-critical reminders into the user message when homework patterns detected
-    # (system prompt instructions get deprioritized with heavy image context)
+    # Inject homework-critical reminders when images are attached in Excel
+    # Triggers broadly: any Excel request with images OR homework keywords
     msg_lower = message.lower()
-    if any(kw in msg_lower for kw in ("homework", "assignment", "simnet", "complete", "task", "step")):
+    app_name_hw = context.get("app", "")
+    has_images = bool(images)
+    sheet_names = [s.get("name", "").lower() for s in context.get("sheets", [])]
+    has_homework_sheets = any(s in ("transactions", "criteria", "employee insurance", "depreciation") for s in sheet_names)
+    has_homework_keywords = any(kw in msg_lower for kw in ("homework", "assignment", "simnet", "complete", "task", "step", "do this", "do these", "finish", "all the"))
+    logger.info(f"[HW-CHECK] app={app_name_hw} images={has_images} hw_sheets={has_homework_sheets} hw_kw={has_homework_keywords} sheets={sheet_names}")
+    if app_name_hw == "excel" and (has_homework_keywords or (has_images and has_homework_sheets)):
+        logger.info("[HW-INJECT] Homework reminder injected into user message")
         homework_reminder = """
 
 CRITICAL REMINDERS FOR THIS ASSIGNMENT:
@@ -1894,7 +1901,12 @@ async def get_claude_stream(message: str, context: dict,
 
     # Inject homework-critical reminders (same as non-streaming endpoint)
     msg_lower_s = message.lower()
-    if any(kw in msg_lower_s for kw in ("homework", "assignment", "simnet", "complete", "task", "step")):
+    app_name_hw_s = context.get("app", "")
+    has_images_s = bool(images)
+    sheet_names_s = [s.get("name", "").lower() for s in context.get("sheets", [])]
+    has_homework_sheets_s = any(s in ("transactions", "criteria", "employee insurance", "depreciation") for s in sheet_names_s)
+    has_homework_keywords_s = any(kw in msg_lower_s for kw in ("homework", "assignment", "simnet", "complete", "task", "step", "do this", "do these", "finish", "all the"))
+    if app_name_hw_s == "excel" and (has_homework_keywords_s or (has_images_s and has_homework_sheets_s)):
         homework_reminder = """
 
 CRITICAL REMINDERS FOR THIS ASSIGNMENT:
