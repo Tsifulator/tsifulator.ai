@@ -541,9 +541,11 @@ async function handleSubmit() {
             c16.load(["formulas", "values"]);
             await ctx.sync();
             const currentFormula = c16.formulas[0][0];
-            // If C16 doesn't have a formula (just a value or empty), write INDEX/XMATCH
-            if (typeof currentFormula !== "string" || !currentFormula.startsWith("=")) {
-              console.log("[tsifl] C16 missing formula, injecting INDEX/XMATCH...");
+            const correctFormula = "=INDEX(Transactions!$C$5:$C$29,_xlfn.XMATCH(B16,Transactions!$A$5:$A$29))";
+            // Always force the correct formula — Claude writes wrong multi-XMATCH versions
+            const isCorrect = typeof currentFormula === "string" && currentFormula.includes("INDEX") && currentFormula.includes("XMATCH") && (currentFormula.match(/XMATCH/gi) || []).length === 1;
+            if (!isCorrect) {
+              console.log("[tsifl] C16 needs correct formula. Current:", currentFormula);
               // Try multiple formula variants
               const variants = [
                 "=INDEX(Transactions!$C$5:$C$29,_xlfn.XMATCH(B16,Transactions!$A$5:$A$29))",
@@ -563,7 +565,7 @@ async function handleSubmit() {
               }
               console.error("[tsifl] All C16 formula variants failed");
             } else {
-              console.log("[tsifl] C16 already has formula:", currentFormula);
+              console.log("[tsifl] C16 already correct:", currentFormula);
             }
           });
         } catch (e) { console.warn("[tsifl] C16 safety net failed:", e.message); }
