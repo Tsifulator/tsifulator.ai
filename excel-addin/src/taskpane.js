@@ -895,7 +895,40 @@ async function executeAction(action) {
       // Auto-add _xlfn. prefix for newer Excel functions that require it on Mac
       let formula = payload.formula || "";
       formula = _ensureXlfnPrefix(formula);
-      range.formulas = [[formula]];
+      // Try multiple formula approaches — Office.js on Mac can be picky
+      let formulaSet = false;
+      // Approach 1: with _xlfn. prefix
+      try {
+        range.formulas = [[formula]];
+        await ctx.sync();
+        formulaSet = true;
+      } catch (e1) {
+        console.warn("[tsifl] write_formula approach 1 failed (_xlfn):", e1.message);
+      }
+      // Approach 2: without _xlfn. prefix
+      if (!formulaSet) {
+        try {
+          const rawFormula = (payload.formula || "");
+          range.formulas = [[rawFormula]];
+          await ctx.sync();
+          formulaSet = true;
+        } catch (e2) {
+          console.warn("[tsifl] write_formula approach 2 failed (raw):", e2.message);
+        }
+      }
+      // Approach 3: formulasLocal (uses locale-specific separators)
+      if (!formulaSet) {
+        try {
+          range.formulasLocal = [[formula]];
+          await ctx.sync();
+          formulaSet = true;
+        } catch (e3) {
+          console.warn("[tsifl] write_formula approach 3 failed (formulasLocal):", e3.message);
+        }
+      }
+      if (!formulaSet) {
+        console.error("[tsifl] All formula approaches failed for:", formula);
+      }
       _applyFormat(range, payload);
       await ctx.sync();
     });
