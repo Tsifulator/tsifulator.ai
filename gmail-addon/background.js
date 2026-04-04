@@ -248,19 +248,33 @@ async function handleBrowserAction(type, payload) {
 // ── Google Workspace Action Execution ───────────────────────────────
 
 async function handleWorkspaceAction(type, payload) {
+  console.log("[tsifl bg] workspace action:", type, payload);
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  console.log("[tsifl bg] active tab:", tab?.id, tab?.url?.slice(0, 60));
   if (!tab?.id) return { success: false, message: "No active tab" };
 
+  // Ensure content script is loaded
   await safeInjectContentScript(tab.id);
 
+  // Use chrome.scripting.executeScript to call the workspace handler DIRECTLY.
+  // This bypasses chrome.runtime.sendMessage which suffers from
+  // "message port closed before response" errors when multiple listeners exist.
   try {
-    const response = await sendToTab(tab.id, {
-      action: "execute_workspace_action",
-      type,
-      payload,
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: async (actionType, actionPayload) => {
+        if (typeof window.__tsifl_workspace_action === "function") {
+          return await window.__tsifl_workspace_action(actionType, actionPayload);
+        }
+        return { success: false, message: "Content script not ready — try refreshing the page." };
+      },
+      args: [type, payload],
     });
-    return response || { success: false, message: "No response from content script" };
+    const result = results?.[0]?.result;
+    console.log("[tsifl bg] executeScript result:", result);
+    return result || { success: false, message: "No result from content script" };
   } catch (e) {
+    console.error("[tsifl bg] executeScript failed:", e);
     return { success: false, message: `Workspace action failed: ${e.message}` };
   }
 }
@@ -273,8 +287,9 @@ async function safeInjectContentScript(tabId) {
       target: { tabId },
       files: ["content.js"],
     });
+    console.log("[tsifl bg] content.js injected on tab", tabId);
   } catch (e) {
-    // Already injected, restricted page, or no permission
+    console.warn("[tsifl bg] inject error (may be OK):", e.message);
   }
 }
 

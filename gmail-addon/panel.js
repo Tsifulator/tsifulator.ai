@@ -487,7 +487,9 @@ async function executeAction(action) {
     return;
   }
 
-  // Google Workspace actions — route through content script via background.js
+  // Google Workspace actions — execute DIRECTLY on the tab via chrome.scripting.
+  // This bypasses the background service worker entirely, avoiding the
+  // "message port closed before response" bug with chrome.runtime.sendMessage.
   const workspaceActions = [
     "format_text", "insert_text", "insert_paragraph", "insert_table",
     "find_and_replace", "insert_page_break", "insert_header", "insert_footer",
@@ -499,12 +501,632 @@ async function executeAction(action) {
 
   if (workspaceActions.includes(type)) {
     try {
-      const result = await sendToBackground("execute_workspace_action", type, payload);
-      if (result && !result.success) {
-        appendMessage("assistant", result.message || "Action could not be completed on this page.");
+      // Get active tab
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) throw new Error("No active tab");
+
+      // Execute workspace action INLINE on the tab.
+      // All logic is self-contained — no dependency on content script.
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        world: "ISOLATED",
+        func: async (actionType, actionPayload) => {
+          try {
+          const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+          function selectText(term) {
+            window.getSelection()?.removeAllRanges();
+            return window.find(term, false, false, true);
+          }
+
+          function clickToolbar(label) {
+            for (const attr of ["aria-label", "data-tooltip"]) {
+              for (const variant of [label, label.toLowerCase(), label.charAt(0).toUpperCase() + label.slice(1).toLowerCase()]) {
+                const btn = document.querySelector(`[${attr}*="${variant}"]`);
+                if (btn) { btn.click(); return true; }
+              }
+            }
+            return false;
+          }
+
+          const site = (() => {
+            const path = location.pathname;
+            if (location.hostname !== "docs.google.com") return "other";
+            if (path.startsWith("/document")) return "google_docs";
+            if (path.startsWith("/spreadsheets")) return "google_sheets";
+            if (path.startsWith("/presentation")) return "google_slides";
+            return "other";
+          })();
+
+          // ── Google Docs ──────────────────────────────────────────
+          // Google Docs uses a canvas-based renderer — window.find() doesn't work.
+          // We use the native Find toolbar (Ctrl+F / Edit menu) to find & select text,
+          // then click toolbar buttons to format.
+          if (site === "google_docs") {
+
+            // Helper: open the Find toolbar and search for a term.
+            if (actionType === "format_text") {
+              const term = actionPayload.range_description || "";
+              if (!term) return { success: false, message: "No text specified" };
+
+              // Check if Find & Replace dialog is ALREADY open (from a previous run)
+              let findInput = null;
+              let findBarOpened = false;
+
+              // Scan ALL inputs — find one with aria-label/placeholder "Find" that's not a toolbar element
+              const allInputs = document.querySelectorAll('input');
+              for (const inp of allInputs) {
+                const r = inp.getBoundingClientRect();
+                if (r.width < 50 || r.height < 10) continue;
+                const lbl = (inp.getAttribute('aria-label') || '').trim();
+                const ph = (inp.placeholder || '').trim();
+                const cls = (inp.className || '').toLowerCase();
+                // Match Find dialog inputs
+                if (lbl === 'Find' || lbl === 'Find in document' || ph === 'Find' || ph === 'Find in document') {
+                  // Exclude toolbar elements
+                  if (cls.includes('docs-title') || cls.includes('omnibox') || cls.includes('toolbar-combo')) continue;
+                  findInput = inp;
+                  findBarOpened = true;
+                  break;
+                }
+              }
+
+              // If no existing dialog, open one
+              if (!findInput) {
+              // Snapshot all current inputs/editables BEFORE opening Find (with visibility)
+              const visibilityBefore = new Map();
+              document.querySelectorAll('input, textarea, [contenteditable="true"]').forEach(el => {
+                const r = el.getBoundingClientRect();
+                visibilityBefore.set(el, r.width > 0 && r.height > 0);
+              });
+
+              // Step 1: Open Find bar via Ctrl+H (Find & Replace) keyboard shortcut
+              // Synthetic keyboard — may not work on Google Docs (isTrusted=false) but worth trying
+              document.body.dispatchEvent(new KeyboardEvent("keydown", {
+                key: "h", code: "KeyH", keyCode: 72,
+                ctrlKey: true, metaKey: false,
+                bubbles: true, cancelable: true
+              }));
+              await sleep(800);
+
+              // Check if a dialog opened
+              let findInput = null;
+              let findBarOpened = false;
+
+              // Strategy A: Look for Find & Replace dialog by class
+              const frDialog = document.querySelector('.docs-findandreplacedialog');
+              if (frDialog) {
+                const dInputs = frDialog.querySelectorAll('input');
+                if (dInputs.length > 0) {
+                  findInput = dInputs[0];
+                  findBarOpened = true;
+                }
+              }
+
+              // Strategy B: Look for NEW or newly-visible inputs
+              if (!findInput) {
+                const inputsAfter = document.querySelectorAll('input, textarea, [contenteditable="true"]');
+                for (const el of inputsAfter) {
+                  const rect = el.getBoundingClientRect();
+                  if (rect.width <= 0 || rect.height <= 0) continue;
+                  const wasBefore = visibilityBefore.get(el);
+                  if (wasBefore === undefined || wasBefore === false) {
+                    findInput = el;
+                    findBarOpened = true;
+                    break;
+                  }
+                }
+              }
+
+              // Strategy C: If Ctrl+H didn't work, try clicking Find button in toolbar
+              if (!findInput) {
+                // Try many selectors — Google Docs toolbar uses various attribute patterns
+                const findBtn = document.querySelector('[data-tooltip="Find and replace"]') ||
+                               document.querySelector('[aria-label="Find and replace"]') ||
+                               document.querySelector('[data-tooltip="Find"]') ||
+                               document.querySelector('[aria-label="Search the menus (Alt+/)"]')?.closest('.docs-icon-search') ||
+                               document.querySelector('.docs-icon-search')?.closest('div[role="button"]') ||
+                               document.querySelector('.docs-icon-img-container[style*="find"]')?.closest('div[role="button"]') ||
+                               // The magnifying glass on the left toolbar
+                               document.querySelector('[aria-label*="Search" i][role="button"]') ||
+                               document.querySelector('div.goog-toolbar-button[aria-label*="ind"]');
+                if (findBtn) {
+                  // Record which inputs are currently visible
+                  const visibleBefore = new Map();
+                  document.querySelectorAll('input, textarea, [contenteditable="true"]').forEach(el => {
+                    const r = el.getBoundingClientRect();
+                    visibleBefore.set(el, r.width > 0 && r.height > 0);
+                  });
+                  findBtn.click();
+                  await sleep(800);
+                  // Find NEW inputs or inputs that became visible
+                  const inputsAfterClick = document.querySelectorAll('input, textarea, [contenteditable="true"]');
+                  for (const el of inputsAfterClick) {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width <= 0 || rect.height <= 0) continue;
+                    const wasBefore = visibleBefore.get(el);
+                    // Either brand new element OR was hidden and now visible
+                    if (wasBefore === undefined || wasBefore === false) {
+                      findInput = el;
+                      findBarOpened = true;
+                      break;
+                    }
+                  }
+                }
+              }
+
+              // Strategy D: If still nothing, try Edit menu → Find and replace
+              if (!findInput) {
+                const menuBtnsAll = document.querySelectorAll('.menu-button');
+                let editMenuBtn = null;
+                for (const btn of menuBtnsAll) {
+                  if (btn.textContent.trim() === "Edit") { editMenuBtn = btn; break; }
+                }
+                if (editMenuBtn) {
+                  const visBeforeMenu = new Map();
+                  document.querySelectorAll('input, textarea, [contenteditable="true"]').forEach(el => {
+                    const r = el.getBoundingClientRect();
+                    visBeforeMenu.set(el, r.width > 0 && r.height > 0);
+                  });
+                  // Open Edit menu
+                  editMenuBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+                  await sleep(50);
+                  editMenuBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+                  editMenuBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                  await sleep(600);
+
+                  // Find the "Find and replace" menu item
+                  const menuItems = document.querySelectorAll('.goog-menuitem');
+                  let frItem = null;
+                  for (const el of menuItems) {
+                    if (el.textContent.trim().toLowerCase().includes("find and replace")) {
+                      frItem = el;
+                      break;
+                    }
+                  }
+
+                  if (frItem) {
+                    // Get the inner content element — Closure Library renders content inside
+                    const target = frItem.querySelector('.goog-menuitem-content') || frItem;
+                    const rect = target.getBoundingClientRect();
+                    const cx = rect.left + rect.width / 2;
+                    const cy = rect.top + rect.height / 2;
+                    const evtBase = {
+                      bubbles: true, cancelable: true, view: window,
+                      clientX: cx, clientY: cy, screenX: cx, screenY: cy,
+                      button: 0, buttons: 1
+                    };
+
+                    // Full realistic mouse event sequence with coordinates
+                    target.dispatchEvent(new PointerEvent('pointerover', evtBase));
+                    target.dispatchEvent(new MouseEvent('mouseover', evtBase));
+                    target.dispatchEvent(new PointerEvent('pointerenter', { ...evtBase, bubbles: false }));
+                    target.dispatchEvent(new MouseEvent('mouseenter', { ...evtBase, bubbles: false }));
+                    await sleep(100);
+                    target.dispatchEvent(new PointerEvent('pointerdown', evtBase));
+                    target.dispatchEvent(new MouseEvent('mousedown', evtBase));
+                    await sleep(50);
+                    target.dispatchEvent(new PointerEvent('pointerup', evtBase));
+                    target.dispatchEvent(new MouseEvent('mouseup', evtBase));
+                    target.dispatchEvent(new MouseEvent('click', evtBase));
+                    await sleep(800);
+
+                    // If that didn't work, try clicking the outer element too
+                    const frDialog2 = document.querySelector('.docs-findandreplacedialog');
+                    if (!frDialog2) {
+                      frItem.dispatchEvent(new PointerEvent('pointerdown', evtBase));
+                      frItem.dispatchEvent(new MouseEvent('mousedown', evtBase));
+                      await sleep(50);
+                      frItem.dispatchEvent(new PointerEvent('pointerup', evtBase));
+                      frItem.dispatchEvent(new MouseEvent('mouseup', evtBase));
+                      frItem.dispatchEvent(new MouseEvent('click', evtBase));
+                      await sleep(800);
+                    }
+                  }
+
+                  // Detect new/newly-visible inputs
+                  const inputsAfterMenu = document.querySelectorAll('input, textarea, [contenteditable="true"]');
+                  for (const el of inputsAfterMenu) {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width <= 0 || rect.height <= 0) continue;
+                    const wasBefore = visBeforeMenu.get(el);
+                    if (wasBefore === undefined || wasBefore === false) {
+                      findInput = el;
+                      findBarOpened = true;
+                      break;
+                    }
+                  }
+                }
+              }
+
+              // Strategy E: Last resort — scan ALL visible inputs for anything find-related
+              if (!findInput) {
+                const allInputs = Array.from(document.querySelectorAll('input, textarea, [contenteditable="true"]'));
+                const diagInfo = allInputs.filter(i => {
+                  const r = i.getBoundingClientRect();
+                  return r.width > 0 && r.height > 0;
+                }).map(i => {
+                  const tag = i.tagName;
+                  const cls = (i.className || '').substring(0, 30);
+                  const lbl = i.getAttribute('aria-label') || i.type || '';
+                  const par = (i.parentElement?.className || '').substring(0, 30);
+                  return `${tag}.${cls}|${lbl}|parent:${par}`;
+                });
+                return { success: false, message: `Could not open Find bar. Visible inputs: ${diagInfo.slice(0, 8).join(" /// ")}` };
+              }
+              } // end: if (!findInput) — already-open dialog check
+
+              // Final safety check
+              if (!findInput) {
+                // Dump ALL visible inputs for debugging
+                const debugInputs = Array.from(document.querySelectorAll('input')).filter(i => {
+                  const r = i.getBoundingClientRect();
+                  return r.width > 20 && r.height > 5;
+                }).map(i => {
+                  return `aria="${i.getAttribute('aria-label')}" ph="${i.placeholder}" cls="${(i.className||'').substring(0,25)}"`;
+                });
+                return { success: false, message: `findInput null after all strategies. Inputs: ${debugInputs.slice(0,6).join(' | ')}` };
+              }
+
+              // Step 3: Fill search text and click Next to find & select it
+              findInput.focus();
+              const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+              if (nativeSetter) nativeSetter.call(findInput, term);
+              else findInput.value = term;
+              findInput.dispatchEvent(new Event("input", { bubbles: true }));
+              findInput.dispatchEvent(new Event("change", { bubbles: true }));
+              await sleep(500);
+
+              // Click "Next" / "Find" button in the Find & Replace dialog
+              // (Enter key doesn't work because isTrusted=false)
+              let nextClicked = false;
+              const nextBtn = document.querySelector('[aria-label="Next"]') ||
+                             document.querySelector('[aria-label="Find next"]') ||
+                             document.querySelector('.docs-findandreplacedialog button[name="next"]') ||
+                             document.querySelector('.docs-findandreplacedialog [data-tooltip*="Next"]');
+              if (nextBtn) {
+                nextBtn.click();
+                nextClicked = true;
+                await sleep(500);
+              }
+              // Fallback: look for any button in the dialog with "next" or arrow text
+              if (!nextClicked) {
+                const dialogBtns = document.querySelectorAll('.docs-findandreplacedialog button, [role="dialog"] button');
+                for (const btn of dialogBtns) {
+                  const lbl = (btn.getAttribute('aria-label') || btn.textContent || '').toLowerCase();
+                  if (lbl.includes('next') || lbl.includes('find') || lbl === '▼' || lbl === '↓') {
+                    btn.click();
+                    nextClicked = true;
+                    await sleep(500);
+                    break;
+                  }
+                }
+              }
+              // Last fallback: try Enter anyway
+              if (!nextClicked) {
+                findInput.dispatchEvent(new KeyboardEvent("keydown", {
+                  key: "Enter", code: "Enter", keyCode: 13, bubbles: true, cancelable: true
+                }));
+                await sleep(500);
+              }
+
+              // Step 7: Apply formatting WHILE dialog is still open
+              // (Google Docs deselects text when dialog closes)
+              await sleep(200);
+              let formatted = false;
+              const formatLog = [];
+              formatLog.push("nextBtn:" + (nextClicked ? "clicked" : "NOT FOUND"));
+
+              if (actionPayload.bold) {
+                const ok = clickToolbar("Bold");
+                formatLog.push("bold:" + ok);
+                formatted = formatted || ok;
+                await sleep(150);
+              }
+              if (actionPayload.italic) {
+                const ok = clickToolbar("Italic");
+                formatLog.push("italic:" + ok);
+                formatted = formatted || ok;
+                await sleep(150);
+              }
+              if (actionPayload.underline) {
+                const ok = clickToolbar("Underline");
+                formatLog.push("underline:" + ok);
+                formatted = formatted || ok;
+                await sleep(150);
+              }
+
+              if (actionPayload.highlight_color) {
+                const colorName = actionPayload.highlight_color.toLowerCase();
+                const hlBtn = document.querySelector('[aria-label*="Highlight color"]') ||
+                             document.querySelector('[data-tooltip*="Highlight color"]') ||
+                             document.querySelector('[aria-label*="highlight" i]');
+                formatLog.push("hlBtn:" + (hlBtn ? hlBtn.getAttribute("aria-label") : "NOT FOUND"));
+
+                if (hlBtn) {
+                  // Snapshot elements before clicking to detect the color popup
+                  const elsBefore = new Set(document.querySelectorAll('*'));
+
+                  // In MD3 Google Docs, the highlight button may have a dropdown arrow
+                  // as a sibling or child element. Try multiple approaches to open the picker.
+                  const arrow = hlBtn.querySelector('.goog-toolbar-menu-button-dropdown') ||
+                               hlBtn.querySelector('[class*="dropdown"]') ||
+                               hlBtn.querySelector('svg')?.parentElement;
+
+                  // Approach 1: Click the dropdown arrow with coordinates
+                  const clickTarget = arrow || hlBtn;
+                  const ctRect = clickTarget.getBoundingClientRect();
+                  // Click near the RIGHT edge of the button (where dropdown arrows are)
+                  const cx = arrow ? (ctRect.left + ctRect.width / 2) : (ctRect.right - 5);
+                  const cy = ctRect.top + ctRect.height / 2;
+                  const evtOpts = {
+                    bubbles: true, cancelable: true, view: window,
+                    clientX: cx, clientY: cy, screenX: cx, screenY: cy,
+                    button: 0, buttons: 1
+                  };
+                  clickTarget.dispatchEvent(new PointerEvent('pointerdown', evtOpts));
+                  clickTarget.dispatchEvent(new MouseEvent('mousedown', evtOpts));
+                  await sleep(50);
+                  clickTarget.dispatchEvent(new PointerEvent('pointerup', evtOpts));
+                  clickTarget.dispatchEvent(new MouseEvent('mouseup', evtOpts));
+                  clickTarget.dispatchEvent(new MouseEvent('click', evtOpts));
+                  await sleep(700);
+
+                  // Find NEW elements that appeared (the color popup)
+                  let colorPopupEls = [];
+                  const allNow = document.querySelectorAll('[style*="background"], [data-color], [role="option"], [role="listbox"] *, [class*="color"] [style]');
+                  for (const el of allNow) {
+                    if (!elsBefore.has(el)) colorPopupEls.push(el);
+                  }
+                  formatLog.push("newPopupEls:" + colorPopupEls.length);
+
+                  // Also scan ALL elements with background-color style (popup might reuse existing nodes)
+                  if (colorPopupEls.length === 0) {
+                    // Look for any popup/overlay that appeared
+                    const popups = document.querySelectorAll('[role="listbox"], [role="menu"], [class*="popup"], [class*="picker"], [class*="palette"]');
+                    for (const popup of popups) {
+                      const r = popup.getBoundingClientRect();
+                      if (r.width > 0 && r.height > 0) {
+                        colorPopupEls = Array.from(popup.querySelectorAll('*'));
+                        formatLog.push("popup found:" + popup.className.substring(0, 30));
+                        break;
+                      }
+                    }
+                  }
+
+                  // Color hex map for matching
+                  const hexMap = {
+                    yellow: ['#ffff00', '#fff200', '#ffd600', '#ffff00', 'rgb(255, 255, 0)', 'rgb(255, 242, 0)'],
+                    green: ['#00ff00', '#00c853', '#00e676', 'rgb(0, 255, 0)'],
+                    cyan: ['#00ffff', '#00bcd4', 'rgb(0, 255, 255)'],
+                    blue: ['#0000ff', '#2962ff', 'rgb(0, 0, 255)'],
+                    red: ['#ff0000', '#d50000', 'rgb(255, 0, 0)'],
+                    orange: ['#ff9900', '#ff6d00', '#ff9900', 'rgb(255, 153, 0)', 'rgb(255, 109, 0)'],
+                    pink: ['#ff00ff', '#f50057', '#e91e63', 'rgb(255, 0, 255)'],
+                    magenta: ['#ff00ff', 'rgb(255, 0, 255)'],
+                  };
+                  const targetHexes = hexMap[colorName] || [colorName];
+
+                  let clicked = false;
+
+                  // Pass 1: Check new popup elements by background-color
+                  for (const el of colorPopupEls) {
+                    const bg = window.getComputedStyle(el).backgroundColor;
+                    if (!bg || bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent') continue;
+                    const bgLower = bg.toLowerCase();
+                    const matches = targetHexes.some(h => bgLower.includes(h)) || bgLower.includes(colorName);
+                    if (matches) {
+                      el.click(); clicked = true;
+                      formatLog.push("popup color clicked:" + bg);
+                      break;
+                    }
+                  }
+
+                  // Pass 2: Check by aria-label, title, data attributes
+                  if (!clicked) {
+                    const labeled = document.querySelectorAll('[data-color], [aria-label*="color" i], [title]');
+                    for (const el of labeled) {
+                      const lbl = (el.getAttribute("aria-label") || el.getAttribute("title") || "").toLowerCase();
+                      const dc = (el.getAttribute("data-color") || "").toLowerCase();
+                      if (lbl.includes(colorName) || dc.includes(colorName)) {
+                        el.click(); clicked = true;
+                        formatLog.push("label color clicked:" + (lbl || dc).substring(0, 30));
+                        break;
+                      }
+                      for (const hex of targetHexes) {
+                        if (dc.includes(hex)) {
+                          el.click(); clicked = true;
+                          formatLog.push("hex color clicked:" + dc);
+                          break;
+                        }
+                      }
+                      if (clicked) break;
+                    }
+                  }
+
+                  // Pass 3: Scan ALL visible small elements with bg color (brute force color picker detection)
+                  if (!clicked) {
+                    const allEls = document.querySelectorAll('div, span, td, button');
+                    const colorEls = [];
+                    for (const el of allEls) {
+                      const r = el.getBoundingClientRect();
+                      // Color cells are typically small squares (10-30px)
+                      if (r.width < 8 || r.width > 50 || r.height < 8 || r.height > 50) continue;
+                      if (Math.abs(r.width - r.height) > 10) continue; // roughly square
+                      const bg = window.getComputedStyle(el).backgroundColor;
+                      if (!bg || bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent' || bg === 'rgb(255, 255, 255)') continue;
+                      colorEls.push({ el, bg });
+                    }
+                    formatLog.push("squareColorEls:" + colorEls.length);
+
+                    for (const { el, bg } of colorEls) {
+                      const bgLower = bg.toLowerCase();
+                      const matches = targetHexes.some(h => bgLower.includes(h)) || bgLower.includes(colorName);
+                      if (matches) {
+                        el.click(); clicked = true;
+                        formatLog.push("square color clicked:" + bg);
+                        break;
+                      }
+                    }
+
+                    // If no exact match but we have color cells, pick yellow as default
+                    if (!clicked && colorEls.length > 0) {
+                      // Try to find ANY yellow-ish cell as default highlight
+                      for (const { el, bg } of colorEls) {
+                        if (bg.includes('255, 255, 0') || bg.includes('255, 242, 0') || bg.includes('255, 214, 0')) {
+                          el.click(); clicked = true;
+                          formatLog.push("default yellow:" + bg);
+                          break;
+                        }
+                      }
+                    }
+                  }
+
+                  if (!clicked) formatLog.push("no color applied");
+                  formatted = clicked;
+                }
+              }
+
+              if (actionPayload.font_color) {
+                const colorBtn = document.querySelector('[aria-label*="Text color"]') ||
+                                document.querySelector('[data-tooltip*="Text color"]');
+                if (colorBtn) {
+                  const arrow = colorBtn.querySelector('[class*="dropdown"]') || colorBtn;
+                  arrow.click();
+                  await sleep(500);
+                  const cells = document.querySelectorAll('[data-color], [aria-label], [title]');
+                  for (const cell of cells) {
+                    const lbl = (cell.getAttribute("aria-label") || cell.getAttribute("title") || "").toLowerCase();
+                    if (lbl.includes(actionPayload.font_color.toLowerCase())) { cell.click(); formatted = true; break; }
+                  }
+                }
+              }
+
+              // Step 8: Close any open find bar or dialog
+              const closeBtnFR = document.querySelector('.docs-findandreplacedialog [aria-label="Close"]') ||
+                                document.querySelector('.docs-findandreplacedialog-close') ||
+                                document.querySelector('.docs-findinput-container [aria-label="Close"]') ||
+                                document.querySelector('[aria-label="Close"][class*="Gm3Wiz"]') ||
+                                // MD3: close button near the Find dialog
+                                (() => {
+                                  const closeBtns = document.querySelectorAll('[aria-label="Close"], button[aria-label="Close"]');
+                                  for (const b of closeBtns) {
+                                    const r = b.getBoundingClientRect();
+                                    if (r.width > 0 && r.height > 0 && r.top < 200) return b;
+                                  }
+                                  return null;
+                                })();
+              if (closeBtnFR) {
+                closeBtnFR.click();
+                await sleep(200);
+              }
+              // Also close the find bar if it's open (press Escape on the find input)
+              if (findInput) {
+                findInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+                await sleep(200);
+              }
+
+              return formatted
+                ? { success: true, message: `Formatted "${term}" [${formatLog.join(", ")}]` }
+                : { success: false, message: `Found "${term}" but toolbar buttons not found. Log: ${formatLog.join(", ")}` };
+            }
+
+            if (actionType === "find_and_replace") {
+              // Click Edit menu → Find and replace
+              const menuBtns2 = document.querySelectorAll('.menu-button.goog-control');
+              let editMenu2 = null;
+              for (const btn of menuBtns2) { if (btn.textContent.trim() === "Edit") { editMenu2 = btn; break; } }
+              if (!editMenu2) return { success: false, message: "Could not find Edit menu" };
+              editMenu2.click();
+              await sleep(400);
+              const menuItems = document.querySelectorAll('[role="menuitem"], .goog-menuitem');
+              const frItem = Array.from(menuItems).find(el => el.textContent.toLowerCase().includes("find and replace"));
+              if (!frItem) return { success: false, message: "Could not find Find & Replace menu item" };
+              frItem.click();
+              await sleep(500);
+              const inputs = Array.from(document.querySelectorAll('input[type="text"]')).filter(i => i.offsetParent !== null);
+              if (inputs.length >= 2) {
+                inputs[0].focus(); inputs[0].value = actionPayload.find_text || "";
+                inputs[0].dispatchEvent(new Event("input", { bubbles: true }));
+                inputs[1].focus(); inputs[1].value = actionPayload.replace_text || "";
+                inputs[1].dispatchEvent(new Event("input", { bubbles: true }));
+                await sleep(200);
+                const raBtn = Array.from(document.querySelectorAll("button")).find(b => b.textContent.toLowerCase().includes("replace all"));
+                if (raBtn) { raBtn.click(); await sleep(300); }
+                const closeBtn = document.querySelector('[aria-label="Close"]');
+                if (closeBtn) closeBtn.click();
+                return { success: true, message: "Find and replace completed" };
+              }
+              return { success: false, message: "Could not find dialog inputs" };
+            }
+
+            if (actionType === "insert_text") {
+              document.execCommand("insertText", false, actionPayload.text || "");
+              return { success: true, message: "Text inserted" };
+            }
+
+            return { success: false, message: `Google Docs action "${actionType}" not yet supported.` };
+          }
+
+          // ── Google Sheets ────────────────────────────────────────
+          if (site === "google_sheets") {
+            if (actionType === "write_cell") {
+              const cell = actionPayload.cell || "A1";
+              const value = actionPayload.formula || actionPayload.value || "";
+              const nameBox = document.querySelector("#t-name-box input") ||
+                             document.querySelector('[aria-label="Name Box"]');
+              if (nameBox) {
+                nameBox.click(); await sleep(100);
+                nameBox.focus(); nameBox.value = cell;
+                nameBox.dispatchEvent(new Event("input", { bubbles: true }));
+                nameBox.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, bubbles: true }));
+                await sleep(300);
+                const editor = document.querySelector(".cell-input") || document.activeElement;
+                if (editor) {
+                  editor.focus();
+                  document.execCommand("selectAll", false, null);
+                  document.execCommand("insertText", false, value.toString());
+                  editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, bubbles: true }));
+                  return { success: true, message: `Wrote "${value}" to ${cell}` };
+                }
+              }
+              return { success: false, message: "Could not find Name Box" };
+            }
+
+            if (actionType === "navigate_sheet") {
+              const tabs = document.querySelectorAll(".docs-sheet-tab");
+              for (const tab of tabs) {
+                const name = tab.querySelector(".docs-sheet-tab-name");
+                if (name && name.textContent.trim() === (actionPayload.sheet || "")) {
+                  tab.click();
+                  return { success: true, message: `Navigated to ${actionPayload.sheet}` };
+                }
+              }
+              return { success: false, message: `Sheet "${actionPayload.sheet}" not found` };
+            }
+
+            return { success: false, message: `Google Sheets action "${actionType}" not yet supported.` };
+          }
+
+          return { success: false, message: `Not on a supported Google Workspace page (detected: ${site})` };
+          } catch (err) {
+            return { success: false, message: "SCRIPT ERROR: " + (err.message || err) + " | stack: " + (err.stack || "").substring(0, 200) };
+          }
+        },
+        args: [type, payload],
+      });
+
+      const result = results?.[0]?.result;
+      console.log("workspace result:", result);
+      // ALWAYS show result during development so we can see what happened
+      if (result?.message) {
+        appendMessage("assistant", result.message);
+      } else if (!result) {
+        appendMessage("assistant", "No result from workspace action.");
       }
     } catch (e) {
       console.error(`workspace ${type} failed:`, e);
+      appendMessage("assistant", `Could not execute ${type}: ${e.message || e}`);
     }
     return;
   }

@@ -1,8 +1,22 @@
 """
 Notes API — AI-powered notes with Supabase storage.
 CRUD operations for notes with AI summarization and action extraction.
+
+Required Supabase table:
+  CREATE TABLE IF NOT EXISTS notes (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT 'Untitled',
+    content TEXT DEFAULT '',
+    folder TEXT DEFAULT 'General',
+    tags TEXT[] DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS idx_notes_user ON notes(user_id);
 """
 
+import uuid
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
@@ -15,7 +29,7 @@ router = APIRouter()
 try:
     from supabase import create_client
     SUPABASE_URL = os.getenv("SUPABASE_URL", "https://dvynmzeyttwlmvunicqz.supabase.co")
-    SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY", os.getenv("SUPABASE_ANON_KEY", ""))
+    SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY", os.getenv("SUPABASE_ANON_KEY", os.getenv("SUPABASE_KEY", "")))
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_KEY else None
 except Exception:
     supabase = None
@@ -34,11 +48,12 @@ class NoteUpdate(BaseModel):
     content: Optional[str] = None
     tags: Optional[List[str]] = None
     folder: Optional[str] = None
+    pinned: Optional[bool] = None
+    user_id: Optional[str] = None
 
 
 # In-memory fallback when Supabase is unavailable
 _notes_store = {}
-_note_counter = 0
 
 
 def _get_notes_for_user(user_id: str) -> list:
@@ -48,7 +63,11 @@ def _get_notes_for_user(user_id: str) -> list:
             return result.data or []
         except Exception:
             pass
-    return [n for n in _notes_store.values() if n["user_id"] == user_id]
+    return sorted(
+        [n for n in _notes_store.values() if n["user_id"] == user_id],
+        key=lambda n: n.get("updated_at", ""),
+        reverse=True
+    )
 
 
 @router.get("/")
@@ -87,8 +106,8 @@ async def get_note(note_id: str, user_id: str):
 
 @router.post("/")
 async def create_note(note: NoteCreate):
-    global _note_counter
     now = datetime.utcnow().isoformat()
+    note_id = str(uuid.uuid4())
     data = {
         "user_id": note.user_id,
         "title": note.title,
@@ -103,20 +122,19 @@ async def create_note(note: NoteCreate):
         try:
             result = supabase.table("notes").insert(data).execute()
             return result.data[0] if result.data else data
-        except Exception as e:
-            # Fall through to in-memory
+        except Exception:
             pass
 
-    _note_counter += 1
-    data["id"] = str(_note_counter)
-    _notes_store[data["id"]] = data
+    # In-memory fallback with proper UUID
+    data["id"] = note_id
+    _notes_store[note_id] = data
     return data
 
 
 @router.put("/{note_id}")
 async def update_note(note_id: str, user_id: str, update: NoteUpdate):
     now = datetime.utcnow().isoformat()
-    changes = {k: v for k, v in update.dict().items() if v is not None}
+    changes = {k: v for k, v in update.dict().items() if v is not None and k != "user_id"}
     changes["updated_at"] = now
 
     if supabase:
@@ -157,7 +175,6 @@ class NoteAIRequest(BaseModel):
 @router.post("/{note_id}/ai")
 async def ai_action_on_note(note_id: str, request: NoteAIRequest):
     """Run AI on a note: summarize, expand, rewrite, extract action items, or ask a question."""
-    # Get the note
     note = None
     if supabase:
         try:
@@ -170,7 +187,6 @@ async def ai_action_on_note(note_id: str, request: NoteAIRequest):
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
 
-    # Build prompt based on action
     prompts = {
         "summarize": f"Summarize this note concisely. Provide a TL;DR and key points as bullets.\n\nTitle: {note.get('title', '')}\n\n{note.get('content', '')}",
         "expand": f"Expand on this note with more detail, examples, and analysis. Keep the same structure but add depth.\n\nTitle: {note.get('title', '')}\n\n{note.get('content', '')}",

@@ -16,43 +16,95 @@
 
       <div id="login-form">
         <input type="email"    id="auth-email"    placeholder="Email" autocomplete="email"/>
-        <input type="password" id="auth-password" placeholder="Password" autocomplete="current-password"/>
+        <div id="password-wrap" style="position:relative;">
+          <input type="password" id="auth-password" placeholder="Password" autocomplete="current-password"/>
+          <button type="button" id="toggle-pw-btn" title="Show password" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:14px;color:#64748B;">&#128065;</button>
+        </div>
         <button id="login-btn">Sign In</button>
         <button id="signup-btn" class="secondary">Create Account</button>
         <div id="auth-error"></div>
+        <button id="forgot-pw-btn" style="background:none;border:none;color:#0D5EAF;font-size:11px;cursor:pointer;margin-top:4px;">Forgot password?</button>
       </div>
     </div>
 
     <!-- ── MAIN CHAT SCREEN (shown after login) ── -->
     <div id="chat-screen" style="display:none;">
 
+      <!-- Session expiry warning banner -->
+      <div id="session-warning" style="display:none;background:#FFFBEB;color:#D97706;padding:4px 10px;font-size:11px;text-align:center;border-bottom:1px solid #FDE68A;">
+        Session expires soon <button id="refresh-session-btn" style="background:#D97706;color:white;border:none;border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;margin-left:6px;">Refresh</button>
+      </div>
+
       <div id="header">
         <img id="logo-img" src="/assets/tsifl-wordmark.png" alt="tsifl" />
         <div id="header-right">
+          <button id="templates-btn" class="header-btn" title="Templates">Templates</button>
+          <span id="slide-count" style="font-size:10px;color:#64748B;"></span>
+          <button id="undo-btn" class="header-btn" title="Undo last action" style="display:none;">Undo</button>
           <span id="tasks-remaining"></span>
-          <button id="logout-btn" title="Sign out">↩</button>
+          <button id="logout-btn" title="Sign out">&#8617;</button>
         </div>
+      </div>
+
+      <!-- Templates dropdown -->
+      <div id="templates-dropdown" style="display:none;position:absolute;top:36px;right:60px;background:white;border:1px solid #E2E8F0;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.1);z-index:100;min-width:200px;">
+        <button class="template-item" data-template="Pitch Deck (10 slides): Title, Problem, Solution, Market Size, Business Model, Traction, Competition, Team, Financials, Ask. Use tsifl brand colors.">Pitch Deck</button>
+        <button class="template-item" data-template="Board Meeting Deck: Agenda, Executive Summary, Financial Performance, KPIs, Strategic Initiatives, Risk Register, Outlook, Next Steps">Board Meeting</button>
+        <button class="template-item" data-template="Quarterly Review: Highlights, Revenue, Expenses, Margins, YoY Comparison, Guidance">Quarterly Review</button>
+        <button class="template-item" data-template="Investment Memo: Executive Summary, Company Overview, Industry Analysis, Financial Analysis, Valuation, Risks, Recommendation">Investment Memo</button>
       </div>
 
       <div id="user-bar"></div>
 
+      <!-- Progress bar -->
+      <div id="progress-bar-wrap" style="display:none;padding:0 12px;">
+        <div style="background:#E2E8F0;border-radius:2px;height:3px;width:100%;overflow:hidden;">
+          <div id="progress-bar" style="background:#0D5EAF;height:100%;width:0%;transition:width 0.3s ease;"></div>
+        </div>
+        <div id="progress-text" style="font-size:10px;color:#64748B;text-align:center;margin-top:2px;"></div>
+      </div>
+
+      <div id="quick-actions">
+        <button class="quick-btn" data-prompt="Give me a slide overview - list all slide titles and their content summary">Slide overview</button>
+        <button class="quick-btn" data-prompt="Generate speaker notes for all slides based on the slide content">Generate notes</button>
+        <button class="quick-btn" data-prompt="Generate a summary slide with 3-5 key takeaways from all existing slides">Summary slide</button>
+        <button class="quick-btn" data-prompt="Apply tsifl brand colors (primary #0D5EAF, secondary #1E293B, accent #16A34A) to all slides">Apply brand</button>
+        <button class="quick-btn" data-prompt="Format these slides professionally with consistent fonts, colors, and layout">Format</button>
+        <button class="quick-btn" data-prompt="Build a presentation deck from the following outline - create one slide per topic with appropriate layouts">Build from outline</button>
+      </div>
+
       <div id="chat-history"></div>
+
+      <!-- Action history panel -->
+      <div id="history-panel" style="display:none;max-height:150px;overflow-y:auto;border-top:1px solid #E2E8F0;padding:6px 10px;font-size:11px;">
+        <div style="font-weight:600;color:#64748B;margin-bottom:4px;cursor:pointer;" id="history-toggle">History &#9660;</div>
+        <div id="history-list"></div>
+      </div>
 
       <div id="input-area">
         <div id="image-preview-bar" style="display:none;"></div>
         <textarea
           id="user-input"
-          placeholder="Create slides, add charts, design presentations..."
-          rows="3"
+          placeholder="Ask tsifl about your presentation..."
+          rows="2"
         ></textarea>
         <div id="input-actions">
-          <input type="file" id="image-input" accept="image/*" multiple style="display:none;" />
-          <button id="attach-btn" title="Attach image">+</button>
+          <div id="attach-wrap" style="position:relative;flex-shrink:0;">
+            <input type="file" id="image-input" accept="image/*,.pdf,.csv,.txt,.json,.xml,.r,.R,.py,.js,.ts,.sql,.md,.html,.yaml,.yml,.docx,.xlsx,.sas,.do,.log" multiple style="position:absolute;top:0;left:0;width:100%;height:100%;opacity:0;cursor:pointer;z-index:2;" />
+            <button id="attach-btn" title="Attach file" style="pointer-events:none;">+</button>
+          </div>
           <button id="submit-btn">Send</button>
         </div>
       </div>
 
       <div id="status-bar">Ready</div>
+
+      <!-- Auth debug panel — triple-click logo to show -->
+      <div id="debug-panel" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#1E293B;color:#E2E8F0;padding:8px 10px;font-size:10px;font-family:monospace;z-index:200;">
+        <div>Token expires: <span id="dbg-expiry">—</span></div>
+        <div>Last sync: <span id="dbg-last-sync">—</span></div>
+        <div>Session source: <span id="dbg-source">—</span></div>
+      </div>
     </div>
 
   </div>

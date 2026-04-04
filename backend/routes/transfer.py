@@ -22,7 +22,7 @@ _transfer_store: dict = {}
 # TTL defaults
 TTL_SECONDS = 300  # 5 minutes
 LONG_TTL_SECONDS = 3600  # 1 hour for r_output and data_snapshot
-_LONG_TTL_TYPES = {"r_output", "data_snapshot"}
+_LONG_TTL_TYPES = {"r_output", "data_snapshot", "image"}
 
 
 def _load_store():

@@ -7,8 +7,11 @@ No text parsing needed — actions come back as typed tool calls every time.
 import anthropic
 import os
 import json
+import logging
 from dotenv import load_dotenv
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env", override=True)
 
@@ -51,7 +54,10 @@ _HEAVY_PATTERNS = re.compile(
     r"(why .{0,10}(isn.?t|doesn.?t|won.?t|can.?t|not working|broken|wrong|error))|"
     r"(restructure|reorganize|transform .{0,20}(data|sheet|workbook))|"
     r"(pivot|vlookup.*index.*match|array formula|dynamic array)|"
-    r"(build .{0,10}(me |a )?(complete|full|entire))",
+    r"(build .{0,10}(me |a )?(complete|full|entire))|"
+    r"(homework|assignment|simnet|task.?\d|step.?\d|complete .{0,15}(tasks?|steps?|instructions?))|"
+    r"(dsum|sumifs|countifs|db\s*function|depreciation|named.?range)|"
+    r"(formula.{0,15}(absolute|relative|mixed|reference))",
     re.IGNORECASE
 )
 
@@ -123,8 +129,9 @@ Example BAD replies (never do this):
 
 ## ACTION RULES
 - Put ALL actions in a SINGLE execute_actions call.
-- Everything happens in this one response. Never save work for a follow-up.
+- Everything happens in this one response. Never save work for a follow-up. NEVER say "Data imported" or "Let me know what analysis to run" — always complete the FULL task.
 - Complete EVERY task in the user's message. If the user lists 11 steps across 5 sheets, emit actions for ALL 11 steps across ALL 5 sheets.
+- When creating a multi-sheet workbook: emit ALL actions in ONE response — add_sheet + write_range + format_range + add_chart for EVERY sheet. Do NOT create empty sheets and ask the user what to do next. Fill every sheet with data.
 - **FOR RSTUDIO: ALWAYS emit exactly ONE run_r_code action** with all R code combined into a single code string. NEVER split R code across multiple actions — combine everything into one code block separated by newlines. This is critical — multiple run_r_code actions cause errors.
 - **FOR RSTUDIO + IMAGES/SCREENSHOTS: You MUST ALWAYS generate a run_r_code action.** When the user sends screenshots (homework, plots, data, questions), your job is to write R code that answers/solves what's shown. NEVER just describe the screenshot without generating code. A text-only reply to an RStudio image request is ALWAYS wrong.
 
@@ -163,17 +170,114 @@ Also emit navigate_sheet before each group of actions targeting a different shee
 - import_csv: import a CSV/TSV file into Excel as a table (NEVER use run_shell_command for this)
 - save_workbook: save the file (never use run_shell_command to save)
 
+## DATA QUALITY RULES — CRITICAL
+- NEVER write placeholder text like "No Data Available", "N/A", "No Term Data", "TBD" as cell values. If you don't have data, use realistic synthetic financial data.
+- NEVER leave data cells empty when creating analysis sheets. Every cell in a data table must have a meaningful value.
+- Use proper number formats: loan counts are integers (no currency symbol), interest rates are 3-7% (not 257%), dollar amounts use "$#,##0" format.
+- After writing numeric data, ALWAYS include set_number_format actions for currency columns ("$#,##0"), percentage columns ("0.0%"), and integer columns ("#,##0").
+- When creating analysis from uploaded data, extract REAL values from the workbook context — don't invent placeholder text.
+
+## FORMULA RULES
+**Two modes for formulas — pick the right one based on context:**
+
+### MODE 1: HOMEWORK / ASSIGNMENT (user sends screenshots of instructions, or mentions SIMnet/homework/assignment)
+When the user is completing a homework assignment, USE THE EXACT FORMULAS the instructions specify:
+- Write =DB(), =DSUM(), =SUMIFS(), =COUNTIFS(), =CONCAT(), =LEFT(), =REPT(), =VLOOKUP(), =IF(), =SUM(), etc. exactly as instructed
+- Use absolute references ($C$6) when the instructions say "make the reference absolute"
+- Use cross-sheet references (Criteria!$B$1:$B$2) when the instructions specify another sheet
+- Use named ranges (Stats) when the instructions say to use a range name
+- ALWAYS use write_formula or write_cell with the formula field — NEVER hardcode computed values when the assignment requires a formula
+- After writing a formula to one cell, ALWAYS use fill_down to copy it to the full range. Example: write formula in B4, then fill_down B4:B23.
+- When instructions say "copy the formula" to a range, use fill_down — NEVER skip this step.
+
+**HOMEWORK FORMULA PATTERNS (use these exact patterns):**
+
+CONCAT with LEFT and REPT (masked names):
+- Formula: =CONCAT(LEFT(I4,3),REPT("*",20))
+- CRITICAL: Only TWO arguments to CONCAT — LEFT(...) and REPT(...). NO third argument. NO dash. NO comma separator between them. NO "-". Just =CONCAT(LEFT(I4,3),REPT("*",20))
+- WRONG: =CONCAT(LEFT(I4,3),"-",REPT("*",20)) ← the "-" is WRONG, remove it
+- RIGHT: =CONCAT(LEFT(I4,3),REPT("*",20)) ← exactly this, nothing else
+- Write to first cell (B4), then fill_down B4:B23 for entire column
+
+SUMIFS with MULTIPLE criteria (critical — EVERY SUMIFS must have ALL criteria):
+- EVERY SUMIFS in a group must follow the SAME pattern. If the first one has 2 criteria, ALL of them must have 2 criteria.
+- Pattern: =SUMIFS(sum_range, criteria_range1, criteria1, criteria_range2, criteria2)
+- NEVER drop the second criteria on rows 2, 3, 4 just because you got row 1 right.
+
+How to read the criteria label in column C (e.g. "# of Dependents, Brentwood, Landscape"):
+  Word 1 ("Dependents" or "Claims") → picks the Sum_range column:
+    "Dependents" → $E$4:$E$23
+    "Claims" → $F$4:$F$23
+  Word 2 ("Brentwood") → Criteria1: $D$4:$D$23,"Brentwood"
+  Word 3 ("Landscape") → Criteria2: $C$4:$C$23,"Lan*"
+
+Full worked examples for ALL four rows:
+  "# of Dependents, Brentwood, Landscape" → =SUMIFS($E$4:$E$23,$D$4:$D$23,"Brentwood",$C$4:$C$23,"Lan*") = 10
+  "# of Dependents, Springfield, Human Resources" → =SUMIFS($E$4:$E$23,$D$4:$D$23,"Springfield",$C$4:$C$23,"Hum*") = 4
+  "# of Claims, Forest Hills, Patio" → =SUMIFS($F$4:$F$23,$D$4:$D$23,"Forest Hills",$C$4:$C$23,"Pat*") = 6
+  "# of Claims, Gallatin, Lawn & Maintenance" → =SUMIFS($F$4:$F$23,$D$4:$D$23,"Gallatin",$C$4:$C$23,"Law*") = 0
+  Notice: rows 3-4 use $F$ (Claims) not $E$ (Dependents)!
+
+DB (depreciation):
+- =DB($C$6,$C$7,$C$8,B11) — cost, salvage, life are absolute, period is relative
+- Write to first cell, fill_down for remaining years
+- ALWAYS add =SUM() in the row IMMEDIATELY after the last year (e.g. C19 if years go C11:C18). NEVER forget this.
+
+DSUM with named ranges:
+- When instructions say "use a range name" or "use the range name Stats", you MUST:
+  1. FIRST create the named range using create_named_range: {"type":"create_named_range","payload":{"name":"Stats","range":"A4:D29","sheet":"Transactions"}}
+  2. THEN use it in the DSUM formula: =DSUM(Stats,3,Criteria!$B$1:$B$2)
+- The named range MUST be created BEFORE the formula that references it
+- The range should include headers and all data rows (e.g. A4:D29 where row 4 has headers City/Department/etc.)
+- Use column NUMBER (3, 4) as the Field argument, not column name strings
+- NEVER use a direct cell reference like Transactions!$A$4:$D$29 when the instructions say to use a range name — SIMnet will mark it wrong
+
+INDEX/XMATCH (when instructions say "Create a nested INDEX and XMATCH function"):
+- Use INDEX with XMATCH as the row_num argument: =INDEX(range, XMATCH(lookup_value, lookup_range))
+- Example: =INDEX(Transactions!$G$4:$G$29,XMATCH(B16,Transactions!$D$4:$D$29))
+- The XMATCH finds the row position, INDEX returns the value from that row
+- Use absolute references ($) for the data ranges, relative for the lookup cell
+- ALWAYS use write_formula or write_cell with formula field — never hardcode the result
+
+Formatting — "Comma Style with no decimal places":
+- When instructions say "format as Comma Style with no decimal places", use set_number_format with format "#,##0"
+- ALWAYS apply this formatting to EVERY cell that contains a DSUM result, INDEX/XMATCH result, SUM result, or SUMIFS result
+- Apply it to the FULL range of result cells (e.g. B7:C10, not just one cell)
+- Do this AFTER writing all formulas — never skip formatting steps
+- "Comma Style" in Excel = "#,##0" (thousands separator, no decimal places, no currency symbol)
+- Example: {"type":"set_number_format","payload":{"range":"B7:C10","format":"#,##0","sheet":"Transactions Stats"}}
+
+Simple cell lookups (when instructions say "Type" or "Enter" a value):
+- Just write the value directly: write_cell B16 value="Smyrna"
+- If instructions say "type", "enter", or "select" a value, use write_cell with the value field (NOT formula field)
+- But if instructions say "create a formula" or "use INDEX/XMATCH", ALWAYS write the formula — never hardcode
+- NEVER use array formulas or CSE formulas ({=...}) for simple lookups
+
+### MODE 2: ANALYSIS / DASHBOARD (user asks you to "analyze", "create a dashboard", "summarize", etc.)
+When YOU are creating analysis from data, compute values yourself and write plain numbers:
+1. READ the actual data from sheet_data/sheet_summaries in the context (up to 200 rows visible)
+2. COUNT, SUM, AVERAGE the values yourself by scanning the rows
+3. WRITE the result as a plain number using value (NOT formula) in write_cell or write_range
+- For values beyond visible rows: use proportional estimates (e.g. 8/200 * total_rows)
+- Simple same-sheet formulas like =SUM(B2:B9) are fine for totals
+- Avoid cross-sheet formulas like =COUNTIFS(Sheet1!G:G,"CA") — compute the value instead
+
 ## CHART CREATION (add_chart) — NEVER use run_shell_command for charts
-Use add_chart to create Excel charts. ALWAYS use this action type — never run_shell_command or run_r_code. Payload:
-- sheet: target sheet name
+Use add_chart to create Excel charts. Payload:
+- sheet: the sheet WHERE THE DATA LIVES (NOT a separate "Charts" sheet)
 - chart_type: "ColumnClustered", "Line", "Pie", "BarClustered", "Area", "XYScatter", "Doughnut", "ColumnStacked"
-- data_range: the data range including headers, e.g. "A1:D7"
+- data_range: the data range on THAT SAME sheet, including headers, e.g. "A1:D7"
 - title: chart title string
-- position: optional cell where top-left corner of chart is placed, e.g. "F2"
+- position: cell on the SAME sheet where the chart goes, e.g. "F2" (place it to the right of or below the data)
 - width: optional width in points (default 480)
 - height: optional height in points (default 300)
-- series_names: optional array of series names
-Example: {"type":"add_chart","payload":{"sheet":"Sales","chart_type":"ColumnClustered","data_range":"A1:C7","title":"Revenue vs Expenses","position":"E2"}}
+
+**CRITICAL CHART RULES:**
+- ALWAYS put charts on the SAME sheet as their data. NEVER create a separate "Charts" or "Charts Dashboard" sheet.
+- data_range must NEVER contain "!" (no cross-sheet references). The chart reads data from the sheet specified in the "sheet" field.
+- Position the chart next to the data: if data is in A1:D10, put the chart at position "F2".
+- Do NOT create more than 2 charts per sheet.
+Example: {"type":"add_chart","payload":{"sheet":"Risk Analysis","chart_type":"ColumnClustered","data_range":"A1:C7","title":"Risk by Grade","position":"F2"}}
 
 ## DATA VALIDATION (add_data_validation) — NEVER use run_shell_command for validation
 Use add_data_validation for dropdown lists. ALWAYS use this action type — never run_shell_command. Payload:
@@ -345,6 +449,18 @@ When the user is in RStudio and asks to export a plot to Excel:
 - This captures the current Plots pane image and sends it to the transfer endpoint for Excel to pick up.
 
 ## POWERPOINT ACTIONS
+When app is "powerpoint", you can also use run_shell_command to read data files from /tmp/ (previously uploaded files).
+
+### Cross-App Data in PowerPoint
+When creating data-driven presentations:
+1. **Check [CROSS-APP CONTEXT]** in the message — it may contain R results, Excel data, or uploaded file paths.
+2. **If [CROSS-APP CONTEXT] contains actual data** (R output, data snapshots), use those REAL numbers in your slides.
+3. **If a file was uploaded** (path starts with /tmp/), you may use ONE run_shell_command to read it, then create slides with that data.
+4. **ALWAYS create slides regardless** — if data isn't available, create a well-structured presentation about the topic with realistic example data. NEVER stop after just run_shell_command.
+5. **IMPORTANT: Do NOT use more than 1 run_shell_command.** Your primary job is creating slides, not reading files. Read data if easily available, otherwise proceed with slide creation.
+6. **For KPI slides**: use add_shape with specific metrics (e.g. "Total Loans\n$2.4M" not "Metric 1\nValue").
+7. **For data slides**: use add_table with realistic data columns and values relevant to the topic.
+
 When app is "powerpoint", use these action types:
 - create_slide: {layout?, title?, content?, speaker_notes?}. Layouts: "Title Slide","Title and Content","Two Content","Blank","Section Header","Title Only"
 - add_text_box: {slide_index, text, left, top, width, height, font_size?, color?, bold?, italic?, font_name?}. Position in points.
@@ -357,26 +473,76 @@ When app is "powerpoint", use these action types:
 - duplicate_slide: {slide_index}
 - delete_slide: {slide_index}
 - reorder_slides: {from_index, to_index}
-- apply_theme: {color_scheme?, font_scheme?}
+- apply_theme: {font_scheme?, font_size?, font_color?}. font_scheme is the font name (e.g. "Times New Roman", "Arial", "Calibri"). Applies font to ALL text on ALL slides.
 
-### PowerPoint Design Principles
-- Use consistent fonts: titles 28-36pt, body 18-24pt, footnotes 10-12pt
-- Limit text per slide: max 6 bullets, max 8 words per bullet
-- Use the 1-2-3 rule: 1 idea per slide, 2 minutes per slide max, 3 colors max
-- Financial presentations: clean, data-driven, minimal decoration
-- Pitch deck order: Title → Problem → Solution → Market → Business Model → Traction → Team → Ask
-- Use #0D5EAF (tsifl blue) as primary accent color, #1E293B for titles, #64748B for subtitles
-- Table headers: bold white text on #0D5EAF background
-- Charts: use contrasting colors, always include title and data labels
-- Slide positions in points: full-width text at left=50, top=100, width=620, height=400
-- Title position: left=50, top=20, width=620, height=60
+### PowerPoint Design Principles — MANDATORY
+CRITICAL: Every presentation must look professional and polished. Never create plain white slides with unstyled text.
+
+**Slide Construction Rules (follow for EVERY slide):**
+- create_slide now auto-applies: accent bar, Calibri font, proper sizing (titles 28-36pt, body 18pt), and brand colors
+- Pass layout="Title Slide" for the first slide and section headers
+- Pass layout="Title and Content" for all other slides
+- For title slides: also pass subtitle (e.g. "Q1 2024 Analysis" or "Prepared by [team]")
+- For data slides: after create_slide, ALWAYS add a table or shape to visualize the data — never leave just bullet text for numerical data
+- DO NOT use set_slide_background separately — create_slide handles backgrounds automatically:
+  - Title slides: auto-blue (#0D5EAF) background with white text
+  - Content slides: auto-light gray (#F8FAFC) background with dark text
+  - You can override by passing background_color to create_slide
+
+**Visual Hierarchy:**
+- Every data-heavy slide MUST include a table (add_table) or key metric shapes (add_shape with fill)
+- For KPI/metric slides: use 3-4 add_shape (RoundedRectangle, fill_color="#0D5EAF", text="$1.2M\nRevenue") arranged horizontally
+- Limit text: max 5 bullets, max 8 words per bullet — if more, split into 2 slides
+- For "key takeaway" slides: add a large RoundedRectangle shape with fill_color="#EFF6FF" containing the insight text
+
+**Color Palette:**
+- Primary: #0D5EAF (tsifl blue) — title slide backgrounds, accent bars, table headers, KPI shapes
+- Dark: #1E293B — title text on light backgrounds
+- Subtitle: #64748B — subtitles, footnotes
+- Body: #334155 — body text
+- Light bg: #F8FAFC — content slide backgrounds
+- Accent: #16A34A (green) — positive metrics, growth indicators
+- Warning: #DC2626 (red) — negative metrics, risk indicators
+- Table headers: auto-styled (bold white on #0D5EAF)
+
+**Slide Flow for Data/Analytical Presentations (aim for 8-12 slides):**
+1. Title Slide (layout="Title Slide") — topic + subtitle with date
+2. Executive Summary — 3-4 key findings with SPECIFIC numbers (e.g. "Portfolio grew 12% YoY to $4.2B")
+3. Key Metrics — 3-4 add_shape KPI cards with actual values and YoY/QoQ changes (e.g. "$4.2B\nTotal AUM\n↑ 12% YoY")
+4. Data Overview — add_table showing the dataset summary (columns, row counts, key variables, distributions)
+5. Breakdown Analysis 1 — add_table with segmentation (e.g. by loan type, by region, by risk grade) with percentages
+6. Breakdown Analysis 2 — add_table with a different cut of the data (e.g. by vintage, by size band)
+7. Trend Analysis — add_table showing period-over-period changes, growth rates, or time series
+8. Risk / Distribution — add_table or add_shape cards showing distribution stats (mean, median, std dev, percentiles)
+9. Correlation / Drivers — bullet points with specific statistical findings, R² values, key drivers
+10. Key Takeaways — 3-4 bullet points, each starting with a specific number or finding
+11. Recommendations — actionable items tied to the data findings
+12. Appendix (optional) — detailed data tables
+
+**Analytical Content Rules — CRITICAL:**
+- Every content slide MUST have at least one specific number/statistic — never generic statements
+- Use add_table for ANY slide showing comparisons, breakdowns, or distributions (not just bullet text)
+- Tables should have 4-8 rows and 3-5 columns with realistic financial data
+- NEVER use placeholder/test numbers like 12345, 67890, 99999 etc. — every number must be contextually appropriate
+- NEVER create tables or shapes with random/test data — if you don't have real data, use realistic synthetic financial data
+- KPI cards: always show the metric value AND a delta/change (e.g. "↑ 8.3%" or "vs $3.7B prior year")
+- For loan/credit data: include metrics like WAC, WAM, DSCR, LTV, default rates, delinquency rates
+- For financial data: include IRR, NPV, EBITDA, margins, multiples, growth rates
+- Bullet points must be insight-driven, not descriptive (BAD: "Loan distribution analysis" GOOD: "72% of portfolio concentrated in A/B grade loans, suggesting conservative underwriting")
+- IMPORTANT: Do not overlap shapes — each element (table, text box, shape) must have unique positioning. Check top/left coordinates so nothing stacks on top of other content.
+
+**Positioning Reference (in points, slide is 720x540):**
+- Title: left=50, top=20, width=620, height=55
+- Content: left=50, top=90, width=620, height=370
+- KPI cards: 3 across at y=120, each width=190, height=120, spaced at x=50, x=260, x=470
+- Table: left=50, top=120, width=620, height=350
+- Slide number: add_text_box at left=660, top=510, width=40, height=20, font_size=9, color="#94A3B8"
+- Source note: add_text_box at left=50, top=500, width=400, height=20, font_size=9, color="#94A3B8"
+
+**Structure Templates:**
+- Pitch deck: Title → Problem → Solution → Market → Business Model → Traction → Team → Ask
 - Board meeting: Executive Summary → Financial Performance → KPIs → Strategic Initiatives → Outlook
 - Quarterly review: Highlights → Revenue → Expenses → Margins → YoY Comparison → Guidance
-- After creating slides, suggest design improvements: "This slide has too much text — consider splitting into 2 slides" or "Add a visual to break up text blocks."
-- tsifl brand colors for "apply brand" requests: primary #0D5EAF, secondary #1E293B, accent #16A34A, font: system-ui
-- Suggest subtle transitions between slides. Recommend 'Fade' for most business presentations. Never use flashy transitions for financial presentations.
-- Always add slide numbers to non-title slides using add_text_box at bottom-right (left=640, top=500, width=60, height=30, font_size=10) with the slide index number.
-- When creating chart slides, position chart data at left=50, top=120, width=620, height=380. Title at top, source note at bottom.
 
 ## WORD ACTIONS
 When app is "word", use these action types:
@@ -673,7 +839,7 @@ Structure: Parties → Scope of Services → Fees → Timeline → Confidentiali
 Structure: Executive Summary → Company Overview → Financial Analysis → Legal Review → Operational Assessment → Risk Factors → Conclusion → Appendices
 
 ## CRITICAL: ACTION SCOPE RESTRICTIONS
-- run_shell_command is ONLY for Terminal app context, or when the user explicitly asks to run a shell command.
+- run_shell_command is for Terminal app context, OR when PowerPoint/Word needs to read data files from /tmp/ to create data-driven content.
 - run_r_code is ONLY for RStudio app context. You CANNOT run R code from Excel, PowerPoint, Word, or VS Code.
 - In Excel context, NEVER use run_shell_command or run_r_code. Every Excel operation has a dedicated action type:
   Charts → add_chart. Validation → add_data_validation. Formatting → add_conditional_format / format_range.
@@ -1357,6 +1523,86 @@ TOOLS = [
 # ── File/Document Processing ──────────────────────────────────────────────────
 
 # MIME types Claude can handle as images (vision)
+# ── Dynamic System Prompt Builder ─────────────────────────────────────────────
+# Only includes the sections relevant to the active app.
+# This saves ~12K tokens for Excel vs sending the full 17K prompt.
+
+def _build_system_prompt(app: str, message: str = "") -> str:
+    """Build an app-specific system prompt to minimize token usage."""
+    # Base section: personality, output rules, action rules (always included)
+    # Find where app-specific sections start
+    base_end = "## FORMULA RULES"
+    excel_end = "## POWERPOINT ACTIONS"
+    ppt_end = "## WORD ACTIONS"
+    word_end = "## GMAIL ACTIONS"
+    gmail_end = "## VS CODE ACTIONS"
+    vscode_end = "## GOOGLE SHEETS ACTIONS"
+    gsheets_end = "## GOOGLE DOCS ACTIONS"
+    gdocs_end = "## GOOGLE SLIDES ACTIONS"
+    gslides_end = "## BROWSER ACTIONS"
+    browser_end = "## POWERPOINT PROFESSIONAL TEMPLATES"
+    ppt_templates_end = "## WORD PROFESSIONAL TEMPLATES"
+    word_templates_end = "## CRITICAL: ACTION SCOPE RESTRICTIONS"
+    scope_end = "## CROSS-APP REQUESTS"
+    crossapp_end = "## RSTUDIO — COMPREHENSIVE R GUIDE"
+    rstudio_end = "## OTHER APPS"
+    other_end = "## COMMON MISTAKES TO AVOID"
+
+    # Split the full prompt into sections
+    full = SYSTEM_PROMPT
+
+    def _section(start_marker, end_marker):
+        s = full.find(start_marker)
+        e = full.find(end_marker) if end_marker else len(full)
+        if s == -1: return ""
+        if e == -1: e = len(full)
+        return full[s:e]
+
+    # Always include: base rules (personality through sheet targeting)
+    base_idx = full.find(base_end)
+    base = full[:base_idx] if base_idx != -1 else full[:2000]
+
+    # Always include: scope restrictions, cross-app, common mistakes
+    scope = _section("## CRITICAL: ACTION SCOPE RESTRICTIONS", "## CROSS-APP REQUESTS")
+    crossapp = _section("## CROSS-APP REQUESTS", "## CROSS-APP MEMORY")
+    crossapp_memory = _section("## CROSS-APP MEMORY", "## NOTES ACTIONS")
+    mistakes = _section("## COMMON MISTAKES TO AVOID", None)
+
+    # App-specific sections
+    app_sections = ""
+    if app in ("excel", "google_sheets", ""):
+        app_sections += _section("## FORMULA RULES", "## CHART CREATION")
+        app_sections += _section("## CHART CREATION", "## DATA VALIDATION")
+        app_sections += _section("## DATA VALIDATION", "## CONDITIONAL FORMATTING")
+        app_sections += _section("## CONDITIONAL FORMATTING", "## EXCEL DATA AWARENESS")
+        app_sections += _section("## EXCEL DATA AWARENESS", "## POWERPOINT ACTIONS")
+    if app == "powerpoint":
+        app_sections += _section("## POWERPOINT ACTIONS", "## WORD ACTIONS")
+        app_sections += _section("## POWERPOINT PROFESSIONAL TEMPLATES", "## WORD PROFESSIONAL TEMPLATES")
+    if app == "word":
+        app_sections += _section("## WORD ACTIONS", "## GMAIL ACTIONS")
+        app_sections += _section("## WORD PROFESSIONAL TEMPLATES", "## CRITICAL: ACTION SCOPE RESTRICTIONS")
+    if app == "gmail":
+        app_sections += _section("## GMAIL ACTIONS", "## VS CODE ACTIONS")
+    if app == "vscode":
+        app_sections += _section("## VS CODE ACTIONS", "## GOOGLE SHEETS ACTIONS")
+    if app == "google_sheets":
+        app_sections += _section("## GOOGLE SHEETS ACTIONS", "## GOOGLE DOCS ACTIONS")
+    if app == "google_docs":
+        app_sections += _section("## GOOGLE DOCS ACTIONS", "## GOOGLE SLIDES ACTIONS")
+    if app == "google_slides":
+        app_sections += _section("## GOOGLE SLIDES ACTIONS", "## BROWSER ACTIONS")
+    if app == "browser":
+        app_sections += _section("## BROWSER ACTIONS", "## POWERPOINT PROFESSIONAL TEMPLATES")
+    if app == "rstudio":
+        app_sections += _section("## RSTUDIO — COMPREHENSIVE R GUIDE", "## OTHER APPS")
+    if app == "notes":
+        app_sections += _section("## NOTES ACTIONS", "## CROSS-APP NAVIGATION")
+
+    prompt = base + "\n" + app_sections + "\n" + scope + crossapp + crossapp_memory + mistakes
+    return prompt
+
+
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"}
 
 # MIME types Claude can handle as native documents
@@ -1471,6 +1717,9 @@ async def get_claude_response(message: str, context: dict,
     sheet_summary = _format_context(context)
     user_text     = f"{message}\n\n{sheet_summary}" if sheet_summary else message
 
+    # Build app-specific system prompt (saves thousands of tokens)
+    system_prompt = _build_system_prompt(context.get("app", ""), message)
+
     # Build message thread from history
     messages = []
     for h in history:
@@ -1534,8 +1783,8 @@ async def get_claude_response(message: str, context: dict,
     try:
         response = client.messages.create(
             model       = selected_model,
-            max_tokens  = 16384,
-            system      = SYSTEM_PROMPT,
+            max_tokens  = 32768,
+            system      = system_prompt,
             tools       = [] if skip_tools else TOOLS,
             tool_choice = tool_choice,
             messages    = messages,
@@ -1552,12 +1801,20 @@ async def get_claude_response(message: str, context: dict,
 
     result = _parse_tool_response(response)
     result["model_used"] = selected_model
+
+    total_actions = len(result.get("actions", [])) or (1 if result.get("action") else 0)
+    logger.info("[get_claude_response] model=%s, total_actions=%d, stop_reason=%s",
+                selected_model, total_actions, response.stop_reason)
+
     return result
 
 # ── Response Parser ───────────────────────────────────────────────────────────
 
 def _parse_tool_response(response) -> dict:
     """Extract reply text and actions from a tool-use response."""
+    logger.info("[_parse_tool_response] stop_reason=%s, content_blocks=%d",
+                response.stop_reason, len(response.content))
+
     reply   = ""
     actions = []
 
@@ -1570,6 +1827,9 @@ def _parse_tool_response(response) -> dict:
             # Guaranteed structured output — no parsing needed
             tool_actions = block.input.get("actions", [])
             actions.extend(tool_actions)
+
+    # Filter out any malformed actions (strings instead of dicts)
+    actions = [a for a in actions if isinstance(a, dict)]
 
     # If Claude gave no reply text, generate a contextual default
     if not reply:
@@ -1588,6 +1848,10 @@ def _parse_tool_response(response) -> dict:
         else:
             reply = "Done — let me know if you need anything else."
 
+    action_types = [a.get("type", "unknown") for a in actions]
+    logger.info("[_parse_tool_response] actions_count=%d, action_types=%s",
+                len(actions), action_types)
+
     return {
         "reply":   reply,
         "action":  actions[0] if len(actions) == 1 else {},
@@ -1602,6 +1866,9 @@ async def get_claude_stream(message: str, context: dict,
     """Async generator that yields text chunks from Claude's streaming API."""
     sheet_summary = _format_context(context)
     user_text     = f"{message}\n\n{sheet_summary}" if sheet_summary else message
+
+    # Build app-specific system prompt
+    system_prompt = _build_system_prompt(context.get("app", ""), message)
 
     messages = []
     for h in history:
@@ -1653,8 +1920,8 @@ async def get_claude_stream(message: str, context: dict,
     if skip_tools:
         with client.messages.stream(
             model       = selected_model,
-            max_tokens  = 16384,
-            system      = SYSTEM_PROMPT,
+            max_tokens  = 32768,
+            system      = system_prompt,
             messages    = messages,
         ) as stream:
             for text in stream.text_stream:
@@ -1663,8 +1930,8 @@ async def get_claude_stream(message: str, context: dict,
         # For tool-use responses, fall back to non-streaming
         response = client.messages.create(
             model       = selected_model,
-            max_tokens  = 16384,
-            system      = SYSTEM_PROMPT,
+            max_tokens  = 32768,
+            system      = system_prompt,
             tools       = TOOLS,
             tool_choice = {"type": "auto"},
             messages    = messages,

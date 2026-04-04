@@ -4,8 +4,18 @@
  * Auto-injected on all http/https pages via manifest content_scripts.
  */
 
-if (!window.__tsifl_content_loaded) {
-  window.__tsifl_content_loaded = true;
+// Versioned guard — allows new code to replace old on extension updates.
+// Uses `var` (not const) so re-injection doesn't throw SyntaxError.
+var TSIFL_CONTENT_VERSION = 3;
+if (window.__tsifl_content_version >= TSIFL_CONTENT_VERSION) {
+  // Already running this version or newer — skip
+} else {
+  window.__tsifl_content_version = TSIFL_CONTENT_VERSION;
+
+  // Remove previous message listener so we don't stack duplicates
+  if (window.__tsifl_msg_handler) {
+    try { chrome.runtime.onMessage.removeListener(window.__tsifl_msg_handler); } catch (e) {}
+  }
 
   function detectSite() {
     const host = location.hostname;
@@ -374,109 +384,202 @@ if (!window.__tsifl_content_loaded) {
     target.dispatchEvent(new KeyboardEvent('keyup', base));
   }
 
+  // ── Google Docs/Sheets Helpers ──────────────────────────────────────────
+  // Google Docs uses a proprietary canvas editor that rejects synthetic
+  // keyboard events (isTrusted === false). We use window.find() for text
+  // selection and real DOM clicks on toolbar buttons for formatting.
+
+  /** Fill a native input field reliably (set value + dispatch events) */
+  function fillInput(input, value) {
+    const nativeSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype, 'value'
+    )?.set;
+    if (nativeSetter) nativeSetter.call(input, value);
+    else input.value = value;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  /** Click a toolbar button by aria-label substring. Returns true if found. */
+  function clickToolbarBtn(labelSubstring) {
+    // Try multiple selector patterns used by Google Workspace apps
+    const variations = [labelSubstring, labelSubstring.toLowerCase(), labelSubstring.charAt(0).toUpperCase() + labelSubstring.slice(1)];
+    for (const label of variations) {
+      for (const attr of ['aria-label', 'data-tooltip']) {
+        const btn = document.querySelector(`[${attr}*="${label}"]`);
+        if (btn) {
+          console.log(`[tsifl] clicking toolbar btn: ${attr}="${btn.getAttribute(attr)}"`);
+          btn.click();
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Select text in Google Docs using window.find().
+   * Google Docs renders text as real DOM nodes inside .kix-lineview spans,
+   * so window.find() can locate and select them. The browser selection is
+   * then recognized by Docs when toolbar buttons are clicked.
+   */
+  function selectTextInPage(term) {
+    // Clear any existing selection first
+    window.getSelection()?.removeAllRanges();
+    // window.find(string, caseSensitive, backwards, wrapAround)
+    const found = window.find(term, false, false, true);
+    console.log(`[tsifl] window.find("${term}") = ${found}`);
+    return found;
+  }
+
   async function handleWorkspaceAction(type, payload) {
     const site = detectSite();
+    console.log("[tsifl] handleWorkspaceAction:", site, type, JSON.stringify(payload));
 
     // ── Google Docs Actions ─────────────────────────────────────────────
     if (site === "google_docs") {
       switch (type) {
         case "find_and_replace": {
-          // Open Find & Replace dialog with Ctrl+H
-          const target = getGDocsEventTarget() || document.body;
-          dispatchKey(target, 'h', { ctrlKey: true, metaKey: navigator.platform.includes('Mac') });
-          await sleep(500);
-
-          // Find the dialog inputs
-          const inputs = document.querySelectorAll('.docs-findandreplacedialog input[type="text"]');
-          if (inputs.length >= 2) {
-            // Fill "Find" field
-            inputs[0].focus();
-            inputs[0].value = payload.find_text || '';
-            inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
-            await sleep(200);
-
-            // Fill "Replace with" field
-            inputs[1].focus();
-            inputs[1].value = payload.replace_text || '';
-            inputs[1].dispatchEvent(new Event('input', { bubbles: true }));
-            await sleep(200);
-
-            // Click "Replace all" button
-            const buttons = document.querySelectorAll('.docs-findandreplacedialog button');
-            const replaceAllBtn = Array.from(buttons).find(b =>
-              b.textContent.trim().toLowerCase().includes('replace all')
+          // Use Ctrl+H shortcut — we dispatch it on the document to trigger
+          // the native Google Docs Find & Replace dialog
+          // Since dispatchKey may be blocked, try clicking Edit menu instead
+          const editMenu = document.getElementById('docs-edit-menu');
+          if (editMenu) {
+            editMenu.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+            editMenu.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+            editMenu.click();
+            await sleep(400);
+            // Find "Find and replace" menu item
+            const menuItems = document.querySelectorAll('[role="menuitem"], .goog-menuitem');
+            const frItem = Array.from(menuItems).find(el =>
+              el.textContent.trim().toLowerCase().includes('find and replace')
             );
-            if (replaceAllBtn) {
-              replaceAllBtn.click();
-              await sleep(300);
-              // Close dialog
-              const closeBtn = document.querySelector('.docs-findandreplacedialog .modal-dialog-title-close');
-              if (closeBtn) closeBtn.click();
-              return { success: true, message: "Find and replace completed" };
+            if (frItem) {
+              frItem.click();
+              await sleep(500);
+              // Fill dialog
+              const inputs = document.querySelectorAll('input[type="text"]');
+              const dialogInputs = Array.from(inputs).filter(i =>
+                i.closest('.docs-findandreplacedialog') || i.closest('[role="dialog"]')
+              );
+              if (dialogInputs.length >= 2) {
+                fillInput(dialogInputs[0], payload.find_text || '');
+                await sleep(100);
+                fillInput(dialogInputs[1], payload.replace_text || '');
+                await sleep(200);
+                const replaceAllBtn = Array.from(document.querySelectorAll('button')).find(b =>
+                  b.textContent.trim().toLowerCase().includes('replace all')
+                );
+                if (replaceAllBtn) {
+                  replaceAllBtn.click();
+                  await sleep(300);
+                  // Close dialog
+                  const closeBtn = document.querySelector('[aria-label="Close"] , .modal-dialog-title-close');
+                  if (closeBtn) closeBtn.click();
+                  return { success: true, message: "Find and replace completed" };
+                }
+              }
             }
-            return { success: false, message: "Could not find Replace All button" };
           }
-          return { success: false, message: "Could not open Find & Replace dialog" };
+          return { success: false, message: "Could not open Find & Replace in Google Docs" };
         }
 
         case "format_text": {
-          // Try to find and format text using Find (Ctrl+F) then toolbar buttons
           const term = payload.range_description || '';
           if (!term) return { success: false, message: "No text specified" };
 
-          const target = getGDocsEventTarget() || document.body;
+          console.log("[tsifl] format_text: selecting text with window.find:", term);
 
-          // Open Find bar with Ctrl+F
-          dispatchKey(target, 'f', { ctrlKey: true, metaKey: navigator.platform.includes('Mac') });
-          await sleep(400);
+          // Step 1: Select text using window.find()
+          // Google Docs renders text as real DOM nodes in .kix-lineview spans.
+          // window.find() creates a browser Selection that Docs recognizes
+          // when toolbar buttons are subsequently clicked.
+          const found = selectTextInPage(term);
+          if (!found) {
+            return { success: false, message: `Could not find "${term}" in the document.` };
+          }
+          await sleep(200);
 
-          // Type search term into find input
-          const findInput = document.querySelector('.docs-findinput-input input') ||
-                           document.querySelector('[aria-label="Find in document"]');
-          if (findInput) {
-            findInput.focus();
-            findInput.value = term;
-            findInput.dispatchEvent(new Event('input', { bubbles: true }));
-            await sleep(300);
+          // Step 2: Apply formatting via toolbar button clicks
+          let formatted = false;
 
-            // Press Enter to find and select
-            findInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-            await sleep(300);
+          if (payload.bold) {
+            if (clickToolbarBtn('Bold')) formatted = true;
+            await sleep(150);
+          }
+          if (payload.italic) {
+            if (clickToolbarBtn('Italic')) formatted = true;
+            await sleep(150);
+          }
+          if (payload.underline) {
+            if (clickToolbarBtn('Underline')) formatted = true;
+            await sleep(150);
+          }
 
-            // Close find bar — text should stay selected
-            dispatchKey(findInput, 'Escape', {});
-            await sleep(200);
-
-            // Apply formatting via keyboard shortcuts
-            if (payload.bold) dispatchKey(target, 'b', { ctrlKey: true, metaKey: navigator.platform.includes('Mac') });
-            if (payload.italic) dispatchKey(target, 'i', { ctrlKey: true, metaKey: navigator.platform.includes('Mac') });
-            if (payload.underline) dispatchKey(target, 'u', { ctrlKey: true, metaKey: navigator.platform.includes('Mac') });
-
-            // For highlight color — try clicking toolbar highlight button
-            if (payload.highlight_color) {
-              const highlightBtn = document.querySelector('[aria-label*="Highlight"]') ||
-                                  document.querySelector('[data-tooltip*="Highlight"]');
-              if (highlightBtn) {
-                highlightBtn.click();
-                await sleep(200);
-                // Try to find color option in dropdown
-                const colorCell = document.querySelector(`[data-color="${payload.highlight_color}"]`) ||
-                                 document.querySelector(`[aria-label*="${payload.highlight_color}"]`);
-                if (colorCell) colorCell.click();
+          if (payload.highlight_color) {
+            const colorName = payload.highlight_color.toLowerCase();
+            // Click highlight color button (need to open dropdown first)
+            const hlBtn = document.querySelector('[aria-label*="Highlight color"]') ||
+                         document.querySelector('[data-tooltip*="Highlight color"]') ||
+                         document.querySelector('[aria-label*="highlight"]');
+            console.log("[tsifl] highlight btn:", hlBtn?.getAttribute('aria-label') || 'NOT FOUND');
+            if (hlBtn) {
+              // Click the dropdown arrow to open color picker
+              const arrow = hlBtn.querySelector('[class*="dropdown"]') || hlBtn;
+              arrow.click();
+              await sleep(400);
+              // Search all visible elements for color match
+              const allColorCells = document.querySelectorAll(
+                '[data-color], [aria-label*="color" i], [style*="background"]'
+              );
+              let colorClicked = false;
+              for (const cell of allColorCells) {
+                const label = (cell.getAttribute('aria-label') || cell.getAttribute('title') || cell.getAttribute('data-tooltip') || '').toLowerCase();
+                if (label.includes(colorName)) {
+                  console.log("[tsifl] clicking color:", label);
+                  cell.click();
+                  colorClicked = true;
+                  break;
+                }
               }
+              if (!colorClicked) {
+                // Just click the main highlight button (applies last used color)
+                hlBtn.click();
+              }
+              formatted = true;
+              await sleep(150);
             }
+          }
 
+          if (payload.font_color) {
+            const colorBtn = document.querySelector('[aria-label*="Text color"]') ||
+                            document.querySelector('[data-tooltip*="Text color"]');
+            if (colorBtn) {
+              const arrow = colorBtn.querySelector('[class*="dropdown"]') || colorBtn;
+              arrow.click();
+              await sleep(400);
+              const colorName = payload.font_color.toLowerCase();
+              const cells = document.querySelectorAll('[data-color], [aria-label*="color" i]');
+              for (const cell of cells) {
+                const label = (cell.getAttribute('aria-label') || cell.getAttribute('title') || '').toLowerCase();
+                if (label.includes(colorName)) { cell.click(); formatted = true; break; }
+              }
+              if (!formatted) { colorBtn.click(); formatted = true; }
+              await sleep(150);
+            }
+          }
+
+          if (formatted) {
             return { success: true, message: `Formatted "${term}"` };
           }
-          return { success: false, message: "Could not open Find bar" };
+          // Text was found/selected but no toolbar buttons matched
+          return { success: true, message: `Found and selected "${term}". Toolbar buttons not found — you can format manually.` };
         }
 
         case "insert_text": {
-          // Focus editor and type text
           const target = getGDocsEventTarget();
           if (target) {
             target.focus();
-            // Use document.execCommand as a best-effort for the text event target
             document.execCommand('insertText', false, payload.text || '');
             return { success: true, message: "Text inserted" };
           }
@@ -484,7 +587,7 @@ if (!window.__tsifl_content_loaded) {
         }
 
         default:
-          return { success: false, message: `Unsupported Google Docs action: ${type}. For full editing, install the Google Workspace add-on.` };
+          return { success: false, message: `Google Docs action "${type}" is not yet supported via Chrome extension.` };
       }
     }
 
@@ -541,16 +644,29 @@ if (!window.__tsifl_content_loaded) {
         }
 
         case "find_and_replace": {
-          // Use Ctrl+H for Sheets too
-          const target = document.activeElement || document.body;
-          dispatchKey(target, 'h', { ctrlKey: true, metaKey: navigator.platform.includes('Mac') });
-          await sleep(500);
+          // Open Find & Replace via Edit menu (Sheets uses same menu structure)
+          let opened = false;
+          const editMenu = document.getElementById('docs-edit-menu');
+          if (editMenu) {
+            editMenu.click();
+            await sleep(300);
+            const items = document.querySelectorAll('.goog-menuitem-content');
+            const frItem = Array.from(items).find(el =>
+              el.textContent.trim().toLowerCase().includes('find and replace')
+            );
+            if (frItem) {
+              (frItem.closest('.goog-menuitem') || frItem).click();
+              await sleep(400);
+              opened = true;
+            }
+          }
+          if (!opened) return { success: false, message: "Could not open Find & Replace" };
+
           const inputs = document.querySelectorAll('[aria-label="Find"], [aria-label="Replace with"]');
           if (inputs.length >= 2) {
-            inputs[0].value = payload.find_text || '';
-            inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
-            inputs[1].value = payload.replace_text || '';
-            inputs[1].dispatchEvent(new Event('input', { bubbles: true }));
+            fillInput(inputs[0], payload.find_text || '');
+            await sleep(100);
+            fillInput(inputs[1], payload.replace_text || '');
             await sleep(200);
             const replaceAll = Array.from(document.querySelectorAll('button')).find(b =>
               b.textContent.toLowerCase().includes('replace all')
@@ -558,7 +674,7 @@ if (!window.__tsifl_content_loaded) {
             if (replaceAll) { replaceAll.click(); await sleep(300); }
             return { success: true, message: "Find and replace completed" };
           }
-          return { success: false, message: "Could not open Find & Replace" };
+          return { success: false, message: "Could not find dialog inputs" };
         }
 
         default:
@@ -612,8 +728,12 @@ if (!window.__tsifl_content_loaded) {
     }
   }
 
-  // Listen for messages
-  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // Expose workspace handler on window so background.js can call it
+  // directly via chrome.scripting.executeScript (bypasses message port issues)
+  window.__tsifl_workspace_action = handleWorkspaceAction;
+
+  // ── Message Listener (stored on window so it can be replaced) ──────────
+  window.__tsifl_msg_handler = function(msg, sender, sendResponse) {
     if (msg.action === "capture_context") {
       sendResponse(getContext());
       return;
@@ -623,14 +743,24 @@ if (!window.__tsifl_content_loaded) {
       return;
     }
     if (msg.action === "execute_workspace_action") {
+      console.log("[tsifl] workspace action:", msg.type, msg.payload);
       handleWorkspaceAction(msg.type, msg.payload)
-        .then(result => sendResponse(result))
-        .catch(e => sendResponse({ success: false, message: e.message }));
+        .then(result => {
+          console.log("[tsifl] workspace result:", result);
+          sendResponse(result);
+        })
+        .catch(e => {
+          console.error("[tsifl] workspace error:", e);
+          sendResponse({ success: false, message: e.message });
+        });
       return true; // keep channel open for async
     }
     if (msg.action === "get_full_page_text") {
       sendResponse({ text: getFullPageText() });
       return;
     }
-  });
+  };
+  chrome.runtime.onMessage.addListener(window.__tsifl_msg_handler);
+
+  console.log("[tsifl] content script v" + TSIFL_CONTENT_VERSION + " loaded on", detectSite());
 }

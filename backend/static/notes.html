@@ -5,51 +5,101 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>tsifl Notes</title>
   <style>
-    :root{--blue:#0D5EAF;--bh:#0A4896;--bl:#EBF3FB;--bg:#F8FAFC;--sf:#FFFFFF;--bd:#E2E8F0;--tx:#1E293B;--mu:#64748B;--gn:#16A34A;--rd:#DC2626;}
-    *{box-sizing:border-box;margin:0;padding:0;}
-    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--tx);height:100vh;overflow:hidden;}
-    #login{display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100vh;padding:20px;gap:10px;}
-    #login h1{color:var(--blue);font-size:28px;font-weight:700;}
-    #login .sub{color:var(--mu);font-size:13px;margin-bottom:24px;}
-    #login-form{display:flex;flex-direction:column;gap:8px;width:100%;max-width:320px;}
-    #login-form input{width:100%;background:var(--sf);color:var(--tx);border:1px solid var(--bd);border-radius:6px;padding:10px 12px;font-size:14px;outline:none;}
-    #login-form input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(13,94,175,0.1);}
-    .btn-p{background:var(--blue);color:#fff;border:none;border-radius:6px;padding:10px;font-size:14px;font-weight:600;cursor:pointer;}
-    .btn-p:hover{background:var(--bh);}
-    .btn-s{background:transparent;color:var(--blue);border:1px solid var(--bd);border-radius:6px;padding:9px;font-size:14px;cursor:pointer;}
-    #auth-error{font-size:12px;text-align:center;min-height:16px;color:var(--rd);}
-    #app{display:none;height:100vh;flex-direction:row;}
-    @media(max-width:640px){#app{flex-direction:column!important;}#sidebar{width:100%!important;max-height:40vh;border-right:none!important;border-bottom:1px solid var(--bd);}}
-    #sidebar{width:280px;background:var(--sf);border-right:1px solid var(--bd);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;}
-    .sh{padding:14px 16px;border-bottom:1px solid var(--bd);display:flex;align-items:center;justify-content:space-between;}
-    .sh h2{color:var(--blue);font-size:16px;font-weight:700;}
-    .sh .nb{background:var(--blue);color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;}
-    .ss{padding:8px 16px;}
-    .ss input{width:100%;background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:7px 10px;font-size:13px;outline:none;}
-    .sf{padding:4px 12px;display:flex;gap:4px;flex-wrap:wrap;}
-    .fd{padding:4px 10px;border-radius:12px;font-size:11px;cursor:pointer;color:var(--mu);background:var(--bg);border:1px solid var(--bd);}
-    .fd.a{background:var(--bl);color:var(--blue);border-color:rgba(13,94,175,0.3);font-weight:600;}
-    #nl{flex:1;overflow-y:auto;padding:4px 8px;}
-    .nc{padding:10px 12px;border-radius:6px;cursor:pointer;margin-bottom:2px;border:1px solid transparent;}
-    .nc:hover{background:var(--bg);}
-    .nc.a{background:var(--bl);border-color:rgba(13,94,175,0.2);}
-    .nc .t{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-    .nc .p{font-size:11px;color:var(--mu);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;}
-    .nc .d{font-size:10px;color:var(--mu);margin-top:2px;}
-    .su{padding:8px 16px;border-top:1px solid var(--bd);font-size:11px;color:var(--mu);}
-    #editor{flex:1;display:flex;flex-direction:column;background:var(--sf);}
-    #empty{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;color:var(--mu);gap:8px;}
-    .et{padding:10px 20px;border-bottom:1px solid var(--bd);display:none;align-items:center;gap:8px;flex-wrap:wrap;}
-    .et input{flex:1;min-width:120px;border:none;font-size:18px;font-weight:600;color:var(--tx);outline:none;background:transparent;}
-    .tb{background:var(--bg);color:var(--mu);border:1px solid var(--bd);border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer;white-space:nowrap;}
-    .tb:hover{background:var(--bl);color:var(--blue);border-color:var(--blue);}
-    .tb.dg:hover{background:#FEF2F2;color:var(--rd);border-color:var(--rd);}
-    #nb{flex:1;padding:20px;font-size:14px;line-height:1.7;outline:none;overflow-y:auto;resize:none;border:none;background:var(--sf);color:var(--tx);font-family:inherit;display:none;}
-    #ar{display:none;padding:12px 20px;background:#F0FDF4;border-top:1px solid #BBF7D0;font-size:13px;line-height:1.6;max-height:220px;overflow-y:auto;white-space:pre-wrap;}
-    .ef{padding:8px 20px;border-top:1px solid var(--bd);display:none;align-items:center;gap:6px;}
-    .ef input{flex:1;background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:7px 10px;font-size:13px;outline:none;}
-    .ef button{background:var(--blue);color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer;}
-    .ef button:disabled{background:var(--bd);cursor:not-allowed;}
+    :root {
+      --blue: #0D5EAF; --bh: #0A4896; --bl: #EBF3FB; --bg: #F8FAFC;
+      --sf: #FFFFFF; --bd: #E2E8F0; --tx: #1E293B; --mu: #64748B;
+      --gn: #16A34A; --rd: #DC2626; --code-bg: #1E293B; --code-tx: #E2E8F0;
+      --shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0F172A; --sf: #1E293B; --bd: #334155; --tx: #F1F5F9;
+        --mu: #94A3B8; --bl: #1E3A5F; --code-bg: #0F172A;
+        --shadow: 0 1px 3px rgba(0,0,0,0.4);
+      }
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--tx); height: 100vh; overflow: hidden; -webkit-font-smoothing: antialiased; }
+
+    /* Login */
+    #login { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100vh; padding: 20px; gap: 12px; animation: fadeIn 0.5s ease; }
+    #login h1 { color: var(--blue); font-size: 32px; font-weight: 800; letter-spacing: -0.5px; }
+    #login .sub { color: var(--mu); font-size: 14px; margin-bottom: 28px; }
+    #login-form { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 340px; }
+    #login-form input { width: 100%; background: var(--sf); color: var(--tx); border: 1px solid var(--bd); border-radius: 8px; padding: 12px 14px; font-size: 14px; outline: none; transition: border-color 0.2s, box-shadow 0.2s; }
+    #login-form input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(13,94,175,0.12); }
+    .btn-p { background: var(--blue); color: #fff; border: none; border-radius: 8px; padding: 12px; font-size: 14px; font-weight: 600; cursor: pointer; transition: background 0.15s, transform 0.1s; }
+    .btn-p:hover { background: var(--bh); }
+    .btn-p:active { transform: scale(0.98); }
+    .btn-s { background: transparent; color: var(--blue); border: 1px solid var(--bd); border-radius: 8px; padding: 11px; font-size: 14px; cursor: pointer; transition: all 0.15s; }
+    .btn-s:hover { background: var(--bl); border-color: var(--blue); }
+    #auth-error { font-size: 12px; text-align: center; min-height: 18px; color: var(--rd); transition: color 0.2s; }
+
+    /* App Layout */
+    #app { display: none; height: 100vh; flex-direction: row; }
+    @media (max-width: 640px) { #app { flex-direction: column !important; } #sidebar { width: 100% !important; max-height: 40vh; border-right: none !important; border-bottom: 1px solid var(--bd); } }
+
+    /* Sidebar */
+    #sidebar { width: 300px; background: var(--sf); border-right: 1px solid var(--bd); display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; }
+    .sh { padding: 16px 18px; border-bottom: 1px solid var(--bd); display: flex; align-items: center; justify-content: space-between; }
+    .sh h2 { color: var(--blue); font-size: 17px; font-weight: 800; letter-spacing: -0.3px; }
+    .sh .nb { background: var(--blue); color: #fff; border: none; border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 600; cursor: pointer; transition: background 0.15s, transform 0.1s; }
+    .sh .nb:hover { background: var(--bh); }
+    .sh .nb:active { transform: scale(0.96); }
+    .ss { padding: 10px 18px; }
+    .ss input { width: 100%; background: var(--bg); border: 1px solid var(--bd); border-radius: 8px; padding: 9px 12px; font-size: 13px; outline: none; transition: border-color 0.2s; color: var(--tx); }
+    .ss input:focus { border-color: var(--blue); }
+    .sf { padding: 6px 14px; display: flex; gap: 5px; flex-wrap: wrap; }
+    .fd { padding: 5px 12px; border-radius: 16px; font-size: 11px; cursor: pointer; color: var(--mu); background: var(--bg); border: 1px solid var(--bd); transition: all 0.15s; font-weight: 500; }
+    .fd:hover { background: var(--bl); color: var(--blue); }
+    .fd.a { background: var(--bl); color: var(--blue); border-color: rgba(13,94,175,0.3); font-weight: 600; }
+    #nl { flex: 1; overflow-y: auto; padding: 6px 10px; }
+    .nc { padding: 12px 14px; border-radius: 8px; cursor: pointer; margin-bottom: 3px; border: 1px solid transparent; transition: all 0.15s; }
+    .nc:hover { background: var(--bg); }
+    .nc.a { background: var(--bl); border-color: rgba(13,94,175,0.2); }
+    .nc .t { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .nc .p { font-size: 11px; color: var(--mu); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+    .nc .d { font-size: 10px; color: var(--mu); margin-top: 3px; opacity: 0.7; }
+    .su { padding: 10px 18px; border-top: 1px solid var(--bd); font-size: 11px; color: var(--mu); cursor: pointer; transition: color 0.15s; }
+    .su:hover { color: var(--rd); }
+
+    /* Editor */
+    #editor { flex: 1; display: flex; flex-direction: column; background: var(--sf); }
+    #empty { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; color: var(--mu); gap: 10px; animation: fadeIn 0.5s ease; }
+    #empty .logo { font-size: 28px; color: var(--blue); font-weight: 800; letter-spacing: -0.5px; }
+    #empty .hint { font-size: 13px; }
+    #empty .keys { font-size: 11px; opacity: 0.7; }
+    .et { padding: 12px 22px; border-bottom: 1px solid var(--bd); display: none; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .et input { flex: 1; min-width: 120px; border: none; font-size: 20px; font-weight: 700; color: var(--tx); outline: none; background: transparent; letter-spacing: -0.3px; }
+    .tb { background: var(--bg); color: var(--mu); border: 1px solid var(--bd); border-radius: 8px; padding: 6px 12px; font-size: 11px; cursor: pointer; white-space: nowrap; font-weight: 500; transition: all 0.15s; }
+    .tb:hover { background: var(--bl); color: var(--blue); border-color: var(--blue); }
+    .tb.dg:hover { background: #FEF2F2; color: var(--rd); border-color: var(--rd); }
+    #nb { flex: 1; padding: 22px; font-size: 14px; line-height: 1.8; outline: none; overflow-y: auto; resize: none; border: none; background: var(--sf); color: var(--tx); font-family: inherit; display: none; }
+    #nb::placeholder { color: var(--mu); }
+    #ar { display: none; padding: 14px 22px; background: var(--bl); border-top: 1px solid rgba(13,94,175,0.15); font-size: 13px; line-height: 1.7; max-height: 240px; overflow-y: auto; white-space: pre-wrap; animation: slideUp 0.3s ease; }
+    .ef { padding: 10px 22px; border-top: 1px solid var(--bd); display: none; align-items: center; gap: 8px; }
+    .ef input { flex: 1; background: var(--bg); border: 1px solid var(--bd); border-radius: 8px; padding: 9px 12px; font-size: 13px; outline: none; color: var(--tx); transition: border-color 0.2s; }
+    .ef input:focus { border-color: var(--blue); }
+    .ef button { background: var(--blue); color: #fff; border: none; border-radius: 8px; padding: 9px 16px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.15s; }
+    .ef button:hover { background: var(--bh); }
+    .ef button:disabled { background: var(--bd); cursor: not-allowed; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--bd); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--mu); }
+
+    /* Template dropdown items */
+    .tpl-item { padding: 10px 14px; cursor: pointer; font-size: 13px; transition: background 0.1s; }
+    .tpl-item:hover { background: var(--bl); color: var(--blue); }
+    .tpl-item:not(:last-child) { border-bottom: 1px solid var(--bd); }
+    .nc.pinned { border-left: 3px solid var(--blue); }
+    .nc .pin-icon { color: var(--blue); margin-right: 4px; font-size: 10px; }
+
+    /* Animations */
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes slideUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
   </style>
 </head>
 <body>
@@ -66,20 +116,41 @@
   </div>
   <div id="app">
     <div id="sidebar">
-      <div class="sh"><h2>Notes</h2><button class="nb" id="new-btn">+ New</button></div>
+      <div class="sh">
+        <h2>Notes</h2>
+        <div style="display:flex;gap:4px;align-items:center;">
+          <div style="position:relative;display:inline-block;">
+            <button class="nb" id="new-btn">+ New</button>
+            <button class="nb" id="template-btn" style="background:var(--bl);color:var(--blue);padding:6px 8px;" title="New from template">&#9776;</button>
+            <div id="template-dd" style="display:none;position:absolute;top:32px;right:0;background:var(--sf);border:1px solid var(--bd);border-radius:8px;box-shadow:var(--shadow);z-index:100;min-width:180px;">
+              <div class="tpl-item" data-tpl="meeting">Meeting Notes</div>
+              <div class="tpl-item" data-tpl="standup">Daily Standup</div>
+              <div class="tpl-item" data-tpl="project">Project Plan</div>
+              <div class="tpl-item" data-tpl="research">Research Notes</div>
+            </div>
+          </div>
+        </div>
+      </div>
       <div class="ss"><input id="srch" placeholder="Search notes..."/></div>
       <div class="sf" id="flds"></div>
       <div id="nl"></div>
-      <div class="su" id="ub"></div>
+      <div class="su" id="ub" title="Double-click to sign out"></div>
     </div>
     <div id="editor">
-      <div id="empty"><div style="font-size:24px;color:#0D5EAF;font-weight:700;">tsifl Notes</div><div>Select a note or create a new one</div><div style="font-size:12px;">Cmd+N to create, Cmd+S to save</div></div>
+      <div id="empty">
+        <div class="logo">tsifl Notes</div>
+        <div class="hint">Select a note or create a new one</div>
+        <div class="keys">Cmd+N to create &middot; Cmd+S to save &middot; Esc to close AI</div>
+      </div>
       <div class="et" id="tbar">
         <input id="nt" placeholder="Note title..."/>
+        <button class="tb" id="pin-btn" title="Pin note" style="font-size:14px;">&#9733;</button>
         <button class="tb" data-ai="summarize">Summarize</button>
         <button class="tb" data-ai="action_items">Actions</button>
         <button class="tb" data-ai="expand">Expand</button>
         <button class="tb" data-ai="rewrite">Rewrite</button>
+        <button class="tb" id="export-md" title="Export as Markdown">MD</button>
+        <button class="tb" id="export-txt" title="Export as Text">TXT</button>
         <button class="tb dg" id="del-btn">Delete</button>
       </div>
       <textarea id="nb" placeholder="Start writing..."></textarea>
@@ -96,7 +167,6 @@ const SB_URL = "https://dvynmzeyttwlmvunicqz.supabase.co";
 const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR2eW5temV5dHR3bG12dW5pY3F6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2NTIwMTIsImV4cCI6MjA5MDIyODAxMn0.9j_f-2f1VswxWfqiuXy4bPnUi1qLk9nAeTDlodUBUZw";
 let U = null, notes = [], activeId = null, activeFolder = null, saveTimer = null;
 
-// Auth helper — handles both Supabase response formats
 async function sbAuth(endpoint, body) {
   const resp = await fetch(SB_URL + "/auth/v1/" + endpoint, {
     method: "POST",
@@ -104,7 +174,6 @@ async function sbAuth(endpoint, body) {
     body: JSON.stringify(body),
   });
   const data = await resp.json();
-  // Supabase may return {error, error_description} OR {code, error_code, msg}
   if (data.error || data.error_code || data.code >= 400) {
     return { error: true, message: data.error_description || data.msg || data.error || "Auth failed" };
   }
@@ -128,7 +197,22 @@ async function syncSession(session) {
 }
 
 async function init() {
-  // Try local storage first
+  // 1. Try backend shared session FIRST (most reliable — survives across all apps)
+  try {
+    const resp = await fetch(API + "/auth/get-session");
+    const data = await resp.json();
+    if (data.session && data.session.refresh_token) {
+      const result = await sbAuth("token?grant_type=refresh_token", { refresh_token: data.session.refresh_token });
+      if (result.access_token && result.user) {
+        localStorage.setItem("tsifl_notes_session", JSON.stringify(result));
+        syncSession(result);
+        showApp({ id: result.user.id || data.session.user_id, email: result.user.email || data.session.email });
+        return;
+      }
+    }
+  } catch (e) { console.log("Backend auth failed:", e); }
+
+  // 2. Try local storage
   try {
     const saved = localStorage.getItem("tsifl_notes_session");
     if (saved) {
@@ -145,24 +229,8 @@ async function init() {
     }
   } catch (e) { console.log("Local auth failed:", e); }
 
-  // Try backend shared session
-  try {
-    const resp = await fetch(API + "/auth/get-session");
-    const data = await resp.json();
-    if (data.session && data.session.refresh_token) {
-      const result = await sbAuth("token?grant_type=refresh_token", { refresh_token: data.session.refresh_token });
-      if (result.access_token && result.user) {
-        localStorage.setItem("tsifl_notes_session", JSON.stringify(result));
-        syncSession(result);
-        showApp({ id: result.user.id || data.session.user_id, email: result.user.email || data.session.email });
-        return;
-      }
-    }
-  } catch (e) { console.log("Backend auth failed:", e); }
-
-  // Both failed — login screen is already visible via CSS
-  // Pre-fill email if we saved it
-  const savedEmail = localStorage.getItem("tsifl_notes_email");
+  // 3. Both failed — show login
+  var savedEmail = localStorage.getItem("tsifl_notes_email");
   if (savedEmail) {
     document.getElementById("em").value = savedEmail;
     document.getElementById("pw").focus();
@@ -179,15 +247,15 @@ function showApp(user) {
 }
 
 // Sign in
-document.getElementById("si").onclick = async () => {
-  const email = document.getElementById("em").value.trim();
-  const pw = document.getElementById("pw").value;
-  const err = document.getElementById("auth-error");
+document.getElementById("si").onclick = async function() {
+  var email = document.getElementById("em").value.trim();
+  var pw = document.getElementById("pw").value;
+  var err = document.getElementById("auth-error");
   err.textContent = "";
   err.style.color = "#DC2626";
   if (!email || !pw) { err.textContent = "Enter email and password."; return; }
   try {
-    const result = await sbAuth("token?grant_type=password", { email: email, password: pw });
+    var result = await sbAuth("token?grant_type=password", { email: email, password: pw });
     if (result.error) { err.textContent = result.message || "Sign in failed"; return; }
     if (!result.access_token || !result.user) { err.textContent = "Invalid response from auth server"; return; }
     localStorage.setItem("tsifl_notes_session", JSON.stringify(result));
@@ -198,16 +266,16 @@ document.getElementById("si").onclick = async () => {
 };
 
 // Sign up
-document.getElementById("su").onclick = async () => {
-  const email = document.getElementById("em").value.trim();
-  const pw = document.getElementById("pw").value;
-  const err = document.getElementById("auth-error");
+document.getElementById("su").onclick = async function() {
+  var email = document.getElementById("em").value.trim();
+  var pw = document.getElementById("pw").value;
+  var err = document.getElementById("auth-error");
   err.textContent = "";
   err.style.color = "#DC2626";
   if (!email || !pw) { err.textContent = "Enter email and password."; return; }
   if (pw.length < 6) { err.textContent = "Password must be 6+ characters."; return; }
   try {
-    const result = await sbAuth("signup", { email: email, password: pw });
+    var result = await sbAuth("signup", { email: email, password: pw });
     if (result.error) { err.textContent = result.message || "Sign up failed"; return; }
     err.style.color = "#16A34A";
     err.textContent = "Check your email to confirm, then sign in.";
@@ -311,16 +379,35 @@ function showEmpty() {
 
 function esc(text) { var d = document.createElement("div"); d.textContent = text; return d.innerHTML; }
 
+function timeAgo(dateStr) {
+  if (!dateStr) return "";
+  try {
+    var diff = Date.now() - new Date(dateStr).getTime();
+    if (diff < 60000) return "just now";
+    if (diff < 3600000) return Math.floor(diff / 60000) + "m ago";
+    if (diff < 86400000) return Math.floor(diff / 3600000) + "h ago";
+    return new Date(dateStr).toLocaleDateString();
+  } catch (e) { return ""; }
+}
+
 function renderList() {
   var list = document.getElementById("nl");
   var q = document.getElementById("srch").value.toLowerCase();
   var filtered = notes;
   if (q) filtered = notes.filter(function(n) { return (n.title + " " + n.content).toLowerCase().indexOf(q) >= 0; });
+  // Sort: pinned first, then by updated_at (Improvement 86)
+  filtered.sort(function(a, b) {
+    if (a.pinned && !b.pinned) return -1;
+    if (!a.pinned && b.pinned) return 1;
+    return new Date(b.updated_at || 0) - new Date(a.updated_at || 0);
+  });
   list.innerHTML = filtered.map(function(n) {
-    var preview = (n.content || "").replace(/\n/g, " ").slice(0, 60);
-    var date = n.updated_at ? new Date(n.updated_at).toLocaleDateString() : "";
+    var preview = (n.content || "").replace(/\n/g, " ").slice(0, 80);
+    var date = timeAgo(n.updated_at);
     var active = String(n.id) === String(activeId) ? " a" : "";
-    return '<div class="nc' + active + '" data-id="' + n.id + '"><div class="t">' + esc(n.title || "Untitled") + '</div><div class="p">' + esc(preview) + '</div><div class="d">' + date + '</div></div>';
+    var pinClass = n.pinned ? " pinned" : "";
+    var pinIcon = n.pinned ? '<span class="pin-icon">\u2605</span>' : '';
+    return '<div class="nc' + active + pinClass + '" data-id="' + n.id + '"><div class="t">' + pinIcon + esc(n.title || "Untitled") + '</div><div class="p">' + esc(preview) + '</div><div class="d">' + date + '</div></div>';
   }).join("");
   var cards = list.querySelectorAll(".nc");
   for (var i = 0; i < cards.length; i++) {
@@ -346,7 +433,7 @@ async function aiAction(action, question) {
   if (!activeId) return;
   var ar = document.getElementById("ar");
   ar.style.display = "block";
-  ar.textContent = "Thinking...";
+  ar.innerHTML = '<div style="display:flex;gap:4px;align-items:center;color:var(--blue);"><span style="width:8px;height:8px;background:var(--blue);border-radius:50%;animation:pulse 1.4s infinite ease-in-out;"></span><span style="width:8px;height:8px;background:var(--blue);border-radius:50%;animation:pulse 1.4s infinite ease-in-out 0.2s;"></span><span style="width:8px;height:8px;background:var(--blue);border-radius:50%;animation:pulse 1.4s infinite ease-in-out 0.4s;"></span></div>';
   document.getElementById("ab").disabled = true;
   try {
     var resp = await fetch(API + "/notes/" + activeId + "/ai", {
@@ -359,6 +446,79 @@ async function aiAction(action, question) {
   } catch (e) { ar.textContent = "Error: " + e.message; }
   document.getElementById("ab").disabled = false;
 }
+
+// Note templates (Improvement 82)
+var noteTemplates = {
+  meeting: { title: "Meeting Notes — " + new Date().toLocaleDateString(), content: "## Date\n" + new Date().toLocaleDateString() + "\n\n## Attendees\n- \n\n## Agenda\n1. \n\n## Discussion\n\n## Decisions\n\n## Action Items\n- [ ] " },
+  standup: { title: "Daily Standup — " + new Date().toLocaleDateString(), content: "## Yesterday\n- \n\n## Today\n- \n\n## Blockers\n- " },
+  project: { title: "Project Plan", content: "## Objective\n\n## Timeline\n\n## Milestones\n- [ ] \n\n## Risks\n- \n\n## Resources\n- " },
+  research: { title: "Research Notes", content: "## Topic\n\n## Sources\n- \n\n## Key Findings\n\n## Questions\n- \n\n## Next Steps\n- " }
+};
+
+// Template dropdown toggle
+document.getElementById("template-btn").onclick = function(e) {
+  e.stopPropagation();
+  var dd = document.getElementById("template-dd");
+  dd.style.display = dd.style.display === "none" ? "block" : "none";
+};
+document.addEventListener("click", function() { document.getElementById("template-dd").style.display = "none"; });
+var tplItems = document.querySelectorAll(".tpl-item");
+for (var ti = 0; ti < tplItems.length; ti++) {
+  tplItems[ti].onclick = (function(item) { return async function() {
+    var tpl = noteTemplates[item.getAttribute("data-tpl")];
+    if (!tpl) return;
+    document.getElementById("template-dd").style.display = "none";
+    try {
+      var resp = await fetch(API + "/notes/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: U.id, title: tpl.title, content: tpl.content, folder: "General" }),
+      });
+      var note = await resp.json();
+      notes.unshift(note);
+      selectNote(note.id);
+      renderList();
+    } catch (e) {}
+  }; })(tplItems[ti]);
+}
+
+// Pin note (Improvement 86)
+document.getElementById("pin-btn").onclick = async function() {
+  if (!activeId) return;
+  var note = notes.find(function(n) { return String(n.id) === String(activeId); });
+  if (!note) return;
+  note.pinned = !note.pinned;
+  try {
+    await fetch(API + "/notes/" + activeId, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: U.id, pinned: note.pinned }),
+    });
+  } catch (e) {}
+  renderList();
+};
+
+// Export as Markdown (Improvement 88)
+document.getElementById("export-md").onclick = function() {
+  var title = document.getElementById("nt").value || "Untitled";
+  var content = document.getElementById("nb").value || "";
+  var blob = new Blob(["# " + title + "\n\n" + content], { type: "text/markdown" });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = title.replace(/[^a-zA-Z0-9]/g, "_") + ".md";
+  a.click();
+};
+
+// Export as plain text (Improvement 88)
+document.getElementById("export-txt").onclick = function() {
+  var title = document.getElementById("nt").value || "Untitled";
+  var content = document.getElementById("nb").value || "";
+  var blob = new Blob([title + "\n\n" + content], { type: "text/plain" });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = title.replace(/[^a-zA-Z0-9]/g, "_") + ".txt";
+  a.click();
+};
 
 // Events
 document.getElementById("new-btn").onclick = createNote;
@@ -382,6 +542,11 @@ document.addEventListener("keydown", function(e) {
   if ((e.metaKey || e.ctrlKey) && e.key === "s" && activeId) { e.preventDefault(); saveNote(); }
   if (e.key === "Escape") document.getElementById("ar").style.display = "none";
 });
+
+// Inline pulse animation for AI thinking indicator
+var style = document.createElement("style");
+style.textContent = "@keyframes pulse{0%,80%,100%{transform:scale(0.6);opacity:0.4}40%{transform:scale(1);opacity:1}}";
+document.head.appendChild(style);
 
 // Start
 init();

@@ -25,86 +25,88 @@ run_tsifl_server <- function(port = 7444) {
   CSS <- "
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
-    body {
+    body, .container-fluid {
       background: #FFFFFF;
       color: #1E293B;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      font-size: 13px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
+      font-size: 14px;
       height: 100vh;
       overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      -webkit-font-smoothing: antialiased;
+      margin: 0;
+      padding: 0 !important;
     }
 
     #header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 9px 14px;
+      padding: 12px 16px;
       background: #FFFFFF;
-      border-bottom: 1px solid #E2E8F0;
+      border-bottom: 1px solid #F0F0F0;
       flex-shrink: 0;
     }
 
     #logo {
-      font-weight: 700;
-      font-size: 13px;
+      font-weight: 600;
+      font-size: 15px;
       color: #0D5EAF;
       letter-spacing: -0.3px;
     }
 
     #tasks_label {
-      font-size: 10px;
-      color: #64748B;
-      background: #F1F5F9;
-      padding: 2px 8px;
-      border-radius: 10px;
-      border: 1px solid #E2E8F0;
+      font-size: 11px;
+      color: #8E8E93;
+      background: #F2F2F7;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-weight: 500;
+      border: none;
     }
 
     #chat_history {
-      height: calc(100vh - 145px);
+      flex: 1;
       overflow-y: auto;
-      padding: 10px 12px;
+      padding: 16px 14px;
+      padding-bottom: 140px;
       display: flex;
       flex-direction: column;
-      gap: 7px;
-      background: #F8FAFC;
+      gap: 6px;
+      background: #FFFFFF;
     }
 
-    #chat_history::-webkit-scrollbar { width: 3px; }
-    #chat_history::-webkit-scrollbar-track { background: transparent; }
-    #chat_history::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
+    #chat_history::-webkit-scrollbar { width: 0; }
 
     .msg-user {
-      background: #EBF3FB;
-      border-left: 2px solid #0D5EAF;
-      padding: 7px 10px;
-      border-radius: 5px;
+      background: #0D5EAF;
+      color: #FFFFFF;
+      padding: 10px 14px;
+      border-radius: 18px 18px 4px 18px;
       line-height: 1.5;
-      font-size: 13px;
-      color: #1E293B;
+      font-size: 14px;
+      align-self: flex-end;
+      max-width: 82%;
+      word-wrap: break-word;
+      animation: msgIn 0.2s ease;
     }
 
     .msg-assistant {
-      background: #FFFFFF;
-      border-left: 2px solid #86EFAC;
-      padding: 7px 10px;
-      border-radius: 5px;
-      line-height: 1.5;
-      font-size: 13px;
-      color: #1E293B;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+      padding: 4px 2px;
+      line-height: 1.65;
+      font-size: 14px;
+      color: #1D1D1F;
+      max-width: 100%;
+      word-wrap: break-word;
+      animation: msgIn 0.2s ease;
     }
 
     .msg-action {
-      background: rgba(22, 163, 74, 0.07);
-      border-left: 2px solid #16A34A;
-      padding: 5px 10px;
-      border-radius: 5px;
-      font-family: 'SF Mono', 'Fira Code', Monaco, monospace;
-      font-size: 11px;
-      color: #16A34A;
+      padding: 1px 2px;
+      font-size: 12px;
+      color: #8E8E93;
       line-height: 1.4;
-      white-space: pre-wrap;
     }
 
     #input_area {
@@ -113,50 +115,47 @@ run_tsifl_server <- function(port = 7444) {
       left: 0;
       right: 0;
       background: #FFFFFF;
-      border-top: 1px solid #E2E8F0;
-      padding: 8px 12px;
+      padding: 8px 12px 10px;
       display: flex;
       flex-direction: column;
-      gap: 5px;
-      transition: background 0.15s, outline 0.15s;
+      gap: 6px;
     }
 
     #user_input {
       width: 100%;
-      background: #F8FAFC;
-      color: #1E293B;
-      border: 1px solid #E2E8F0;
-      border-radius: 5px;
-      padding: 7px 10px;
-      font-size: 13px;
-      font-family: inherit;
+      box-sizing: border-box;
+      background: #F2F2F7;
+      color: #1D1D1F;
+      border: none;
+      border-radius: 20px;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       resize: none;
       outline: none;
-      transition: border-color 0.15s, box-shadow 0.15s;
+      transition: box-shadow 0.15s;
       line-height: 1.4;
     }
 
     #user_input:focus {
-      border-color: #0D5EAF;
-      box-shadow: 0 0 0 3px rgba(13, 94, 175, 0.08);
-      background: #FFFFFF;
+      box-shadow: 0 0 0 2px rgba(13, 94, 175, 0.2);
     }
 
-    #user_input::placeholder { color: #94A3B8; }
+    #user_input::placeholder { color: #8E8E93; }
 
     #input_actions {
       display: flex;
-      gap: 5px;
+      gap: 6px;
     }
 
     #attach_btn {
-      background: #F1F5F9;
-      color: #64748B;
-      border: 1px solid #E2E8F0;
-      border-radius: 5px;
-      padding: 7px 12px;
-      font-size: 15px;
-      font-weight: 600;
+      background: #F2F2F7;
+      color: #8E8E93;
+      border: none;
+      border-radius: 20px;
+      padding: 10px 14px;
+      font-size: 16px;
+      font-weight: 500;
       cursor: pointer;
       transition: all 0.15s;
       line-height: 1;
@@ -164,9 +163,8 @@ run_tsifl_server <- function(port = 7444) {
     }
 
     #attach_btn:hover {
-      background: #EBF3FB;
-      color: #0D5EAF;
-      border-color: #0D5EAF;
+      background: #E5E5EA;
+      color: #1D1D1F;
     }
 
     #send_btn {
@@ -174,16 +172,17 @@ run_tsifl_server <- function(port = 7444) {
       background: #0D5EAF;
       color: white;
       border: none;
-      border-radius: 5px;
-      padding: 7px;
-      font-size: 13px;
+      border-radius: 20px;
+      padding: 10px;
+      font-size: 14px;
       font-weight: 600;
       cursor: pointer;
       transition: background 0.15s;
-      letter-spacing: 0.2px;
+      letter-spacing: 0.1px;
     }
 
-    #send_btn:hover { background: #0A4896; }
+    #send_btn:hover { background: #0A4E94; }
+    #send_btn:active { background: #083D7A; transform: scale(0.98); }
 
     #image_preview_bar {
       display: none;
@@ -198,73 +197,91 @@ run_tsifl_server <- function(port = 7444) {
     }
 
     .image-preview-item canvas {
-      border-radius: 4px;
-      border: 1px solid #E2E8F0;
+      border-radius: 8px;
+      border: 1px solid #E5E5EA;
     }
 
     .image-preview-item .remove-img {
       position: absolute;
       top: -4px;
       right: -4px;
-      width: 16px;
-      height: 16px;
-      background: #DC2626;
+      width: 18px;
+      height: 18px;
+      background: #FF3B30;
       color: white;
       border: none;
       border-radius: 50%;
-      font-size: 10px;
-      line-height: 16px;
+      font-size: 11px;
+      line-height: 18px;
       text-align: center;
       cursor: pointer;
       padding: 0;
     }
 
     .chat-canvas {
-      border-radius: 8px;
-      border: 1px solid #E2E8F0;
+      border-radius: 10px;
+      border: 1px solid #E5E5EA;
       display: block;
       max-width: 100%;
       margin-top: 6px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
 
     .image-badge {
       display: inline-block;
-      background: rgba(13, 94, 175, 0.09);
-      color: #0D5EAF;
-      font-size: 10px;
-      font-weight: 600;
-      padding: 2px 8px;
-      border-radius: 10px;
+      background: #F2F2F7;
+      color: #8E8E93;
+      font-size: 11px;
+      font-weight: 500;
+      padding: 3px 10px;
+      border-radius: 12px;
       margin-top: 4px;
-      border: 1px solid rgba(13, 94, 175, 0.2);
     }
 
-    #status_bar {
-      font-size: 10px;
-      color: #94A3B8;
-      padding: 1px 0;
+    #status_bar { display: none; }
+
+    @keyframes msgIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes shimmer {
+      0% { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
     }
 
-    .typing-indicator { display: flex; gap: 4px; padding: 8px 10px; align-items: center; }
-    .typing-indicator span { width: 7px; height: 7px; background: #94A3B8; border-radius: 50%; animation: pulse 1.4s infinite ease-in-out; }
-    .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
-    .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
-    @keyframes pulse { 0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; } 40% { transform: scale(1); opacity: 1; } }
-    @keyframes fadeInUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-    .message { animation: fadeInUp 0.3s ease; }
-
-    .message pre { position: relative; background: #1E293B; color: #E2E8F0; border-radius: 6px; padding: 10px 12px; margin: 6px 0; font-family: 'SF Mono', Consolas, monospace; font-size: 12px; line-height: 1.5; overflow-x: auto; white-space: pre-wrap; }
-    .message code { background: #F1F5F9; padding: 1px 4px; border-radius: 3px; font-size: 11px; font-family: 'SF Mono', Consolas, monospace; }
-
-    @media (prefers-color-scheme: dark) {
-      body { background: #0F172A; color: #F1F5F9; }
-      #header { background: #1E293B; border-color: #334155; }
-      .message.user { background: #1E3A5F; border-color: #0D5EAF; }
-      .message.assistant { background: #1E293B; border-color: #334155; color: #F1F5F9; }
-      #input_area { background: #0F172A; border-color: #334155; }
-      textarea { background: #1E293B !important; color: #F1F5F9 !important; border-color: #334155 !important; }
+    /* Claude-style thinking indicator */
+    #tsifl-thinking-bubble {
+      padding: 12px 4px;
+      animation: fadeInUp 0.3s ease;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
     }
+    #tsifl-thinking-bubble .thinking-phase { display: none; }
+    #tsifl-thinking-bubble .thinking-orb {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: linear-gradient(90deg, #C7C7CC 25%, #E8E8ED 50%, #C7C7CC 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.8s ease-in-out infinite;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    #tsifl-thinking-bubble .thinking-content {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    #tsifl-thinking-bubble .thinking-text {
+      font-size: 14px;
+      color: #8E8E93;
+      transition: opacity 0.3s ease, transform 0.3s ease;
+      line-height: 1.4;
+    }
+
+    .msg-assistant pre { background: #F2F2F7; color: #1D1D1F; border-radius: 10px; padding: 10px 12px; margin: 6px 0; font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5; overflow-x: auto; white-space: pre-wrap; }
+    .msg-assistant code { background: #F2F2F7; padding: 2px 6px; border-radius: 5px; font-size: 12px; font-family: 'SF Mono', Menlo, Consolas, monospace; color: #1D1D1F; }
   "
 
   # ── UI ─────────────────────────────────────────────────────────────────────
@@ -292,35 +309,36 @@ run_tsifl_server <- function(port = 7444) {
         shiny::tags$button(
           id = "notes_btn",
           onclick = paste0("window.open('", BACKEND_URL, "/notes-app','_blank')"),
-          style = "background:#F1F5F9;color:#64748B;border:1px solid #E2E8F0;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:600;cursor:pointer;",
+          style = "background:#F2F2F7;color:#8E8E93;border:none;border-radius:12px;padding:4px 10px;font-size:11px;font-weight:500;cursor:pointer;",
           "Notes"
         ),
         shiny::uiOutput("tasks_label")
       )
     ),
 
-    # Quick actions (Improvements 60, 62, 63, 68)
-    shiny::div(id = "quick_actions", style = "display:flex;gap:4px;padding:6px 12px;flex-wrap:wrap;border-bottom:1px solid #E2E8F0;",
-      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 't_test', {priority: 'event'})", style = "background:#F8FAFC;color:#64748B;border:1px solid #E2E8F0;border-radius:10px;padding:2px 8px;font-size:10px;cursor:pointer;", "t-test"),
-      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'linear_reg', {priority: 'event'})", style = "background:#F8FAFC;color:#64748B;border:1px solid #E2E8F0;border-radius:10px;padding:2px 8px;font-size:10px;cursor:pointer;", "Linear Reg"),
-      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'anova', {priority: 'event'})", style = "background:#F8FAFC;color:#64748B;border:1px solid #E2E8F0;border-radius:10px;padding:2px 8px;font-size:10px;cursor:pointer;", "ANOVA"),
-      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'ggplot_scatter', {priority: 'event'})", style = "background:#F8FAFC;color:#64748B;border:1px solid #E2E8F0;border-radius:10px;padding:2px 8px;font-size:10px;cursor:pointer;", "ggplot"),
-      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'summary_stats', {priority: 'event'})", style = "background:#F8FAFC;color:#64748B;border:1px solid #E2E8F0;border-radius:10px;padding:2px 8px;font-size:10px;cursor:pointer;", "Summary"),
-      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'correlation', {priority: 'event'})", style = "background:#F8FAFC;color:#64748B;border:1px solid #E2E8F0;border-radius:10px;padding:2px 8px;font-size:10px;cursor:pointer;", "Correlation"),
-      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'which_test', {priority: 'event'})", style = "background:#F8FAFC;color:#64748B;border:1px solid #E2E8F0;border-radius:10px;padding:2px 8px;font-size:10px;cursor:pointer;", "Which test?"),
-      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'profile_data', {priority: 'event'})", style = "background:#F8FAFC;color:#64748B;border:1px solid #E2E8F0;border-radius:10px;padding:2px 8px;font-size:10px;cursor:pointer;", "Profile data"),
-      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'compare_models', {priority: 'event'})", style = "background:#F8FAFC;color:#64748B;border:1px solid #E2E8F0;border-radius:10px;padding:2px 8px;font-size:10px;cursor:pointer;", "Compare models")
+    # Quick actions
+    shiny::div(id = "quick_actions", style = "display:flex;gap:6px;padding:8px 14px;flex-wrap:wrap;border-bottom:1px solid #F0F0F0;",
+      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 't_test', {priority: 'event'})", style = "background:#F2F2F7;color:#8E8E93;border:none;border-radius:14px;padding:4px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;", "t-test"),
+      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'linear_reg', {priority: 'event'})", style = "background:#F2F2F7;color:#8E8E93;border:none;border-radius:14px;padding:4px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;", "Linear Reg"),
+      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'anova', {priority: 'event'})", style = "background:#F2F2F7;color:#8E8E93;border:none;border-radius:14px;padding:4px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;", "ANOVA"),
+      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'ggplot_scatter', {priority: 'event'})", style = "background:#F2F2F7;color:#8E8E93;border:none;border-radius:14px;padding:4px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;", "ggplot"),
+      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'summary_stats', {priority: 'event'})", style = "background:#F2F2F7;color:#8E8E93;border:none;border-radius:14px;padding:4px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;", "Summary"),
+      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'correlation', {priority: 'event'})", style = "background:#F2F2F7;color:#8E8E93;border:none;border-radius:14px;padding:4px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;", "Correlation"),
+      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'which_test', {priority: 'event'})", style = "background:#F2F2F7;color:#8E8E93;border:none;border-radius:14px;padding:4px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;", "Which test?"),
+      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'profile_data', {priority: 'event'})", style = "background:#F2F2F7;color:#8E8E93;border:none;border-radius:14px;padding:4px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;", "Profile data"),
+      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'compare_models', {priority: 'event'})", style = "background:#F2F2F7;color:#8E8E93;border:none;border-radius:14px;padding:4px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;", "Compare models")
     ),
 
     shiny::div(id = "chat_history",
-      shiny::uiOutput("chat_messages")
+      shiny::uiOutput("chat_messages"),
+      shiny::div(id = "thinking_container")
     ),
 
     shiny::div(id = "input_area",
       shiny::div(id = "image_preview_bar"),
-      shiny::textAreaInput("user_input", label = NULL,
-        placeholder = "Ask me to run R code, plot data, update Excel...",
-        rows = 2, width = "100%"
+      shiny::tags$textarea(id = "user_input",
+        placeholder = "What can I help you with?",
+        rows = "2"
       ),
       shiny::tags$input(type = "file", id = "image_input",
         accept = "image/*,.pdf,.csv,.txt,.json,.xml,.r,.R,.py,.js,.ts,.sql,.md,.html,.yaml,.yml,.docx,.xlsx,.sas,.do,.log",
@@ -329,9 +347,11 @@ run_tsifl_server <- function(port = 7444) {
       ),
       shiny::div(id = "input_actions",
         shiny::tags$button(id = "attach_btn", title = "Attach file", "+"),
-        shiny::actionButton("send_btn", "Send", width = "100%")
+        shiny::tags$button(id = "send_btn", style = "width:100%;",
+          onclick = "var t=document.getElementById('user_input');if(t&&t.value.trim()){var m=t.value.trim();t.value='';t.style.color='transparent';this.textContent='...';Shiny.setInputValue('send_message',m,{priority:'event'});setTimeout(function(){t.style.color='';document.getElementById('send_btn').textContent='Send';},500);}",
+          "Send")
       ),
-      shiny::div(id = "status_bar", shiny::textOutput("status", inline = TRUE))
+      shiny::div(id = "status_bar", class = "idle", shiny::HTML('<span class="status-dot"></span><span id="status_text"></span>'))
     ),
 
     shiny::tags$script(shiny::HTML("
@@ -470,16 +490,73 @@ run_tsifl_server <- function(port = 7444) {
         });
       }
 
-      // Hook into send button — pass images to Shiny before submit
-      document.getElementById('send_btn').addEventListener('click', function() {
-        if (pendingImages.length > 0) {
-          Shiny.setInputValue('pending_images', JSON.stringify(pendingImages));
-          pendingImages = [];
-          updatePreview();
-        } else {
-          Shiny.setInputValue('pending_images', '[]');
+      // Make pendingImages accessible globally
+      window._tsiflImages = pendingImages;
+
+      // Unbind Shiny's automatic textarea binding (prevents value restoration)
+      var ta = document.getElementById('user_input');
+      if (ta) {
+        try { Shiny.unbindAll(ta.parentElement); } catch(e) {}
+      }
+
+      // Send function — captures message, clears textarea
+      window._tsiflSend = function() {
+        var ta = document.getElementById('user_input');
+        if (!ta) return;
+        var msg = ta.value.trim();
+        if (!msg) return;
+
+        // DEBUG: change button text to prove onclick fires
+        var btn = document.getElementById('send_btn');
+        if (btn) btn.textContent = 'Sending...';
+
+        // Pass images
+        try {
+          Shiny.setInputValue('pending_images', JSON.stringify(window._tsiflImages || []));
+          if (window._tsiflImages) window._tsiflImages.length = 0;
+        } catch(e) {}
+
+        // Hide old textarea and create new one
+        ta.style.display = 'none';
+        var parent = ta.parentNode;
+        var newTa = document.createElement('textarea');
+        newTa.id = 'user_input_new';
+        newTa.placeholder = 'What can I help you with?';
+        newTa.rows = 2;
+        parent.insertBefore(newTa, ta);
+        ta.remove();
+        newTa.id = 'user_input';
+
+        // Re-attach paste handler on new element
+        newTa.addEventListener('paste', function(e) {
+          var items = Array.from(e.clipboardData ? e.clipboardData.items : []);
+          items.forEach(function(item) {
+            if (item.type.startsWith('image/') || item.kind === 'file') {
+              var f = item.getAsFile();
+              if (f) readFileAsBase64(f);
+            }
+          });
+        });
+
+        // Re-attach Enter key handler
+        newTa.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            document.getElementById('send_btn').click();
+          }
+        });
+
+        // Send message to Shiny
+        Shiny.setInputValue('send_message', msg, {priority: 'event'});
+      };
+
+      // Enter key sends (Shift+Enter for newline)
+      document.getElementById('user_input').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          document.getElementById('send_btn').click();
         }
-      }, true);  // capture phase — runs BEFORE Shiny's handler
+      });
 
       // Listen for image display in chat
       Shiny.addCustomMessageHandler('show_chat_image', function(msg) {
@@ -497,6 +574,166 @@ run_tsifl_server <- function(port = 7444) {
           });
         }, 100);
       });
+
+      // ── Animated status rotation system ──
+      var _statusInterval = null;
+      var _statusMessages = {
+        thinking: [
+          'Reading your question...',
+          'Analyzing the screenshots...',
+          'Understanding what you need...',
+          'Consulting the statistical gods...',
+          'Thinking really hard right now...',
+          'If I had a chin, I\\'d be stroking it...',
+          'Formulating the perfect approach...',
+          'My neurons are firing... all 175B of them...'
+        ],
+        generating: [
+          'Writing R code...',
+          'Building your analysis...',
+          'Crafting the perfect model...',
+          'Assembling statistical firepower...',
+          'Making R do the heavy lifting...',
+          'This is the fun part...',
+          'Putting the pieces together...',
+          'Almost there, promise...'
+        ],
+        running: [
+          'Running code in your console...',
+          'R is crunching numbers...',
+          'Executing analysis...',
+          'Plots are cooking...',
+          'Waiting for R to finish...',
+          'R is doing its thing...',
+          'Numbers are being crunched as we speak...',
+          'Your CPU is earning its keep right now...'
+        ],
+        interpreting: [
+          'Reading the R output...',
+          'Interpreting your results...',
+          'Extracting the key values...',
+          'Translating R-speak to human...',
+          'Making sense of the numbers...',
+          'Almost done, packaging your answers...',
+          'Double-checking the values...',
+          'No hallucinations on my watch...'
+        ]
+      };
+
+      var _phaseLabels = {
+        thinking: 'Thinking',
+        generating: 'Generating code',
+        running: 'Running in R',
+        interpreting: 'Reading results'
+      };
+
+      function getOrCreateBubble() {
+        var bubble = document.getElementById('tsifl-thinking-bubble');
+        if (!bubble) {
+          bubble = document.createElement('div');
+          bubble.id = 'tsifl-thinking-bubble';
+          bubble.innerHTML = '<div class=\"thinking-phase\"></div>' +
+            '<div class=\"thinking-orb\"></div>' +
+            '<div class=\"thinking-content\">' +
+              '<span class=\"thinking-text\"></span>' +
+            '</div>';
+          var container = document.getElementById('thinking_container');
+          if (container) {
+            container.appendChild(bubble);
+          }
+          var chat = document.getElementById('chat_history');
+          if (chat) chat.scrollTop = chat.scrollHeight;
+        }
+        return bubble;
+      }
+
+      function removeBubble() {
+        var container = document.getElementById('thinking_container');
+        if (container) container.innerHTML = '';
+      }
+
+      var _activePhase = null;
+
+      function startStatusRotation(phase) {
+        stopStatusRotation();
+        _activePhase = phase;
+        var msgs = _statusMessages[phase] || _statusMessages.thinking;
+        var idx = 0;
+
+        // Show and update status bar
+        var bar = document.getElementById('status_bar');
+        if (bar) bar.className = '';
+        var dot = document.querySelector('#status_bar .status-dot');
+        var statusText = document.getElementById('status_text');
+        if (dot) dot.className = 'status-dot ' + (phase === 'running' || phase === 'interpreting' ? 'running' : 'thinking');
+
+        function ensureBubble() {
+          // Re-create bubble if it was destroyed by Shiny re-render
+          var bubble = getOrCreateBubble();
+          var phaseEl = bubble.querySelector('.thinking-phase');
+          if (phaseEl) phaseEl.textContent = _phaseLabels[_activePhase] || _activePhase;
+          return bubble;
+        }
+
+        function show() {
+          if (!_activePhase) return;
+          var bubble = ensureBubble();
+          var textEl = bubble.querySelector('.thinking-text');
+          var msg = msgs[idx % msgs.length];
+          if (textEl) {
+            textEl.style.opacity = '0';
+            textEl.style.transform = 'translateY(4px)';
+            setTimeout(function() {
+              textEl.textContent = msg;
+              textEl.style.opacity = '1';
+              textEl.style.transform = 'translateY(0)';
+            }, 200);
+          }
+          var chat = document.getElementById('chat_history');
+          if (chat) chat.scrollTop = chat.scrollHeight;
+          idx++;
+        }
+
+        // Delay initial show to let Shiny re-render complete first
+        setTimeout(function() { if (_activePhase) show(); }, 200);
+        _statusInterval = setInterval(show, 2500);
+      }
+
+      function stopStatusRotation() {
+        if (_statusInterval) { clearInterval(_statusInterval); _statusInterval = null; }
+      }
+
+      function setStatusDone(msg) {
+        _activePhase = null;
+        stopStatusRotation();
+        removeBubble();
+        var bar = document.getElementById('status_bar');
+        if (bar) bar.className = 'idle';
+      }
+
+      function setStatusError(msg) {
+        _activePhase = null;
+        stopStatusRotation();
+        removeBubble();
+        var bar = document.getElementById('status_bar');
+        if (bar) bar.className = '';
+        var dot = document.querySelector('#status_bar .status-dot');
+        var text = document.getElementById('status_text');
+        if (dot) dot.className = 'status-dot error';
+        if (text) { text.style.opacity = '1'; text.textContent = msg || 'Disconnected'; }
+      }
+
+      // Listen for status phase changes from Shiny server
+      Shiny.addCustomMessageHandler('tsifl_status', function(msg) {
+        if (msg.phase === 'done') { setStatusDone(msg.text || 'Done'); }
+        else if (msg.phase === 'error') { setStatusError(msg.text || 'Disconnected'); }
+        else { startStatusRotation(msg.phase); }
+      });
+
+      // Quick action — send message directly without touching textarea
+      Shiny.addCustomMessageHandler('trigger_send', function(msg) {
+        Shiny.setInputValue('send_message', msg.msg, {priority: 'event'});
+      });
     "))
 
   )
@@ -506,30 +743,48 @@ run_tsifl_server <- function(port = 7444) {
 
     messages    <- shiny::reactiveVal(list())
     tasks_left  <- shiny::reactiveVal(NA)
-    status_text <- shiny::reactiveVal("Connected")
+
+    # Status helper — sends phase to JS for animated rotation
+    set_status <- function(phase, text = NULL) {
+      session$sendCustomMessage("tsifl_status", list(phase = phase, text = text))
+    }
 
     output$chat_messages <- shiny::renderUI({
       msgs <- messages()
       if (length(msgs) == 0) {
-        return(shiny::p("Ask me anything...",
-          style = "color:#2a3f5f; font-style:italic; font-size:12px; padding:4px 0;"))
+        return(shiny::p("What can I help you with?",
+          style = "color:#C7C7CC; font-size:14px; padding:20px 0; text-align:center;"))
       }
       ui_list <- lapply(msgs, function(m) {
-        children <- list(shiny::span(m$text))
-        # Add image containers for messages with images
+        # Convert markdown-style formatting to HTML for assistant messages
+        display_text <- m$text
+        if (m$role == "assistant") {
+          # Strip bold markers — keep text clean without heavy formatting
+          display_text <- gsub("\\*\\*(.+?)\\*\\*", "\\1", display_text)
+          # Inline code: `text` → <code>text</code>
+          display_text <- gsub("`([^`]+)`", "<code>\\1</code>", display_text)
+          # Line breaks
+          display_text <- gsub("\n\n", "<br><br>", display_text)
+          display_text <- gsub("\n", "<br>", display_text)
+          # Bullet points
+          display_text <- gsub("<br>- ", "<br>\u2022 ", display_text)
+          display_text <- gsub("^- ", "\u2022 ", display_text)
+        }
+        children <- if (m$role == "assistant") {
+          list(shiny::HTML(paste0('<span>', display_text, '</span>')))
+        } else {
+          list(shiny::span(m$text))
+        }
+        # Show compact badge for attached images (not full renders)
         if (!is.null(m$images) && length(m$images) > 0) {
-          for (i in seq_along(m$images)) {
-            img_id <- m$img_ids[[i]]
-            children <- c(children, list(
-              shiny::div(id = img_id, style = "margin-top:6px;")
-            ))
-            # Send message to JS to render canvas
-            session$sendCustomMessage("show_chat_image", list(
-              target_id  = img_id,
-              data       = m$images[[i]]$data,
-              media_type = m$images[[i]]$media_type
-            ))
-          }
+          n_imgs <- length(m$images)
+          badge_text <- if (n_imgs == 1) "1 image attached" else paste0(n_imgs, " images attached")
+          children <- c(children, list(
+            shiny::span(
+              badge_text,
+              style = "display:inline-block;margin-top:4px;font-size:10px;color:#64748B;background:#F1F5F9;padding:2px 8px;border-radius:8px;border:1px solid #E2E8F0;"
+            )
+          ))
         }
         shiny::div(class = paste0("msg-", m$role), children)
       })
@@ -542,20 +797,19 @@ run_tsifl_server <- function(port = 7444) {
       shiny::span(id = "tasks_label", paste(t, "tasks left"))
     })
 
-    output$status <- shiny::renderText(status_text())
+    # (status is now JS-driven via set_status())
 
     img_counter <- shiny::reactiveVal(0)
 
     add_message <- function(role, text, images = NULL) {
-      current <- messages()
+      current <- shiny::isolate(messages())
       entry <- list(role = role, text = text)
       if (!is.null(images) && length(images) > 0) {
-        # Assign unique IDs for each image so JS can find the DOM target
         img_ids <- lapply(seq_along(images), function(i) {
-          n <- img_counter() + i
+          n <- shiny::isolate(img_counter()) + i
           paste0("chat_img_", n)
         })
-        img_counter(img_counter() + length(images))
+        img_counter(shiny::isolate(img_counter()) + length(images))
         entry$images <- images
         entry$img_ids <- img_ids
       }
@@ -634,12 +888,16 @@ run_tsifl_server <- function(port = 7444) {
         error = function(e) {}
       )
 
-      # Wait for the snapshot, with retries
+      # Wait for a fresh snapshot (must be < 10 seconds old)
       snap <- NULL
-      for (attempt in 1:4) {
-        Sys.sleep(0.4)
+      for (attempt in 1:6) {
+        Sys.sleep(0.5)
         snap <- tryCatch(readRDS(ENV_SNAPSHOT_FILE), error = function(e) NULL)
-        if (!is.null(snap)) break
+        if (!is.null(snap) && !is.null(snap$ts)) {
+          age <- as.numeric(difftime(Sys.time(), snap$ts, units = "secs"))
+          if (age < 10) break  # Fresh enough
+          snap <- NULL  # Too stale, wait for fresh one
+        }
       }
 
       env_objs <- list()
@@ -694,14 +952,13 @@ run_tsifl_server <- function(port = 7444) {
       )
       prompt <- prompts[[input$quick_action]]
       if (!is.null(prompt)) {
-        shiny::updateTextAreaInput(session, "user_input", value = prompt)
-        # Trigger send
-        shinyjs_msg <- paste0("$('#send_btn').click();")
+        # Directly trigger send_message (no need to populate textarea)
+        session$sendCustomMessage("trigger_send", list(msg = prompt))
       }
     }, ignoreInit = TRUE)
 
-    shiny::observeEvent(input$send_btn, {
-      msg <- trimws(input$user_input)
+    shiny::observeEvent(input$send_message, {
+      msg <- trimws(input$send_message)
       if (nchar(msg) == 0) return()
 
       # Capture pending images from JS
@@ -711,60 +968,167 @@ run_tsifl_server <- function(port = 7444) {
         images <- jsonlite::fromJSON(images_json, simplifyVector = FALSE)
       }
 
-      shiny::updateTextAreaInput(session, "user_input", value = "")
+      # Input already cleared by JS — just show user message + start thinking
       add_message("user", msg, images = if (length(images) > 0) images else NULL)
-      status_text("Thinking...")
+      set_status("thinking")
 
-      # Build request body
+      # Capture context NOW (inside reactive context), before deferring
+      r_context <- get_r_context()
+
+      # Build request body now (inside reactive context)
       body <- list(
         user_id = USER_ID,
         message = msg,
-        context = get_r_context()
+        context = r_context
       )
       if (length(images) > 0) {
         body$images <- images
       }
 
-      tryCatch({
-        resp <- httr2::request(BACKEND_URL) |>
-          httr2::req_url_path_append("chat", "") |>
-          httr2::req_headers("Content-Type" = "application/json") |>
-          httr2::req_body_json(body) |>
-          httr2::req_options(ssl_verifypeer = 0) |>
-          httr2::req_perform()
+      # Wait for Shiny to flush UI updates, THEN start the blocking HTTP call
+      session$onFlushed(function() {
+        later::later(function() {
 
-        data <- httr2::resp_body_json(resp)
-        add_message("assistant", data$reply)
+        tryCatch({
+          resp <- httr2::request(BACKEND_URL) |>
+            httr2::req_url_path_append("chat", "") |>
+            httr2::req_headers("Content-Type" = "application/json") |>
+            httr2::req_body_json(body) |>
+            httr2::req_options(ssl_verifypeer = 0) |>
+            httr2::req_timeout(120) |>
+            httr2::req_perform()
 
-        if (!is.null(data$tasks_remaining) && data$tasks_remaining >= 0)
-          tasks_left(data$tasks_remaining)
+          set_status("generating")
+          data <- httr2::resp_body_json(resp, simplifyVector = FALSE)
+          add_message("assistant", data$reply)
 
-        all_actions <- list()
-        # Safely collect actions array
-        if (!is.null(data$actions) && is.list(data$actions) && length(data$actions) > 0) {
-          all_actions <- c(all_actions, data$actions)
-        }
-        # Safely collect single action (must be a list with $type)
-        if (!is.null(data$action) && is.list(data$action) && !is.null(data$action$type) &&
-            !identical(data$action$type, "none")) {
-          all_actions <- c(all_actions, list(data$action))
-        }
+          if (!is.null(data$tasks_remaining) && data$tasks_remaining >= 0)
+            tasks_left(data$tasks_remaining)
 
-        for (action in all_actions) {
-          tryCatch({
-            execute_r_action(action, add_message)
-          }, error = function(e) {
-            add_message("action", paste0("\u26a0\ufe0f Action error: ", e$message))
-          })
-        }
+          all_actions <- list()
+          if (!is.null(data$actions) && is.list(data$actions) && length(data$actions) > 0) {
+            for (a in data$actions) {
+              if (is.list(a) && !is.null(a$type)) {
+                all_actions <- c(all_actions, list(a))
+              }
+            }
+          }
+          if (!is.null(data$action) && is.list(data$action) && !is.null(data$action$type) &&
+              !identical(data$action$type, "none")) {
+            all_actions <- c(all_actions, list(data$action))
+          }
 
-        status_text("Done")
+          # Merge multiple run_r_code actions into ONE
+          r_code_parts <- c()
+          non_r_actions <- list()
+          for (a in all_actions) {
+            if (identical(a$type, "run_r_code") && !is.null(a$payload$code)) {
+              r_code_parts <- c(r_code_parts, a$payload$code)
+            } else {
+              non_r_actions <- c(non_r_actions, list(a))
+            }
+          }
+          if (length(r_code_parts) > 0) {
+            merged_code <- paste(r_code_parts, collapse = "\n\n")
+            merged_action <- list(type = "run_r_code", payload = list(code = merged_code))
+            all_actions <- c(list(merged_action), non_r_actions)
+          } else {
+            all_actions <- non_r_actions
+          }
 
-      }, error = function(e) {
-        add_message("assistant",
-          paste0("\u26a0\ufe0f Could not reach backend.\n", e$message))
-        status_text("Disconnected")
-      })
+          if (length(all_actions) > 10) {
+            add_message("action", paste0(length(all_actions), " actions received, executing first 10"))
+            all_actions <- all_actions[1:10]
+          }
+
+          if (length(all_actions) > 0) set_status("running")
+          r_code_executed <- FALSE
+          for (action in all_actions) {
+            tryCatch({
+              execute_r_action(action, add_message)
+              if (identical(action$type, "run_r_code")) r_code_executed <- TRUE
+            }, error = function(e) {
+              add_message("action", paste0("Error: ", e$message))
+            })
+          }
+
+          # Phase 2: interpret R output
+          if (r_code_executed) {
+            tryCatch({
+              Sys.sleep(5)
+              r_output <- ""
+              for (.retry in 1:3) {
+                if (file.exists("/tmp/.tsifl_last_output.txt")) {
+                  r_output <- tryCatch(
+                    paste(readLines("/tmp/.tsifl_last_output.txt", warn = FALSE), collapse = "\n"),
+                    error = function(e) ""
+                  )
+                  if (nchar(trimws(r_output)) > 50) break
+                }
+                Sys.sleep(2)
+              }
+
+              if (nchar(trimws(r_output)) > 50) {
+                r_codes <- sapply(all_actions, function(a) {
+                  if (identical(a$type, "run_r_code")) a$payload$code else NULL
+                })
+                r_codes <- paste(Filter(Negate(is.null), r_codes), collapse = "\n")
+
+                phase1_reply <- if (!is.null(data$reply)) substr(data$reply, 1, 3000) else ""
+                followup_msg <- paste0(
+                  "[R OUTPUT INTERPRETATION]\n",
+                  "The user asked: \"", msg, "\"\n\n",
+                  "Your earlier analysis identified these questions/tasks:\n", phase1_reply, "\n\n",
+                  "R code executed:\n```r\n", substr(r_codes, 1, 2000), "\n```\n\n",
+                  "R output:\n```\n", substr(r_output, 1, 8000), "\n```\n\n",
+                  "Answer EACH question/part using the actual R output values.\n",
+                  "FORMAT RULES (strict):\n",
+                  "- Put each answer on its OWN LINE with a blank line between parts\n",
+                  "- Start each with **a.**, **b.**, etc. on a new line\n",
+                  "- Bold key values\n",
+                  "- Keep each answer to 1-2 sentences max\n",
+                  "- No introductions, no dataset descriptions\n",
+                  "- If a question asks for a rounded number, round it\n\n",
+                  "Example format:\n",
+                  "**a.** Categorical variables: sex, smoker\n\n",
+                  "**b.** F-statistic p-value is **0.00** (< 0.05), model is significant\n\n",
+                  "**c.** R-squared = **0.7509**, meaning 75.09% of variation is explained"
+                )
+
+                followup_body <- list(
+                  user_id = USER_ID,
+                  message = followup_msg,
+                  context = list(app = "rstudio")
+                )
+
+                set_status("interpreting")
+                followup_resp <- httr2::request(BACKEND_URL) |>
+                  httr2::req_url_path_append("chat", "") |>
+                  httr2::req_headers("Content-Type" = "application/json") |>
+                  httr2::req_body_json(followup_body) |>
+                  httr2::req_options(ssl_verifypeer = 0) |>
+                  httr2::req_timeout(90) |>
+                  httr2::req_perform()
+
+                followup_data <- httr2::resp_body_json(followup_resp, simplifyVector = FALSE)
+                if (!is.null(followup_data$reply) && nchar(followup_data$reply) > 5) {
+                  add_message("assistant", followup_data$reply)
+                }
+              }
+            }, error = function(e) {
+              # Phase 2 is best-effort
+            })
+          }
+
+          set_status("done")
+
+        }, error = function(e) {
+          add_message("assistant",
+            paste0("Could not reach backend.\n", e$message))
+          set_status("error", "Disconnected")
+        })
+        }, delay = 0.05)
+      }, once = TRUE)
     })
 
     # ── Action executor ──────────────────────────────────────────────────────
@@ -795,77 +1159,72 @@ run_tsifl_server <- function(port = 7444) {
           }, error = function(e2) {})
         })
 
-        # 2. Send to the MAIN R console.
-        #    Because this server runs in a background job, the main console
-        #    is NOT blocked — sendToConsole goes straight there, graphics
-        #    route normally to the Plots pane.
-        #    Auto-install missing packages (Improvement 67)
-        #    Wrap code with tryCatch that detects missing packages and installs them
-        wrapped_code <- paste0(
-          'tryCatch({ ', code, ' }, error = function(e) { ',
-          '  msg <- conditionMessage(e); ',
-          '  if (grepl("there is no package called", msg)) { ',
-          '    pkg <- sub(".*there is no package called .(.+?).", "\\\\1", msg); ',
-          '    message("Auto-installing package: ", pkg); ',
-          '    install.packages(pkg, repos = "https://cran.r-project.org", quiet = TRUE); ',
-          '    eval(parse(text = paste0("library(", pkg, ")"))); ',
-          '    eval(parse(text = ', deparse(code), ')); ',
-          '  } else { stop(e) } })'
-        )
+        # 2. Send to the MAIN R console with output capture.
+        #    Uses sink(split=TRUE) to capture output to file WHILE still
+        #    displaying it in the console. No need to re-run code.
+
+        # Start output capture (split=TRUE shows in console AND saves to file)
+        tryCatch({
+          rstudioapi::sendToConsole(
+            'tryCatch(sink("/tmp/.tsifl_last_output.txt", split = TRUE), error = function(e) {})',
+            execute = TRUE, echo = FALSE, focus = FALSE
+          )
+        }, error = function(e) {})
+        Sys.sleep(0.3)
+
+        # Detect if code will produce a plot
+        plot_keywords <- c("plot(", "ggplot(", "boxplot(", "hist(", "barplot(",
+                          "geom_", "abline(", "curve(", "pie(", "heatmap(",
+                          "pairs(", "qqnorm(", "acf(", "pacf(", "stripchart(",
+                          "par(mfrow")
+        code_has_plot <- any(sapply(plot_keywords, function(kw) grepl(kw, code, fixed = TRUE)))
+
+        # If code produces a plot, append save command directly so it runs atomically
+        code_to_run <- code
+        plot_path <- "/tmp/.tsifl_last_plot.png"
+        if (code_has_plot) {
+          # Detect ggplot vs base R
+          is_ggplot <- grepl("ggplot(", code, fixed = TRUE) || grepl("geom_", code, fixed = TRUE)
+          if (is_ggplot) {
+            save_snippet <- sprintf(
+              '\ninvisible(tryCatch({ ggplot2::ggsave("%s", width=8, height=6, dpi=150) }, error=function(e) { tryCatch({ grDevices::dev.copy(grDevices::png, "%s", width=800, height=600, res=150); grDevices::dev.off() }, error=function(e2) {}) }))',
+              plot_path, plot_path
+            )
+          } else {
+            save_snippet <- sprintf(
+              '\ninvisible(tryCatch({ grDevices::dev.copy(grDevices::png, "%s", width=800, height=600, res=150); grDevices::dev.off() }, error=function(e) cat("")))',
+              plot_path
+            )
+          }
+          code_to_run <- paste0(code, save_snippet)
+        }
+
         sent <- tryCatch({
           rstudioapi::sendToConsole(
-            code, execute = TRUE, echo = TRUE, focus = FALSE
+            code_to_run, execute = TRUE, echo = TRUE, focus = FALSE
           )
           TRUE
         }, error = function(e) FALSE)
 
         if (sent) {
-          add_message("action", "\u2705 Running in console \u2014 check Plots pane for charts")
+          add_message("action", "Running in console")
 
-          # ── Cross-app memory: capture R output and data snapshots ──────────
+          # Wait for code to finish
+          wait_time <- if (code_has_plot) 6 else 3
+          Sys.sleep(wait_time)
+
+          # Stop sink
           tryCatch({
-            # Build a capture script that runs in the main session
-            capture_script_path <- "/tmp/.tsifl_capture_output.R"
-            writeLines(c(
-              'tryCatch({',
-              paste0('  .tsifl_code <- ', deparse(code), ';'),
-              '  .tsifl_output <- paste(utils::capture.output(eval(parse(text = .tsifl_code))), collapse = "\\n");',
-              '  .tsifl_output <- substr(.tsifl_output, 1, 5000);',
-              '  writeLines(.tsifl_output, "/tmp/.tsifl_last_output.txt");',
-              '  # Snapshot data frames',
-              '  .tsifl_df_info <- list();',
-              '  for (.tsifl_nm in ls(.GlobalEnv)) {',
-              '    .tsifl_obj <- tryCatch(get(.tsifl_nm, envir = .GlobalEnv), error = function(e) NULL);',
-              '    if (is.data.frame(.tsifl_obj) || inherits(.tsifl_obj, "tbl_df") || inherits(.tsifl_obj, "data.table")) {',
-              '      .tsifl_csv_path <- paste0("/tmp/", .tsifl_nm, ".csv");',
-              '      tryCatch(utils::write.csv(.tsifl_obj, .tsifl_csv_path, row.names = FALSE), error = function(e) {});',
-              '      .tsifl_df_info[[.tsifl_nm]] <- list(',
-              '        name = .tsifl_nm,',
-              '        nrow = nrow(.tsifl_obj),',
-              '        ncol = ncol(.tsifl_obj),',
-              '        columns = paste(names(.tsifl_obj), collapse = ", "),',
-              '        csv_path = .tsifl_csv_path',
-              '      );',
-              '    }',
-              '  };',
-              '  saveRDS(.tsifl_df_info, "/tmp/.tsifl_df_info.rds");',
-              '  rm(list = grep("^\\\\.tsifl_", ls(), value = TRUE));',
-              '}, error = function(e) {})'
-            ), capture_script_path)
-
-            # Run the capture script in the main session
-            Sys.sleep(1)  # Wait for the main code to finish
-            tryCatch(
-              rstudioapi::sendToConsole(
-                'tryCatch(source("/tmp/.tsifl_capture_output.R", local = TRUE, echo = FALSE), error = function(e) {})',
-                execute = TRUE, echo = FALSE, focus = FALSE
-              ),
-              error = function(e) {}
+            rstudioapi::sendToConsole(
+              'tryCatch(sink(), error = function(e) {})',
+              execute = TRUE, echo = FALSE, focus = FALSE
             )
+          }, error = function(e) {})
+          Sys.sleep(0.5)
 
-            Sys.sleep(1.5)  # Wait for capture to complete
-
-            # POST r_output to transfer/store
+          # ── Cross-app memory: snapshot data frames ──────────────────────
+          tryCatch({
+            # Read captured output
             output_text <- ""
             if (file.exists("/tmp/.tsifl_last_output.txt")) {
               output_text <- tryCatch(
@@ -923,28 +1282,10 @@ run_tsifl_server <- function(port = 7444) {
             # Cross-app capture is best-effort, don't break the main flow
           })
 
-          # Auto-export plot: inject a save command into the MAIN console
-          # (dev.copy doesn't work from background job — no plot device here)
-          plot_keywords <- c("plot(", "ggplot(", "boxplot(", "hist(", "barplot(",
-                            "geom_", "abline(", "curve(", "pie(", "heatmap(",
-                            "pairs(", "qqnorm(", "acf(", "pacf(", "stripchart(")
-          has_plot <- any(sapply(plot_keywords, function(kw) grepl(kw, code, fixed = TRUE)))
-          if (has_plot) {
-            # Tell the main console to save the current plot to a temp file
-            plot_path <- file.path(tempdir(), ".tsifl_last_plot.png")
-            save_cmd <- sprintf(
-              'tryCatch({ grDevices::dev.copy(grDevices::png, "%s", width=800, height=600, res=150); grDevices::dev.off() }, error=function(e){})',
-              plot_path
-            )
-            Sys.sleep(2)  # Wait for plot to render in main session
+          # Auto-export plot to transfer store (plot was saved atomically with the code)
+          if (code_has_plot) {
             tryCatch({
-              rstudioapi::sendToConsole(save_cmd, execute = TRUE, echo = FALSE, focus = FALSE)
-            }, error = function(e) {})
-
-            # Now wait a moment for the file to be written, then read it
-            Sys.sleep(1)
-            tryCatch({
-              if (file.exists(plot_path) && file.info(plot_path)$size > 0) {
+              if (file.exists(plot_path) && file.info(plot_path)$size > 100) {
                 img_b64 <- base64enc::base64encode(plot_path)
                 unlink(plot_path)
 
@@ -963,35 +1304,39 @@ run_tsifl_server <- function(port = 7444) {
                   httr2::req_options(ssl_verifypeer = 0) |>
                   httr2::req_perform()
 
-                add_message("action", "\U0001f4e4 Plot exported \u2014 say 'paste R plot' in Excel to insert it")
+                add_message("action", "Plot exported to Excel")
               }
             }, error = function(e) {
               # Silently skip — plot capture is best-effort
             })
           }
         } else {
-          add_message("action", "\u26a0\ufe0f Could not send to console")
+          add_message("action", "Could not send to console")
         }
 
       } else if (type == "install_package") {
         pkg <- payload$package
-        add_message("action", paste0("Installing: ", pkg))
+        add_message("action", paste0("Installing ", pkg))
         rstudioapi::sendToConsole(
           paste0('install.packages("', pkg, '")'),
           execute = TRUE, echo = TRUE, focus = FALSE
         )
-        add_message("action", paste0("\u2705 Installing ", pkg, " in console"))
+        add_message("action", paste0("Installing ", pkg, " in console"))
 
       } else if (type == "export_plot") {
-        # Save current plot via main console, then upload from background job
+        # Save current plot via main console, then upload
         tryCatch({
-          plot_path <- file.path(tempdir(), ".tsifl_export_plot.png")
-          save_cmd <- sprintf(
-            'tryCatch({ grDevices::dev.copy(grDevices::png, "%s", width=800, height=600, res=150); grDevices::dev.off() }, error=function(e){})',
-            plot_path
-          )
-          rstudioapi::sendToConsole(save_cmd, execute = TRUE, echo = FALSE, focus = FALSE)
-          Sys.sleep(1.5)
+          plot_path <- "/tmp/.tsifl_last_plot.png"
+          # First check if auto-capture already saved the plot
+          if (!file.exists(plot_path) || file.info(plot_path)$size < 100) {
+            # No auto-captured plot — try dev.copy from console
+            save_cmd <- sprintf(
+              'tryCatch({ grDevices::dev.copy(grDevices::png, "%s", width=800, height=600, res=150); grDevices::dev.off() }, error=function(e){})',
+              plot_path
+            )
+            rstudioapi::sendToConsole(save_cmd, execute = TRUE, echo = FALSE, focus = FALSE)
+            Sys.sleep(2)
+          }
 
           if (file.exists(plot_path) && file.info(plot_path)$size > 0) {
             img_b64 <- base64enc::base64encode(plot_path)
@@ -1018,12 +1363,12 @@ run_tsifl_server <- function(port = 7444) {
 
             result <- httr2::resp_body_json(resp)
             tid <- result$transfer_id
-            add_message("action", paste0("\u2705 Plot exported (ID: ", tid, ") \u2014 say 'paste R plot' in Excel"))
+            add_message("action", "Plot exported to Excel")
           } else {
-            add_message("action", "\u26a0\ufe0f No plot found in Plots pane. Generate a plot first.")
+            add_message("action", "No plot found in Plots pane")
           }
         }, error = function(e) {
-          add_message("action", paste0("\u26a0\ufe0f Could not export plot: ", e$message))
+          add_message("action", paste0("Could not export plot: ", e$message))
         })
 
       } else if (type == "create_r_script") {
@@ -1034,9 +1379,9 @@ run_tsifl_server <- function(port = 7444) {
             text = paste0("# ", title, "\n# Generated by tsifl\n\n", code, "\n"),
             type = "r"
           )
-          add_message("action", paste0("\u2705 Created script: ", title))
+          add_message("action", paste0("Created script: ", title))
         }, error = function(e) {
-          add_message("action", "\u26a0\ufe0f Could not create script file")
+          add_message("action", "Could not create script file")
         })
       }
     }

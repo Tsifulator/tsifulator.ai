@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v41";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v44";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -166,9 +166,8 @@ function showChatScreen(user) {
   });
 
   // Image attachment — file picker
-  document.getElementById("attach-btn").addEventListener("click", () => {
-    document.getElementById("image-input").click();
-  });
+  // File input is overlaid on the attach button (no programmatic .click() needed —
+  // Office.js WKWebView blocks programmatic file input clicks on Mac)
   document.getElementById("image-input").addEventListener("change", (e) => {
     handleImageSelect(e);
   });
@@ -204,6 +203,16 @@ function showChatScreen(user) {
     }
     if (files.length === 0) setStatus("No files found in drop");
   });
+
+  // Quick action buttons
+  document.querySelectorAll(".quick-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const input = document.getElementById("user-input");
+      input.value = btn.dataset.prompt;
+      handleSubmit();
+    });
+  });
+
   setStatus("Connected · " + user.email);
 }
 
@@ -433,8 +442,11 @@ async function handleSubmit() {
       setStatus(`Applying ${allActions.length} action${allActions.length > 1 ? "s" : ""}...`);
       showTypingIndicator("applying");
       if (allActions.length > 2) showProgress(0, allActions.length);
+      await refreshKnownSheets(); // Cache sheet names for formula validation
+      _strippedFormulaCount = 0;  // reset formula strip counter
       let applied = 0;
       let failed  = 0;
+      let failedNames = [];
       for (const action of allActions) {
         try {
           // Save undo state for write actions (Improvement 11)
@@ -445,17 +457,75 @@ async function handleSubmit() {
           }
           await executeAction(action);
           applied++;
+          // After add_sheet, refresh known sheets so formulas can reference the new sheet
+          if (action.type === "add_sheet") {
+            _knownSheets.add((action.payload?.name || "").toLowerCase());
+          }
           addToHistory(action.type, summarizeAction(action));
           if (allActions.length > 2) showProgress(applied + failed, allActions.length);
         } catch (err) {
           failed++;
-          console.error(`${action.type} failed:`, err.message);
+          failedNames.push(`${action.type}(${action.payload?.sheet || action.payload?.cell || action.payload?.range || ''}): ${err.message}`);
+          console.error(`${action.type} failed:`, err.message, action.payload);
         }
       }
       hideProgress();
       hideTypingIndicator();
+
+      // Auto-autofit columns after any write/format actions to prevent ######
+      const hasWrites = allActions.some(a =>
+        ["write_cell","write_range","write_formula","format_range","set_number_format","import_csv","create_pivot_summary","fill_down","fill_right"].includes(a.type)
+      );
+      if (hasWrites) {
+        try {
+          await Excel.run(async (ctx) => {
+            const sheet = ctx.workbook.worksheets.getActiveWorksheet();
+            const used = sheet.getUsedRangeOrNullObject();
+            used.load("isNullObject");
+            await ctx.sync();
+            if (!used.isNullObject) {
+              used.format.autofitColumns();
+              await ctx.sync();
+            }
+          });
+        } catch (e) { /* autofit is best-effort */ }
+      }
+
+      // Post-action sweep: clear any #DIV/0!, #NAME?, #REF!, #VALUE! error cells
+      if (hasWrites) {
+        try {
+          await Excel.run(async (ctx) => {
+            const sheets = ctx.workbook.worksheets;
+            sheets.load("items/name");
+            await ctx.sync();
+            for (const ws of sheets.items) {
+              const used = ws.getUsedRangeOrNullObject();
+              used.load(["values", "isNullObject", "rowCount", "columnCount"]);
+              await ctx.sync();
+              if (used.isNullObject) continue;
+              const vals = used.values;
+              for (let r = 0; r < vals.length; r++) {
+                for (let c = 0; c < vals[r].length; c++) {
+                  const v = vals[r][c];
+                  if (typeof v === "string" && /^#(DIV\/0!|NAME\?|REF!|VALUE!|NULL!)$/.test(v)) {
+                    // Clear the error cell
+                    const cell = used.getCell(r, c);
+                    cell.values = [[""]];
+                  }
+                }
+              }
+              await ctx.sync();
+            }
+          });
+        } catch (e) { console.warn("[tsifl] Error sweep failed:", e.message); }
+      }
+
       if (failed > 0) {
-        appendMessage("assistant", `${applied} actions applied, ${failed} failed. Try rephrasing your request.`);
+        const details = failedNames.slice(0, 5).join("\n• ");
+        appendMessage("assistant", `${applied} applied, ${failed} failed:\n• ${details}`);
+      }
+      if (_strippedFormulaCount > 0) {
+        console.warn(`[tsifl] Stripped ${_strippedFormulaCount} formulas in this batch`);
       }
     }
 
@@ -508,8 +578,10 @@ async function getExcelContext() {
         }
 
         // Cap how much data we pass for each sheet
-        const values   = used.values.slice(0, 60).map(r => r.slice(0, 26));
-        const formulas = used.formulas ? used.formulas.slice(0, 60).map(r => r.slice(0, 26)) : values;
+        // Active sheet gets 200 rows so Claude can compute values itself; others get 60
+        const MAX_ROWS = name === activeName ? 200 : 60;
+        const values   = used.values.slice(0, MAX_ROWS).map(r => r.slice(0, 26));
+        const formulas = used.formulas ? used.formulas.slice(0, MAX_ROWS).map(r => r.slice(0, 26)) : values;
 
         if (name === activeName) {
           activeSheetData     = values;
@@ -517,9 +589,8 @@ async function getExcelContext() {
           activeUsedRange     = used.address;
         }
 
-        // Non-active sheets: 20-row preview with formulas so Claude can see empty cells
-        // (active sheet already gets full 60-row data above)
-        const PREVIEW_ROWS = name === activeName ? 60 : 20;
+        // Non-active sheets: 20-row preview; active sheet gets full 200-row data
+        const PREVIEW_ROWS = name === activeName ? 200 : 20;
         sheetSummaries.push({
           name,
           used_range:       used.address,
@@ -586,6 +657,76 @@ function cellToCol(addr) {
 function getSheet(ctx, sheetName) {
   if (sheetName) return ctx.workbook.worksheets.getItem(sheetName);
   return ctx.workbook.worksheets.getActiveWorksheet();
+}
+
+/** Cache of known sheet names — refreshed before each action batch */
+let _knownSheets = new Set();
+
+async function refreshKnownSheets() {
+  try {
+    await Excel.run(async (ctx) => {
+      const sheets = ctx.workbook.worksheets;
+      sheets.load("items/name");
+      await ctx.sync();
+      _knownSheets = new Set(sheets.items.map(s => s.name.toLowerCase()));
+    });
+  } catch (e) { /* best effort */ }
+}
+
+/**
+ * Sanitize a value/formula.
+ * Only allows simple same-sheet formulas like =SUM(B2:B9), =A1+B1, =B2/B3.
+ * Strips ALL cross-sheet formulas and complex functions.
+ */
+let _strippedFormulaCount = 0;  // track how many formulas got stripped per batch
+
+function sanitizeFormula(val) {
+  if (typeof val !== "string" || !val.startsWith("=")) return val;
+
+  // Block cross-sheet references ONLY if the sheet doesn't exist
+  if (val.includes("!")) {
+    // Extract sheet name from formula like =DSUM(Sheet1!A:D,...) or ='Sheet Name'!A1
+    const sheetMatch = val.match(/(?:=\w+\()?'?([^'!]+)'?!/);
+    if (sheetMatch) {
+      const refSheet = sheetMatch[1].toLowerCase();
+      if (!_knownSheets.has(refSheet)) {
+        console.warn(`[tsifl] Stripped formula referencing unknown sheet "${sheetMatch[1]}": ${val}`);
+        _strippedFormulaCount++;
+        return "";
+      }
+    }
+    // Cross-sheet ref to a known sheet — allow it
+    return val;
+  }
+
+  // Allow ALL formulas that don't have cross-sheet refs to unknown sheets.
+  // This supports homework formulas: DB, DSUM, SUMIFS, CONCAT, LEFT, REPT,
+  // COUNTIFS, VLOOKUP, INDEX, MATCH, IF, SUM, AVERAGE, etc.
+  return val;
+}
+
+/**
+ * Sanitize a 2D array of values.
+ */
+function sanitize2D(arr) {
+  return arr.map(row => row.map(v => sanitizeFormula(v)));
+}
+
+/**
+ * Auto-add _xlfn. prefix for newer Excel functions that require it on Mac/Office.js.
+ * CONCAT, XMATCH, IFS, SWITCH, TEXTJOIN, MAXIFS, MINIFS etc. need the prefix.
+ * If Claude sends =CONCAT(...), we convert to =_xlfn.CONCAT(...).
+ * If Claude already sends =_xlfn.CONCAT(...), we leave it alone.
+ */
+const _XLFN_FUNCTIONS = ["CONCAT","TEXTJOIN","IFS","SWITCH","XMATCH","XLOOKUP","MAXIFS","MINIFS","FILTER","SORT","UNIQUE","SEQUENCE","RANDARRAY","LET","LAMBDA"];
+function _ensureXlfnPrefix(formula) {
+  if (!formula || !formula.startsWith("=")) return formula;
+  for (const fn of _XLFN_FUNCTIONS) {
+    // Match =CONCAT( or =CONCAT( inside nested formulas, but not already prefixed
+    const regex = new RegExp(`(?<!_xlfn\\.)\\b${fn}\\(`, "gi");
+    formula = formula.replace(regex, `_xlfn.${fn}(`);
+  }
+  return formula;
 }
 
 /**
@@ -684,8 +825,10 @@ async function executeAction(action) {
       if (existing !== null && existing !== "" && existing !== 0) {
         console.log(`Overwrote existing data in ${addr}`);
       }
-      const val   = payload.formula ?? payload.value ?? "";
+      const rawVal = payload.formula ?? payload.value ?? "";
+      let val = sanitizeFormula(rawVal);
       if (typeof val === "string" && val.startsWith("=")) {
+        val = _ensureXlfnPrefix(val);
         range.formulas = [[val]];
       } else {
         range.values = [[val]];
@@ -697,22 +840,47 @@ async function executeAction(action) {
 
   // ── write_range ────────────────────────────────────────────────────────────
   // Supports: range, values (2D array) OR formulas (2D array), sheet?
-  // Note: ensure2D() handles flat 1D arrays that Claude sometimes sends
+  // Auto-resizes range to match actual data dimensions (prevents size mismatch errors)
   else if (type === "write_range") {
     await Excel.run(async (ctx) => {
       const { sheet: s, addr } = splitAddr(payload.range, payload.sheet);
       const sheet = getSheet(ctx, s);
-      const range = sheet.getRange(addr);
+
+      // Determine data to write
+      let data;
+      let isFormula = false;
       if (payload.formulas) {
-        range.formulas = ensure2D(payload.formulas);
+        data = sanitize2D(ensure2D(payload.formulas));
+        isFormula = true;
       } else if (payload.values) {
-        const vals = ensure2D(payload.values);
+        data = sanitize2D(ensure2D(payload.values));
         // Auto-detect formulas in the normalised 2D array
-        const hasFormulas = vals.some(r => Array.isArray(r) && r.some(v => typeof v === "string" && v.startsWith("=")));
-        if (hasFormulas) range.formulas = vals;
-        else              range.values  = vals;
+        if (data.some(r => Array.isArray(r) && r.some(v => typeof v === "string" && v.startsWith("=")))) {
+          isFormula = true;
+        }
       }
-      _applyFormat(range, payload);
+      if (!data || data.length === 0) return;
+
+      // Auto-size: use the start cell of the range + data dimensions
+      // Extract start cell from range like "A1:D5" → "A1", or just "A1"
+      const startCell = addr.includes(":") ? addr.split(":")[0] : addr;
+      const rows = data.length;
+      const cols = Math.max(...data.map(r => r.length));
+
+      // Pad rows to uniform column count
+      const padded = data.map(r => {
+        while (r.length < cols) r.push("");
+        return r;
+      });
+
+      // Get the correctly-sized range from start cell
+      const startRange = sheet.getRange(startCell);
+      const sized = startRange.getResizedRange(rows - 1, cols - 1);
+
+      if (isFormula) sized.formulas = padded;
+      else           sized.values   = padded;
+
+      _applyFormat(sized, payload);
       await ctx.sync();
     });
   }
@@ -724,7 +892,10 @@ async function executeAction(action) {
       const { sheet: s, addr } = splitAddr(payload.cell, payload.sheet);
       const sheet = getSheet(ctx, s);
       const range = sheet.getRange(addr);
-      range.formulas = [[payload.formula]];
+      // Auto-add _xlfn. prefix for newer Excel functions that require it on Mac
+      let formula = payload.formula || "";
+      formula = _ensureXlfnPrefix(formula);
+      range.formulas = [[formula]];
       _applyFormat(range, payload);
       await ctx.sync();
     });
@@ -819,7 +990,20 @@ async function executeAction(action) {
     await Excel.run(async (ctx) => {
       const { sheet: s, addr } = splitAddr(payload.range, payload.sheet);
       const sheet = getSheet(ctx, s);
-      const range = sheet.getRange(addr);
+      // Clamp range to used area to avoid "invalid argument" on out-of-bounds ranges
+      let range;
+      try {
+        range = sheet.getRange(addr);
+        range.load("rowCount,columnCount");
+        await ctx.sync();
+      } catch (e) {
+        // If range is invalid (e.g. "A:D" without rows), fall back to used range
+        const used = sheet.getUsedRangeOrNullObject();
+        used.load("isNullObject");
+        await ctx.sync();
+        if (used.isNullObject) return;
+        range = used;
+      }
       _applyFormat(range, payload);
       await ctx.sync();
     });
@@ -830,12 +1014,24 @@ async function executeAction(action) {
     await Excel.run(async (ctx) => {
       const { sheet: s, addr } = splitAddr(payload.range, payload.sheet);
       const sheet = getSheet(ctx, s);
-      const range = sheet.getRange(addr);
-      // Load dimensions first — numberFormat must be a 2D array matching range size
-      range.load("rowCount,columnCount");
-      await ctx.sync();
+      let range;
+      try {
+        range = sheet.getRange(addr);
+        range.load("rowCount,columnCount");
+        await ctx.sync();
+      } catch (e) {
+        // If range is invalid, fall back to used range
+        const used = sheet.getUsedRangeOrNullObject();
+        used.load("isNullObject,rowCount,columnCount");
+        await ctx.sync();
+        if (used.isNullObject) return;
+        range = used;
+        range.load("rowCount,columnCount");
+        await ctx.sync();
+      }
+      const fmtStr = payload.format || payload.number_format || "General";
       const fmt = Array.from({ length: range.rowCount }, () =>
-        Array.from({ length: range.columnCount }, () => payload.format)
+        Array.from({ length: range.columnCount }, () => fmtStr)
       );
       range.numberFormat = fmt;
       await ctx.sync();
@@ -1061,16 +1257,40 @@ async function executeAction(action) {
   // ── add_chart ────────────────────────────────────────────────────────────────
   else if (type === "add_chart") {
     await Excel.run(async (ctx) => {
-      const sheet = getSheet(ctx, payload.sheet);
-      const dataRange = sheet.getRange(payload.data_range);
-      const chartType = payload.chart_type || "ColumnClustered";
-      const chart = sheet.charts.add(chartType, dataRange, Excel.ChartSeriesBy.auto);
+      const chartSheet = getSheet(ctx, payload.sheet);
+
+      // Resolve data range — may reference a different sheet (e.g. "'Portfolio Summary'!A1:D8")
+      let dataRange;
+      const rawRange = payload.data_range || "";
+      if (rawRange.includes("!")) {
+        // Cross-sheet reference: split into sheet + address
+        const { sheet: srcName, addr } = splitAddr(rawRange, payload.sheet);
+        const srcSheet = getSheet(ctx, srcName);
+        dataRange = srcSheet.getRange(addr);
+      } else {
+        // Same sheet
+        dataRange = chartSheet.getRange(rawRange);
+      }
+
+      // Map chart type — accept various naming conventions
+      const typeMap = {
+        "columnclustered": "ColumnClustered", "column": "ColumnClustered", "bar": "BarClustered",
+        "barclustered": "BarClustered", "line": "Line", "pie": "Pie", "area": "Area",
+        "xyscatter": "XYScatter", "scatter": "XYScatter", "doughnut": "Doughnut",
+        "columnstacked": "ColumnStacked", "barstacked": "BarStacked",
+      };
+      const rawType = (payload.chart_type || "ColumnClustered").toLowerCase().replace(/[_\s-]/g, "");
+      const chartType = typeMap[rawType] || payload.chart_type || "ColumnClustered";
+
+      const chart = chartSheet.charts.add(chartType, dataRange, Excel.ChartSeriesBy.auto);
       if (payload.title) chart.title.text = payload.title;
-      if (payload.width) chart.width = payload.width;
-      if (payload.height) chart.height = payload.height;
+      chart.width = payload.width || 480;
+      chart.height = payload.height || 300;
       if (payload.position) {
-        const posRange = sheet.getRange(payload.position);
-        chart.setPosition(posRange);
+        try {
+          const posRange = chartSheet.getRange(payload.position);
+          chart.setPosition(posRange);
+        } catch (e) { /* position is best-effort */ }
       }
       if (payload.series_names && payload.series_names.length > 0) {
         chart.series.load("count");
@@ -1558,10 +1778,15 @@ function _applyFormat(range, p) {
   if (p.row_height)                range.format.rowHeight       = p.row_height;
   if (p.col_width)                 range.format.columnWidth     = p.col_width;
   if (p.number_format) {
-    // Accept single string or 2D array
-    range.numberFormat = typeof p.number_format === "string"
-      ? [[p.number_format]]
-      : p.number_format;
+    // number_format needs to be a 2D array matching the range dimensions.
+    // Best-effort: try setting it; if it fails (size mismatch), skip silently.
+    try {
+      if (typeof p.number_format === "string") {
+        range.numberFormat = [[p.number_format]];
+      } else {
+        range.numberFormat = p.number_format;
+      }
+    } catch (e) { /* size mismatch — skip */ }
   }
   if (p.border) {
     const b = range.format.borders;
@@ -1674,29 +1899,34 @@ function appendMessage(role, text, images) {
 const _thinkingMessages = {
   thinking: [
     'Reading your question...',
-    'Analyzing the spreadsheet...',
-    'Understanding what you need...',
-    'Consulting the Excel gods...',
-    'Thinking really hard right now...',
-    'Running the numbers in my head...',
-    'Formulating the perfect approach...',
-    'Checking if VLOOKUP is still alive...',
-    'Warren Buffett would be proud of this one...',
-    'Goldman called, they want their model back...',
-    'JP Morgan wants to know your location...',
-    'McKinsey would charge you $500k for this slide...',
-    'This spreadsheet is about to go crazy...',
-    'Building your empire one cell at a time...',
+    'Scanning every cell like a forensic accountant...',
+    'VLOOKUP walked so XLOOKUP could run...',
+    'Checking if your formulas are circular... again...',
+    'Counting rows like a back-office analyst at 2am...',
+    'This model is about to hit different...',
+    'Pivot tables fear me...',
+    'Your spreadsheet called — it wants a raise...',
+    'Running the numbers so you don\'t have to...',
+    'Goldman\'s modeling team just felt a disturbance...',
+    'Making INDEX MATCH look easy since 2024...',
+    'Every cell tells a story...',
+    'The kind of analysis that gets forwarded to the MD...',
+    'Somewhere an intern is doing this by hand...',
+    'Ctrl+Z won\'t be necessary — I don\'t make mistakes...',
+    'Your Excel just went from intern to VP...',
+    'Building the model that closes the deal...',
   ],
   applying: [
-    'Writing to your spreadsheet...',
-    'Dropping values like a hedge fund drops stocks...',
-    'Making Excel do the heavy lifting...',
+    'Writing values at the speed of light...',
+    'Cells are snapping into place...',
     'Your spreadsheet is getting a glow-up...',
-    'Applying changes faster than a market crash...',
-    'Cells are being populated as we speak...',
-    'Morgan Stanley called, they want to hire me...',
-    'This is the fun part...',
+    'Formatting like a senior analyst on an all-nighter...',
+    'Populating faster than a Bloomberg terminal...',
+    'Every number is exactly where it should be...',
+    'The kind of output that survives due diligence...',
+    'Dropping formulas like it\'s bonus season...',
+    'One more sync and we\'re golden...',
+    'This is the part where your model becomes legendary...',
   ]
 };
 

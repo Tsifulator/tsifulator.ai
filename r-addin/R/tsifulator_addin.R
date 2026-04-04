@@ -64,3 +64,12 @@ tsifulator_addin <- function() {
 
   invisible(NULL)
 }
+
+#' Launch tsifl
+#'
+#' Convenience wrapper — same as using the Addins menu.
+#'
+#' @export
+run_tsifl <- function() {
+  tsifulator_addin()
+}

@@ -16,7 +16,7 @@ from pathlib import Path
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-BACKEND_URL = "https://focused-solace-production-6839.up.railway.app"
+BACKEND_URL = os.getenv("TSIFULATOR_BACKEND_URL", "https://focused-solace-production-6839.up.railway.app")
 CONFIG_PATH  = Path.home() / ".tsifulator_user"
 HISTORY_FILE = Path.home() / ".tsifulator_history"
 
