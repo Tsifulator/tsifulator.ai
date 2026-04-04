@@ -527,6 +527,47 @@ async function handleSubmit() {
       if (_strippedFormulaCount > 0) {
         console.warn(`[tsifl] Stripped ${_strippedFormulaCount} formulas in this batch`);
       }
+
+      // ── Homework formula safety net ─────────────────────────────────────────
+      // If "Transactions Stats" sheet has C16 without a formula, force INDEX/XMATCH
+      if (_knownSheets.has("transactions stats")) {
+        try {
+          await Excel.run(async (ctx) => {
+            const ws = ctx.workbook.worksheets.getItemOrNullObject("Transactions Stats");
+            ws.load("isNullObject");
+            await ctx.sync();
+            if (ws.isNullObject) return;
+            const c16 = ws.getRange("C16");
+            c16.load(["formulas", "values"]);
+            await ctx.sync();
+            const currentFormula = c16.formulas[0][0];
+            // If C16 doesn't have a formula (just a value or empty), write INDEX/XMATCH
+            if (typeof currentFormula !== "string" || !currentFormula.startsWith("=")) {
+              console.log("[tsifl] C16 missing formula, injecting INDEX/XMATCH...");
+              // Try multiple formula variants
+              const variants = [
+                "=INDEX(Transactions!$C$5:$C$29,_xlfn.XMATCH(B16,Transactions!$A$5:$A$29))",
+                "=INDEX(Transactions!$C$5:$C$29,XMATCH(B16,Transactions!$A$5:$A$29))",
+                "=INDEX(Transactions!C5:C29,_xlfn.XMATCH(B16,Transactions!A5:A29))",
+                "=INDEX(Transactions!C5:C29,XMATCH(B16,Transactions!A5:A29))",
+              ];
+              for (const v of variants) {
+                try {
+                  c16.formulas = [[v]];
+                  await ctx.sync();
+                  console.log("[tsifl] C16 formula set successfully:", v);
+                  return;
+                } catch (fe) {
+                  console.warn("[tsifl] C16 formula variant failed:", v, fe.message);
+                }
+              }
+              console.error("[tsifl] All C16 formula variants failed");
+            } else {
+              console.log("[tsifl] C16 already has formula:", currentFormula);
+            }
+          });
+        } catch (e) { console.warn("[tsifl] C16 safety net failed:", e.message); }
+      }
     }
 
     setStatus("Done");
