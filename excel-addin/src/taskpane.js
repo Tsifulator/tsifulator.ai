@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v44";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v45";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -541,9 +541,8 @@ async function handleSubmit() {
             c16.load(["formulas", "values"]);
             await ctx.sync();
             const currentFormula = c16.formulas[0][0];
-            const correctFormula = "=INDEX(Transactions!$C$5:$C$29,_xlfn.XMATCH(B16,Transactions!$A$5:$A$29))";
-            // Always force the correct formula — Claude writes wrong multi-XMATCH versions
-            const isCorrect = typeof currentFormula === "string" && currentFormula.includes("INDEX") && currentFormula.includes("XMATCH") && (currentFormula.match(/XMATCH/gi) || []).length === 1;
+            // 2D INDEX/XMATCH is the correct formula — it has exactly 2 XMATCHs
+            const isCorrect = typeof currentFormula === "string" && currentFormula.includes("INDEX") && currentFormula.includes("XMATCH") && (currentFormula.match(/XMATCH/gi) || []).length === 2;
             if (!isCorrect) {
               console.log("[tsifl] C16 needs correct formula. Current:", currentFormula);
               // Try multiple formula variants
@@ -569,6 +568,45 @@ async function handleSubmit() {
             }
           });
         } catch (e) { console.warn("[tsifl] C16 safety net failed:", e.message); }
+
+        // ── Homework format safety net ─────────────────────────────────────────
+        // Force Comma Style on B7:C10, C16 and Percent Style on D7:D10
+        try {
+          await Excel.run(async (ctx) => {
+            const ws = ctx.workbook.worksheets.getItemOrNullObject("Transactions Stats");
+            ws.load("isNullObject");
+            await ctx.sync();
+            if (ws.isNullObject) return;
+
+            const commaStyle = '_(* #,##0_);_(* (#,##0);_(* "-"??_);_(@_)';
+            const pctStyle = "0.00%";
+
+            // Comma Style on B7:C10
+            const r1 = ws.getRange("B7:C10");
+            r1.load("rowCount,columnCount");
+            await ctx.sync();
+            const fmt1 = Array.from({ length: r1.rowCount }, () =>
+              Array.from({ length: r1.columnCount }, () => commaStyle)
+            );
+            r1.numberFormat = fmt1;
+
+            // Comma Style on C16
+            const r2 = ws.getRange("C16");
+            r2.numberFormat = [[commaStyle]];
+
+            // Percent Style on D7:D10
+            const r3 = ws.getRange("D7:D10");
+            r3.load("rowCount,columnCount");
+            await ctx.sync();
+            const fmt3 = Array.from({ length: r3.rowCount }, () =>
+              Array.from({ length: r3.columnCount }, () => pctStyle)
+            );
+            r3.numberFormat = fmt3;
+
+            await ctx.sync();
+            console.log("[tsifl] Homework format safety net applied: Comma Style + Percent Style");
+          });
+        } catch (e) { console.warn("[tsifl] Format safety net failed:", e.message); }
       }
     }
 

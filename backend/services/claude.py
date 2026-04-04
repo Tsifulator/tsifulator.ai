@@ -1877,25 +1877,41 @@ def _parse_tool_response(response) -> dict:
                      str(a.get("payload", {}).get("formula", ""))[:80],
                      str(a.get("payload", {}).get("value", ""))[:40])
     # Fix known issues that Claude consistently gets wrong despite prompting:
-    # 1. Replace Transactions!$A$4:$D$29 with Stats in DSUM formulas
-    # 2. Ensure C16 has INDEX/XMATCH formula (not a plain value)
+    # Detect homework context: any action targeting "Transactions Stats" sheet OR creating Stats named range
     has_named_range = any(
         a.get("type") == "create_named_range" and a.get("payload", {}).get("name") == "Stats"
         for a in actions
     )
+    is_homework = has_named_range or any(
+        a.get("payload", {}).get("sheet", "").lower() == "transactions stats"
+        for a in actions
+    )
+    # 1. Replace Transactions!$A$4:$D$29 with Stats in DSUM formulas
     if has_named_range:
         for a in actions:
             p = a.get("payload", {})
-            # Fix DSUM formulas: replace raw reference with named range
             for field in ("formula", "value"):
                 val = p.get(field, "")
                 if isinstance(val, str) and "DSUM(" in val.upper() and "Transactions!" in val:
                     p[field] = val.replace("Transactions!$A$4:$D$29", "Stats").replace("Transactions!$A4:$D29", "Stats")
                     logger.info("[HW-FIX] Replaced Transactions! with Stats in DSUM: %s", p[field])
 
-    # Fix C16: ALWAYS append correct 2D INDEX/XMATCH formula at the END
-    # SIMnet expects: =INDEX(Stats,XMATCH(B16,Transactions!A4:A29),XMATCH('Transactions Stats'!C15,Transactions!A4:D4))
-    if has_named_range:
+    # Fix C16 formula + Comma Style + Percent Style for ALL homework runs
+    # (not just when create_named_range is present — the named range may already exist)
+    if is_homework:
+        # First, REMOVE any Claude-generated set_number_format actions targeting these ranges
+        # so they don't conflict with our correct formats
+        hw_ranges = {"b7:c10", "c16", "d7:d10"}
+        actions = [
+            a for a in actions
+            if not (
+                a.get("type") == "set_number_format"
+                and a.get("payload", {}).get("sheet", "").lower() == "transactions stats"
+                and a.get("payload", {}).get("range", "").lower() in hw_ranges
+            )
+        ]
+        logger.info("[HW-FIX] Stripped Claude's format actions for homework ranges; appending correct formats")
+
         actions.append({
             "type": "write_formula",
             "payload": {
