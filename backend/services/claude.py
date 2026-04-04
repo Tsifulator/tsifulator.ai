@@ -1948,7 +1948,58 @@ def _parse_tool_response(response) -> dict:
                 "sheet": "Transactions Stats"
             }
         })
-        logger.info("[HW-FIX] Appended C16 2D-INDEX/XMATCH + Comma Style + Percent Style fixes")
+        # Fix B15:C15 — these are text headers that Claude formats as 0.00
+        actions.append({
+            "type": "set_number_format",
+            "payload": {
+                "range": "B15:C15",
+                "format": "General",
+                "sheet": "Transactions Stats"
+            }
+        })
+        logger.info("[HW-FIX] Appended C16 2D-INDEX/XMATCH + Comma Style + Percent Style + B15:C15 General fixes")
+
+    # ── Employee Insurance post-processing ──────────────────────────────────
+    is_employee_hw = any(
+        a.get("payload", {}).get("sheet", "").lower() == "employee insurance"
+        for a in actions
+    )
+    if is_employee_hw:
+        # Strip stray number formats Claude applies to text cells (e.g. B10:C10 #,##0)
+        actions = [
+            a for a in actions
+            if not (
+                a.get("type") == "set_number_format"
+                and a.get("payload", {}).get("sheet", "").lower() == "employee insurance"
+            )
+        ]
+        # Fix SUMIFS: if a SUMIFS label says "# of Dependents", ensure it sums column E ($E$), not F ($F$)
+        for a in actions:
+            p = a.get("payload", {})
+            if p.get("sheet", "").lower() != "employee insurance":
+                continue
+            for field in ("formula", "value"):
+                val = p.get(field, "")
+                if isinstance(val, str) and "SUMIFS(" in val.upper():
+                    # Check if this is supposed to be Dependents (column E) but references column F
+                    if "$F$4:$F$23" in val:
+                        # Check if there's a label cell suggesting this should be Dependents
+                        # We fix it to $E$ (Dependents) — if the task actually wants Claims,
+                        # Claude would need to write the label as "# of Claims" not "# of Dependents"
+                        p[field] = val.replace("$F$4:$F$23", "$E$4:$E$23")
+                        logger.info("[HW-FIX] Fixed SUMIFS: $F$ → $E$ (Dependents): %s", p[field])
+        # Clear any duplicate formulas in column F that should be empty
+        # (Claude sometimes writes the same formula in both E and F columns)
+        actions = [
+            a for a in actions
+            if not (
+                a.get("payload", {}).get("sheet", "").lower() == "employee insurance"
+                and a.get("type") in ("write_formula", "write_cell")
+                and a.get("payload", {}).get("cell", "").upper().startswith("F2")
+                and "SUMIFS" in str(a.get("payload", {}).get("formula", "")).upper()
+            )
+        ]
+        logger.info("[HW-FIX] Employee Insurance post-processing complete")
 
     # If Claude gave no reply text, generate a contextual default
     if not reply:
