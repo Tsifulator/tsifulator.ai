@@ -1745,10 +1745,12 @@ async def get_claude_response(message: str, context: dict,
 CRITICAL REMINDERS — COPY THESE EXACTLY:
 1. NAMED RANGE: emit {"type":"create_named_range","payload":{"name":"Stats","range":"A4:D29","sheet":"Transactions"}}
    Then ALL DSUM formulas must be =DSUM(Stats,3,...) and =DSUM(Stats,4,...). NEVER write Transactions!$A$4:$D$29 in DSUM.
-2. INDEX/XMATCH in C16: emit EXACTLY this action — do NOT modify the formula:
-   {"type":"write_formula","payload":{"cell":"C16","formula":"=INDEX(Transactions!$C$5:$C$29,XMATCH(B16,Transactions!$A$5:$A$29))","sheet":"Transactions Stats"}}
-   The formula is =INDEX(Transactions!$C$5:$C$29,XMATCH(B16,Transactions!$A$5:$A$29)) — COPY IT VERBATIM. Do NOT nest multiple XMATCH calls. Do NOT use Stats in INDEX. Just two arguments: the return range and one XMATCH.
-3. COMMA STYLE: emit {"type":"set_number_format","payload":{"range":"B7:C10","format":"#,##0","sheet":"Transactions Stats"}} and {"type":"set_number_format","payload":{"range":"C16","format":"#,##0","sheet":"Transactions Stats"}}
+2. INDEX/XMATCH in C16: use a 2D INDEX with TWO XMATCH arguments:
+   =INDEX(Stats,XMATCH(B16,Transactions!A4:A29),XMATCH('Transactions Stats'!C15,Transactions!A4:D4))
+   First XMATCH finds the row (city), second XMATCH finds the column (# Transactions).
+3. COMMA STYLE means Excel's built-in format: _(* #,##0_);_(* (#,##0);_(* "-"??_);_(@_)
+   Apply to B7:C10 and C16. NOT plain #,##0.
+4. PERCENT STYLE with two decimal places means format "0.00%" — apply to D7:D10.
 """
         user_text = user_text + homework_reminder
 
@@ -1891,26 +1893,46 @@ def _parse_tool_response(response) -> dict:
                     p[field] = val.replace("Transactions!$A$4:$D$29", "Stats").replace("Transactions!$A4:$D29", "Stats")
                     logger.info("[HW-FIX] Replaced Transactions! with Stats in DSUM: %s", p[field])
 
-    # Fix C16: ALWAYS append INDEX/XMATCH formula at the END so it overwrites any prior writes
-    # (Claude may write C16 as part of a write_range or write_cell with a plain value)
+    # Fix C16: ALWAYS append correct 2D INDEX/XMATCH formula at the END
+    # SIMnet expects: =INDEX(Stats,XMATCH(B16,Transactions!A4:A29),XMATCH('Transactions Stats'!C15,Transactions!A4:D4))
     if has_named_range:
         actions.append({
             "type": "write_formula",
             "payload": {
                 "cell": "C16",
-                "formula": "=INDEX(Transactions!$C$5:$C$29,XMATCH(B16,Transactions!$A$5:$A$29))",
+                "formula": "=INDEX(Stats,XMATCH(B16,Transactions!A4:A29),XMATCH('Transactions Stats'!C15,Transactions!A4:D4))",
                 "sheet": "Transactions Stats"
             }
         })
+        # Comma Style = Excel's built-in format, not plain #,##0
+        comma_style = '_(* #,##0_);_(* (#,##0);_(* "-"??_);_(@_)'
         actions.append({
             "type": "set_number_format",
             "payload": {
                 "range": "C16",
-                "format": "#,##0",
+                "format": comma_style,
                 "sheet": "Transactions Stats"
             }
         })
-        logger.info("[HW-FIX] Appended C16 INDEX/XMATCH formula + format at end of actions")
+        # Fix Comma Style on ALL DSUM and SUM result cells
+        actions.append({
+            "type": "set_number_format",
+            "payload": {
+                "range": "B7:C10",
+                "format": comma_style,
+                "sheet": "Transactions Stats"
+            }
+        })
+        # Fix Percent Style: 0.00% (two decimal places) on ratio cells
+        actions.append({
+            "type": "set_number_format",
+            "payload": {
+                "range": "D7:D10",
+                "format": "0.00%",
+                "sheet": "Transactions Stats"
+            }
+        })
+        logger.info("[HW-FIX] Appended C16 2D-INDEX/XMATCH + Comma Style + Percent Style fixes")
 
     # If Claude gave no reply text, generate a contextual default
     if not reply:
@@ -1961,10 +1983,12 @@ async def get_claude_stream(message: str, context: dict,
 CRITICAL REMINDERS — COPY THESE EXACTLY:
 1. NAMED RANGE: emit {"type":"create_named_range","payload":{"name":"Stats","range":"A4:D29","sheet":"Transactions"}}
    Then ALL DSUM formulas must be =DSUM(Stats,3,...) and =DSUM(Stats,4,...). NEVER write Transactions!$A$4:$D$29 in DSUM.
-2. INDEX/XMATCH in C16: emit EXACTLY this action — do NOT modify the formula:
-   {"type":"write_formula","payload":{"cell":"C16","formula":"=INDEX(Transactions!$C$5:$C$29,XMATCH(B16,Transactions!$A$5:$A$29))","sheet":"Transactions Stats"}}
-   The formula is =INDEX(Transactions!$C$5:$C$29,XMATCH(B16,Transactions!$A$5:$A$29)) — COPY IT VERBATIM. Do NOT nest multiple XMATCH calls. Do NOT use Stats in INDEX. Just two arguments: the return range and one XMATCH.
-3. COMMA STYLE: emit {"type":"set_number_format","payload":{"range":"B7:C10","format":"#,##0","sheet":"Transactions Stats"}} and {"type":"set_number_format","payload":{"range":"C16","format":"#,##0","sheet":"Transactions Stats"}}
+2. INDEX/XMATCH in C16: use a 2D INDEX with TWO XMATCH arguments:
+   =INDEX(Stats,XMATCH(B16,Transactions!A4:A29),XMATCH('Transactions Stats'!C15,Transactions!A4:D4))
+   First XMATCH finds the row (city), second XMATCH finds the column (# Transactions).
+3. COMMA STYLE means Excel's built-in format: _(* #,##0_);_(* (#,##0);_(* "-"??_);_(@_)
+   Apply to B7:C10 and C16. NOT plain #,##0.
+4. PERCENT STYLE with two decimal places means format "0.00%" — apply to D7:D10.
 """
         user_text = user_text + homework_reminder
 

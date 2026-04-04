@@ -548,10 +548,10 @@ async function handleSubmit() {
               console.log("[tsifl] C16 needs correct formula. Current:", currentFormula);
               // Try multiple formula variants
               const variants = [
-                "=INDEX(Transactions!$C$5:$C$29,_xlfn.XMATCH(B16,Transactions!$A$5:$A$29))",
-                "=INDEX(Transactions!$C$5:$C$29,XMATCH(B16,Transactions!$A$5:$A$29))",
-                "=INDEX(Transactions!C5:C29,_xlfn.XMATCH(B16,Transactions!A5:A29))",
-                "=INDEX(Transactions!C5:C29,XMATCH(B16,Transactions!A5:A29))",
+                "=INDEX(Stats,_xlfn.XMATCH(B16,Transactions!A4:A29),_xlfn.XMATCH('Transactions Stats'!C15,Transactions!A4:D4))",
+                "=INDEX(Stats,XMATCH(B16,Transactions!A4:A29),XMATCH('Transactions Stats'!C15,Transactions!A4:D4))",
+                "=INDEX(Stats,_xlfn.XMATCH(B16,Transactions!$A$4:$A$29),_xlfn.XMATCH('Transactions Stats'!$C$15,Transactions!$A$4:$D$4))",
+                "=INDEX(Stats,XMATCH(B16,Transactions!$A$4:$A$29),XMATCH('Transactions Stats'!$C$15,Transactions!$A$4:$D$4))",
               ];
               for (const v of variants) {
                 try {
