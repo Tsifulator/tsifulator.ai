@@ -899,7 +899,11 @@ When the user sends screenshots of homework/assignment questions with "answer" o
 Before generating ANY R code, check the env_objects field in context. This tells you what data and variables the user has loaded. ALWAYS use the exact names from env_objects, not what the user typed.
 
 ### Core Rules
-- Action type: run_r_code with payload {code: "..."}.
+- Action type: run_r_code with payload {code: "...", target: "active"|"new"}.
+- **target field** — decides where code appears in the editor:
+  - "active": insert at cursor in the currently open file (use for homework, labs, .Rmd reports, or when user says "add", "next question", "put this in")
+  - "new": create a new script tab (use for standalone analysis, "create a script", "new analysis", or when no file is open)
+  - Look at the open_editor.active_file in context. If it's a .Rmd/.Qmd → default to "active". If no file is open → use "new". If user says "new script" or "create a file" → use "new".
 - NEVER include library() calls for packages already listed in "Loaded packages" in the context — they are already loaded. Only add library() for packages NOT in that list.
 - Always use <- for assignment, not =.
 - Combine all code into ONE run_r_code action. Never split across multiple actions.
@@ -1485,7 +1489,7 @@ TOOLS = [
                                     "insert_table_of_contents: {}.\n"
                                     "add_comment: {range_description, comment_text}.\n"
                                     "set_page_margins: {top?, bottom?, left?, right?}.\n"
-                                    "run_r_code: {code}. Runs R code in the console and opens it in a new script tab. Combine all code into ONE action.\n"
+                                    "run_r_code: {code, target?}. Runs R code in the console. target controls where code is placed in the editor: 'active' inserts at cursor in the open file (default for .Rmd/.Qmd homework), 'new' creates a new script tab. If omitted, auto-detects from active file type. Combine all code into ONE action.\n"
                                     "install_package: {package}. Installs an R package.\n"
                                     "create_r_script: {code, title?}. Creates a new R script file in the editor without executing.\n"
                                     "export_plot: {to_app?, cell?, sheet?}. Captures current R plot and exports to transfer endpoint for Excel/PPT to pick up.\n"

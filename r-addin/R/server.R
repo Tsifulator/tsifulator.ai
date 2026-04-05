@@ -1139,35 +1139,55 @@ run_tsifl_server <- function(port = 7444) {
       if (type == "run_r_code") {
         code <- payload$code
 
-        # 1. Insert code into the ACTIVE document (if one is open),
-        #    falling back to creating a new document if no editor is active.
-        #    For .Rmd files, wrap code in an R code chunk.
+        # 1. Place code in the editor based on target field from Claude:
+        #    "active" = insert at cursor in open file
+        #    "new"    = create a new script tab
+        #    NULL     = auto-detect from active file type
+        target <- payload$target  # "active", "new", or NULL
+
         inserted <- FALSE
-        tryCatch({
-          ctx <- rstudioapi::getSourceEditorContext()
-          if (!is.null(ctx) && nzchar(ctx$id)) {
-            # Active document exists — insert at cursor position
-            doc_path <- tolower(ctx$path)
-            is_rmd <- grepl("\\.(rmd|qmd)$", doc_path)
 
-            if (is_rmd) {
-              # Wrap in R code chunk for Rmd/Qmd files
-              insert_text <- paste0("\n```{r, message=FALSE, warning=FALSE}\n", code, "\n```\n")
-            } else {
-              insert_text <- paste0("\n# tsifl\n", code, "\n")
+        # Determine if we should insert into active doc
+        should_insert_active <- identical(target, "active")
+
+        if (is.null(target)) {
+          # Auto-detect: if active file is .Rmd/.Qmd/.R, insert into it
+          tryCatch({
+            ctx <- rstudioapi::getSourceEditorContext()
+            if (!is.null(ctx) && nzchar(ctx$id) && nzchar(ctx$path)) {
+              doc_ext <- tolower(tools::file_ext(ctx$path))
+              if (doc_ext %in% c("rmd", "qmd", "r")) {
+                should_insert_active <- TRUE
+              }
             }
+          }, error = function(e) {})
+        }
 
-            rstudioapi::insertText(
-              location = ctx$selection[[1]]$range$end,
-              text     = insert_text,
-              id       = ctx$id
-            )
-            inserted <- TRUE
-          }
-        }, error = function(e) {})
+        if (should_insert_active && !identical(target, "new")) {
+          tryCatch({
+            ctx <- rstudioapi::getSourceEditorContext()
+            if (!is.null(ctx) && nzchar(ctx$id)) {
+              doc_path <- tolower(ctx$path)
+              is_rmd <- grepl("\\.(rmd|qmd)$", doc_path)
+
+              if (is_rmd) {
+                insert_text <- paste0("\n```{r, message=FALSE, warning=FALSE}\n", code, "\n```\n")
+              } else {
+                insert_text <- paste0("\n# tsifl\n", code, "\n")
+              }
+
+              rstudioapi::insertText(
+                location = ctx$selection[[1]]$range$end,
+                text     = insert_text,
+                id       = ctx$id
+              )
+              inserted <- TRUE
+            }
+          }, error = function(e) {})
+        }
 
         if (!inserted) {
-          # No active document or insertText failed — create new script
+          # Create new script tab (explicit "new" target or fallback)
           tryCatch({
             rstudioapi::documentNew(
               text = paste0("# tsifl — Generated Code\n\n", code, "\n"),
