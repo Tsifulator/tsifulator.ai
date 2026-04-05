@@ -1060,6 +1060,9 @@ run_tsifl_server <- function(port = 7444) {
           }
 
           if (length(all_actions) > 0) set_status("running")
+          # Debug: log what actions we received
+          action_types <- sapply(all_actions, function(a) a$type %||% "unknown")
+          add_message("action", paste0("Actions: ", paste(action_types, collapse=", ")))
           r_code_executed <- FALSE
           for (action in all_actions) {
             tryCatch({
@@ -1449,7 +1452,8 @@ run_tsifl_server <- function(port = 7444) {
             }
           }
 
-          if (is.null(file_path) || !file.exists(file_path)) {
+          add_message("action", paste0("fill_rmd: path='", file_path %||% "NULL", "'"))
+          if (is.null(file_path) || !nzchar(file_path) || !file.exists(file_path)) {
             add_message("action", "Could not find Rmd file to fill")
           } else {
             # Read the file directly from disk
