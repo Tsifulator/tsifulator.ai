@@ -1410,33 +1410,40 @@ run_tsifl_server <- function(port = 7444) {
         if (is.null(answers)) answers <- list()
 
         tryCatch({
-          # Get the file path from context
+          # Get the file path — background job can't use rstudioapi directly,
+          # so use sendToConsole to ask the MAIN R session for the path
           file_path <- r_context$open_editor$active_file_path
 
-          # Also try to extract filename from active_file for searching
-          active_name <- r_context$open_editor$active_file
-          if (is.null(active_name)) active_name <- ""
-
           if (is.null(file_path) || !nzchar(file_path)) {
-            # Background job can't see editor path — search common directories
+            # Ask the main R session for the active document path
+            path_file <- "/tmp/.tsifl_rmd_path.txt"
+            tryCatch({
+              unlink(path_file)  # remove old file
+              rstudioapi::sendToConsole(
+                paste0('local({ p <- tryCatch(rstudioapi::getActiveDocumentContext()$path, error=function(e)""); writeLines(p, "', path_file, '") })'),
+                execute = TRUE, echo = FALSE, focus = FALSE
+              )
+              Sys.sleep(1)  # wait for main session to execute
+              if (file.exists(path_file)) {
+                file_path <- trimws(readLines(path_file, warn = FALSE)[1])
+              }
+            }, error = function(e) {})
+          }
+
+          if (is.null(file_path) || !nzchar(file_path) || !file.exists(file_path)) {
+            # Still no path — search common directories
             home <- Sys.getenv("HOME", path.expand("~"))
             search_dirs <- c(
-              r_context$working_dir,
               file.path(home, "Documents"),
               file.path(home, "Downloads"),
               file.path(home, "Desktop"),
+              r_context$working_dir,
               home
             )
             search_dirs <- unique(search_dirs[!is.na(search_dirs) & nzchar(search_dirs)])
 
             for (d in search_dirs) {
               if (!dir.exists(d)) next
-              # If we know the filename, search for it specifically
-              if (nzchar(active_name)) {
-                candidate <- file.path(d, active_name)
-                if (file.exists(candidate)) { file_path <- candidate; break }
-              }
-              # Otherwise find any .Rmd
               rmd_files <- list.files(d, pattern = "\\.Rmd$", full.names = TRUE, ignore.case = TRUE)
               if (length(rmd_files) > 0) { file_path <- rmd_files[1]; break }
             }
