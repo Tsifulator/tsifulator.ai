@@ -1139,61 +1139,59 @@ run_tsifl_server <- function(port = 7444) {
       if (type == "run_r_code") {
         code <- payload$code
 
-        # 1. Place code in the editor based on target field from Claude:
-        #    "active" = insert at cursor in open file
-        #    "new"    = create a new script tab
-        #    NULL     = auto-detect from active file type
+        # 1. Place code in the editor.
+        #    Since the addin runs as a background job, rstudioapi::insertText()
+        #    can't access the IDE directly. Instead, we save code to a temp file
+        #    and use sendToConsole() to run the insert in the MAIN session.
+        #    target: "active" = insert at cursor, "new" = new tab, NULL = auto
         target <- payload$target  # "active", "new", or NULL
 
-        inserted <- FALSE
+        # Write code to temp file (avoids escaping issues in sendToConsole)
+        insert_file <- "/tmp/.tsifl_insert_code.R"
+        tryCatch({
+          writeLines(code, insert_file)
+        }, error = function(e) {})
 
-        # Determine if we should insert into active doc
-        should_insert_active <- identical(target, "active")
-
-        if (is.null(target)) {
-          # Auto-detect: if active file is .Rmd/.Qmd/.R, insert into it
+        if (identical(target, "new")) {
+          # Explicit "new" target — create new script via main session
           tryCatch({
-            ctx <- rstudioapi::getSourceEditorContext()
-            if (!is.null(ctx) && nzchar(ctx$id) && nzchar(ctx$path)) {
-              doc_ext <- tolower(tools::file_ext(ctx$path))
-              if (doc_ext %in% c("rmd", "qmd", "r")) {
-                should_insert_active <- TRUE
-              }
-            }
-          }, error = function(e) {})
-        }
-
-        if (should_insert_active && !identical(target, "new")) {
-          tryCatch({
-            ctx <- rstudioapi::getSourceEditorContext()
-            if (!is.null(ctx) && nzchar(ctx$id)) {
-              doc_path <- tolower(ctx$path)
-              is_rmd <- grepl("\\.(rmd|qmd)$", doc_path)
-
-              if (is_rmd) {
-                insert_text <- paste0("\n```{r, message=FALSE, warning=FALSE}\n", code, "\n```\n")
-              } else {
-                insert_text <- paste0("\n# tsifl\n", code, "\n")
-              }
-
-              rstudioapi::insertText(
-                location = ctx$selection[[1]]$range$end,
-                text     = insert_text,
-                id       = ctx$id
-              )
-              inserted <- TRUE
-            }
-          }, error = function(e) {})
-        }
-
-        if (!inserted) {
-          # Create new script tab (explicit "new" target or fallback)
-          tryCatch({
-            rstudioapi::documentNew(
-              text = paste0("# tsifl — Generated Code\n\n", code, "\n"),
-              type = "r"
+            rstudioapi::sendToConsole(
+              paste0(
+                'invisible(local({ ',
+                'code <- paste(readLines("', insert_file, '"), collapse = "\\n"); ',
+                'rstudioapi::documentNew(text = paste0("# tsifl \\u2014 Generated Code\\n\\n", code, "\\n"), type = "r") ',
+                '}))'
+              ),
+              execute = TRUE, echo = FALSE, focus = FALSE
             )
           }, error = function(e) {})
+          Sys.sleep(0.5)
+        } else {
+          # Default: insert into active document via main session
+          # The main session has IDE access, so insertText works there
+          tryCatch({
+            rstudioapi::sendToConsole(
+              paste0(
+                'invisible(local({ ',
+                'code <- paste(readLines("', insert_file, '"), collapse = "\\n"); ',
+                'ctx <- tryCatch(rstudioapi::getSourceEditorContext(), error = function(e) NULL); ',
+                'if (!is.null(ctx) && nzchar(ctx$id)) { ',
+                '  is_rmd <- grepl("\\\\.(rmd|qmd)$", tolower(ctx$path)); ',
+                '  if (is_rmd) { ',
+                '    txt <- paste0("\\n```{r, message=FALSE, warning=FALSE}\\n", code, "\\n```\\n") ',
+                '  } else { ',
+                '    txt <- paste0("\\n# tsifl\\n", code, "\\n") ',
+                '  }; ',
+                '  rstudioapi::insertText(location = ctx$selection[[1]]$range$end, text = txt, id = ctx$id) ',
+                '} else { ',
+                '  rstudioapi::documentNew(text = paste0("# tsifl \\u2014 Generated Code\\n\\n", code, "\\n"), type = "r") ',
+                '} ',
+                '}))'
+              ),
+              execute = TRUE, echo = FALSE, focus = FALSE
+            )
+          }, error = function(e) {})
+          Sys.sleep(0.5)
         }
 
         # 2. Send to the MAIN R console with output capture.
