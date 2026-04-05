@@ -1139,25 +1139,42 @@ run_tsifl_server <- function(port = 7444) {
       if (type == "run_r_code") {
         code <- payload$code
 
-        # 1. Create a NEW R script document with the generated code
-        #    so it appears in a fresh tab (not buried in existing file)
+        # 1. Insert code into the ACTIVE document (if one is open),
+        #    falling back to creating a new document if no editor is active.
+        #    For .Rmd files, wrap code in an R code chunk.
+        inserted <- FALSE
         tryCatch({
-          # Create new untitled R script
-          rstudioapi::documentNew(
-            text = paste0("# tsifl — Generated Code\n\n", code, "\n"),
-            type = "r"
-          )
-        }, error = function(e) {
-          # Fallback: try inserting into current editor
-          tryCatch({
-            ctx <- rstudioapi::getSourceEditorContext()
+          ctx <- rstudioapi::getSourceEditorContext()
+          if (!is.null(ctx) && nzchar(ctx$id)) {
+            # Active document exists — insert at cursor position
+            doc_path <- tolower(ctx$path)
+            is_rmd <- grepl("\\.(rmd|qmd)$", doc_path)
+
+            if (is_rmd) {
+              # Wrap in R code chunk for Rmd/Qmd files
+              insert_text <- paste0("\n```{r, message=FALSE, warning=FALSE}\n", code, "\n```\n")
+            } else {
+              insert_text <- paste0("\n# tsifl\n", code, "\n")
+            }
+
             rstudioapi::insertText(
               location = ctx$selection[[1]]$range$end,
-              text     = paste0("\n# tsifl\n", code, "\n"),
+              text     = insert_text,
               id       = ctx$id
             )
-          }, error = function(e2) {})
-        })
+            inserted <- TRUE
+          }
+        }, error = function(e) {})
+
+        if (!inserted) {
+          # No active document or insertText failed — create new script
+          tryCatch({
+            rstudioapi::documentNew(
+              text = paste0("# tsifl — Generated Code\n\n", code, "\n"),
+              type = "r"
+            )
+          }, error = function(e) {})
+        }
 
         # 2. Send to the MAIN R console with output capture.
         #    Uses sink(split=TRUE) to capture output to file WHILE still
