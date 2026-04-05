@@ -902,15 +902,19 @@ Before generating ANY R code, check the env_objects field in context. This tells
 
 **CRITICAL — Rmd homework detection:**
 When the user has an .Rmd file open (visible in open_editor.active_file) that contains empty ```{r} code chunks with "#### Exercise N" headers (visible in active_preview), and asks to "fill in", "answer", "do the exercises", "make the changes", or anything implying filling in a homework template:
-- Use **fill_rmd_chunks** action, NOT run_r_code
+- Use **fill_rmd_chunks** action, NOT run_r_code or edit_file
 - Map each exercise to its R code: {"Exercise 1": "library(tidyverse)\n...", "Exercise 2": "dim(AdsManager)"}
 - For text-only answers (no code needed), use the answers field: {"Exercise 8": "Research question: Is there a difference in pageviews between mobile and non-mobile devices?"}
 - NEVER generate code that uses readLines/writeLines/gsub to programmatically edit an Rmd file
 - NEVER wrap code in ```{r} fencing — the chunks already exist in the template
 - Each exercise's code should be JUST the R code, nothing else
+- NEVER say "Done" without emitting actions. If you can see the Rmd template, you MUST emit a fill_rmd_chunks action.
+- If the user provides screenshots of homework instructions, use them to determine what code each exercise needs.
+- If you don't have the homework instructions, look at the Rmd title, section headers, and any comments for clues. If the user attached images, those ARE the instructions — read them carefully.
+- YOU MUST ALWAYS EMIT AT LEAST ONE ACTION when the user asks to fill exercises. Never respond with just text.
 
 **When to use run_r_code vs fill_rmd_chunks:**
-- fill_rmd_chunks: user has Rmd template open, wants exercises filled in
+- fill_rmd_chunks: user has Rmd template open, wants exercises filled in. ALWAYS prefer this when Rmd is open.
 - run_r_code: user wants to run analysis, create a plot, answer a single question, or work outside an Rmd template
 
 - Action type: run_r_code with payload {code: "...", target: "active"|"new"}.
@@ -1867,51 +1871,83 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
         active_file.endswith(".rmd") or active_file.endswith(".qmd")
     ) and ("exercise" in active_preview.lower() or "```{r" in active_preview.lower())
 
-    if is_rmd_with_exercises and result.get("actions"):
-        actions = result["actions"]
-        # Check if Claude used run_r_code instead of fill_rmd_chunks
-        has_run_r = any(a.get("type") == "run_r_code" for a in actions)
+    if is_rmd_with_exercises:
+        import re
+        actions = result.get("actions", [])
         has_fill = any(a.get("type") == "fill_rmd_chunks" for a in actions)
-        if has_run_r and not has_fill:
-            logger.info("[RMD-FIX] Claude used run_r_code for Rmd with exercises — converting to fill_rmd_chunks")
-            # Combine all run_r_code actions into one
-            all_code = "\n\n".join(
-                a.get("payload", {}).get("code", "")
-                for a in actions if a.get("type") == "run_r_code"
-            )
-            # Try to split code into exercises by looking for "# Exercise N" or "# Question N" comments
-            import re
-            chunks = {}
-            # Split by exercise comments
-            parts = re.split(r'(?m)^#\s*(Exercise|Question)\s+(\d+)', all_code)
-            if len(parts) > 1:
-                # parts = [preamble, "Exercise", "1", code1, "Exercise", "2", code2, ...]
-                # Preamble (before first exercise marker) goes into Exercise 1
-                preamble = parts[0].strip()
-                i = 1
-                while i < len(parts) - 2:
-                    ex_num = parts[i + 1]
-                    ex_code = parts[i + 2].strip()
-                    key = f"Exercise {ex_num}"
-                    if preamble and key == "Exercise 1":
-                        chunks[key] = preamble + "\n" + ex_code if ex_code else preamble
-                        preamble = ""
-                    elif ex_code:
-                        chunks[key] = ex_code
-                    i += 3
-                if preamble and "Exercise 1" not in chunks:
-                    chunks["Exercise 1"] = preamble
-            else:
-                # Can't split — put everything in Exercise 1
-                chunks["Exercise 1"] = all_code
 
-            # Replace actions
-            non_r = [a for a in actions if a.get("type") != "run_r_code"]
-            fill_action = {
-                "type": "fill_rmd_chunks",
-                "payload": {"chunks": chunks}
-            }
-            result["actions"] = [fill_action] + non_r
+        if not has_fill:
+            chunks = {}
+
+            # Strategy 1: Extract from edit_file actions (Claude often uses these for Rmd)
+            for a in actions:
+                if a.get("type") == "edit_file":
+                    p = a.get("payload", {})
+                    replace_text = p.get("replace", "")
+                    m = re.search(r'Exercise\s+(\d+)', replace_text)
+                    if m:
+                        ex_num = m.group(1)
+                        code_match = re.search(r'```\{r[^}]*\}\s*\n(.*?)\n```', replace_text, re.DOTALL)
+                        if code_match:
+                            chunks[f"Exercise {ex_num}"] = code_match.group(1).strip()
+
+            # Strategy 2: Extract from run_r_code actions
+            run_r_actions = [a for a in actions if a.get("type") == "run_r_code"]
+            if run_r_actions and not chunks:
+                all_code = "\n\n".join(
+                    a.get("payload", {}).get("code", "")
+                    for a in run_r_actions
+                )
+                parts = re.split(r'(?m)^#\s*(?:Exercise|Question)\s+(\d+)', all_code)
+                if len(parts) > 2:
+                    preamble = parts[0].strip()
+                    i = 1
+                    while i < len(parts) - 1:
+                        ex_num = parts[i]
+                        ex_code = parts[i + 1].strip() if i + 1 < len(parts) else ""
+                        key = f"Exercise {ex_num}"
+                        if preamble and key == "Exercise 1":
+                            chunks[key] = preamble + "\n" + ex_code if ex_code else preamble
+                            preamble = ""
+                        elif ex_code:
+                            chunks[key] = ex_code
+                        i += 2
+                    if preamble and "Exercise 1" not in chunks:
+                        chunks["Exercise 1"] = preamble
+                else:
+                    chunks["Exercise 1"] = all_code
+
+            # Strategy 3: Extract from reply text (Claude sometimes puts code in markdown)
+            if not chunks and result.get("reply"):
+                reply = result["reply"]
+                # Look for ```r or ```{r blocks with Exercise N labels
+                code_blocks = re.findall(
+                    r'(?:Exercise|Ex\.?|#)\s*(\d+)[^\n]*\n```(?:r|{r[^}]*})\s*\n(.*?)```',
+                    reply, re.DOTALL | re.IGNORECASE
+                )
+                for ex_num, code in code_blocks:
+                    chunks[f"Exercise {ex_num}"] = code.strip()
+                # Also try: code blocks preceded by exercise headers
+                if not chunks:
+                    code_blocks = re.findall(
+                        r'```(?:r|{r[^}]*})\s*\n(.*?)```',
+                        reply, re.DOTALL
+                    )
+                    # If there's exactly as many code blocks as exercises, map 1:1
+                    ex_headers = re.findall(r'####\s+Exercise\s+(\d+)', active_preview)
+                    if code_blocks and len(code_blocks) == len(ex_headers):
+                        for ex_num, code in zip(ex_headers, code_blocks):
+                            chunks[f"Exercise {ex_num}"] = code.strip()
+
+            if chunks:
+                logger.info("[RMD-FIX] Converted %d exercises to fill_rmd_chunks: %s",
+                            len(chunks), list(chunks.keys()))
+                other_actions = [a for a in actions if a.get("type") not in ("run_r_code", "edit_file")]
+                fill_action = {
+                    "type": "fill_rmd_chunks",
+                    "payload": {"chunks": chunks}
+                }
+                result["actions"] = [fill_action] + other_actions
 
     total_actions = len(result.get("actions", [])) or (1 if result.get("action") else 0)
     logger.info("[get_claude_response] model=%s, total_actions=%d, stop_reason=%s",

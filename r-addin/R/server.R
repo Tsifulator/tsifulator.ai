@@ -923,7 +923,7 @@ run_tsifl_server <- function(port = 7444) {
           doc_info$active_file_path <- ctx$path
         }
         if (length(ctx$contents) > 0) {
-          doc_info$active_preview <- paste(utils::head(ctx$contents, 50), collapse = "\n")
+          doc_info$active_preview <- paste(ctx$contents, collapse = "\n")
         }
         doc_info
       }, error = function(e) list())
