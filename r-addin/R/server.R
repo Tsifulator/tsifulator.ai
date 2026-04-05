@@ -920,6 +920,7 @@ run_tsifl_server <- function(port = 7444) {
         doc_info <- list()
         if (nchar(ctx$path) > 0) {
           doc_info$active_file <- basename(ctx$path)
+          doc_info$active_file_path <- ctx$path
         }
         if (length(ctx$contents) > 0) {
           doc_info$active_preview <- paste(utils::head(ctx$contents, 15), collapse = "\n")
@@ -1045,7 +1046,7 @@ run_tsifl_server <- function(port = 7444) {
           r_code_executed <- FALSE
           for (action in all_actions) {
             tryCatch({
-              execute_r_action(action, add_message)
+              execute_r_action(action, add_message, r_context)
               if (identical(action$type, "run_r_code")) r_code_executed <- TRUE
             }, error = function(e) {
               add_message("action", paste0("Error: ", e$message))
@@ -1132,7 +1133,7 @@ run_tsifl_server <- function(port = 7444) {
     })
 
     # ── Action executor ──────────────────────────────────────────────────────
-    execute_r_action <- function(action, add_message) {
+    execute_r_action <- function(action, add_message, r_context = list()) {
       type    <- action$type
       payload <- action$payload
 
@@ -1413,124 +1414,114 @@ run_tsifl_server <- function(port = 7444) {
 
       } else if (type == "fill_rmd_chunks") {
         # Fill empty code chunks in the active Rmd file by exercise number.
-        # payload$chunks is a named list: {"Exercise 1": "code...", "Exercise 2": "code...", ...}
-        # payload$answers is a named list: {"Exercise 8": "text answer...", ...} (goes ABOVE the code chunk)
+        # Works DIRECTLY on the file on disk (no rstudioapi needed from background job).
         chunks  <- payload$chunks   # named list of exercise -> R code
         answers <- payload$answers  # named list of exercise -> text answer (optional)
         if (is.null(chunks)) chunks <- list()
         if (is.null(answers)) answers <- list()
 
         tryCatch({
-          # Write chunks and answers to temp files for the main session to read
-          chunks_file  <- "/tmp/.tsifl_rmd_chunks.rds"
-          answers_file <- "/tmp/.tsifl_rmd_answers.rds"
-          saveRDS(chunks, chunks_file)
-          saveRDS(answers, answers_file)
+          # Get the file path from context
+          file_path <- r_context$open_editor$active_file_path
+          if (is.null(file_path) || !nzchar(file_path)) {
+            # Try to find .Rmd in working dir
+            wd <- r_context$working_dir
+            if (!is.null(wd)) {
+              rmd_files <- list.files(wd, pattern = "\\.Rmd$", full.names = TRUE, ignore.case = TRUE)
+              if (length(rmd_files) > 0) file_path <- rmd_files[1]
+            }
+          }
 
-          # Write the fill script — uses full-text regex to avoid line index shifting
-          fill_script <- '/tmp/.tsifl_fill_rmd.R'
+          if (is.null(file_path) || !file.exists(file_path)) {
+            add_message("action", "Could not find Rmd file to fill")
+          } else {
+            # Read the file directly from disk
+            lines <- readLines(file_path, warn = FALSE)
+            filled <- 0
 
-          # Build the fill script — line-by-line approach (no regex across newlines)
-          script_lines <- c(
-            'local({',
-            '  ctx <- tryCatch(rstudioapi::getSourceEditorContext(), error = function(e) NULL)',
-            '  if (is.null(ctx) || !nzchar(ctx$id)) { message("[tsifl] No active editor"); return() }',
-            '',
-            '  lines <- ctx$contents',
-            paste0('  chunks <- readRDS("', chunks_file, '")'),
-            paste0('  answers <- readRDS("', answers_file, '")'),
-            '',
-            '  # Process exercises in REVERSE order so line insertions dont shift indices',
-            '  ex_nums <- sort(as.integer(gsub("[^0-9]", "", names(chunks))), decreasing = TRUE)',
-            '  filled <- 0',
-            '',
-            '  for (ex_num in ex_nums) {',
-            '    ex_key <- paste0("Exercise ", ex_num)',
-            '    code <- chunks[[ex_key]]',
-            '    if (is.null(code)) next',
-            '',
-            '    # Find the #### Exercise N header line',
-            '    header_pat <- paste0("^####\\\\s+Exercise\\\\s+", ex_num, "\\\\b")',
-            '    header_idx <- grep(header_pat, lines)',
-            '    if (length(header_idx) == 0) next',
-            '    header_idx <- header_idx[1]',
-            '',
-            '    # Find the next ```{r opening after this header (within 10 lines)',
-            '    chunk_start <- NA',
-            '    search_end <- min(header_idx + 10, length(lines))',
-            '    for (i in (header_idx + 1):search_end) {',
-            '      if (grepl("^```\\\\{r", lines[i])) { chunk_start <- i; break }',
-            '    }',
-            '    if (is.na(chunk_start)) next',
-            '',
-            '    # Find the closing ``` (within 50 lines)',
-            '    chunk_end <- NA',
-            '    search_end2 <- min(chunk_start + 50, length(lines))',
-            '    for (i in (chunk_start + 1):search_end2) {',
-            '      if (grepl("^```\\\\s*$", lines[i])) { chunk_end <- i; break }',
-            '    }',
-            '    if (is.na(chunk_end)) next',
-            '',
-            '    # Replace lines between chunk_start and chunk_end with the code',
-            '    code_lines <- strsplit(code, "\\n")[[1]]',
-            '    before <- lines[1:chunk_start]',
-            '    after <- if (chunk_end <= length(lines)) lines[chunk_end:length(lines)] else "```"',
-            '    lines <- c(before, code_lines, after)',
-            '    filled <- filled + 1',
-            '  }',
-            '',
-            '  # Fill text answers (process in reverse too)',
-            '  ans_nums <- sort(as.integer(gsub("[^0-9]", "", names(answers))), decreasing = TRUE)',
-            '  for (ex_num in ans_nums) {',
-            '    ex_key <- paste0("Exercise ", ex_num)',
-            '    answer <- answers[[ex_key]]',
-            '    if (is.null(answer)) next',
-            '',
-            '    header_pat <- paste0("^####\\\\s+Exercise\\\\s+", ex_num, "\\\\b")',
-            '    header_idx <- grep(header_pat, lines)',
-            '    if (length(header_idx) == 0) next',
-            '    header_idx <- header_idx[1]',
-            '',
-            '    # Find where text goes: right after header, before ```{r} or next ####',
-            '    insert_at <- header_idx',
-            '    search_end <- min(header_idx + 10, length(lines))',
-            '    for (i in (header_idx + 1):search_end) {',
-            '      if (grepl("^```\\\\{r", lines[i]) || grepl("^####", lines[i])) break',
-            '      insert_at <- i',
-            '    }',
-            '',
-            '    answer_lines <- strsplit(answer, "\\n")[[1]]',
-            '    before <- lines[1:insert_at]',
-            '    after <- lines[(insert_at + 1):length(lines)]',
-            '    lines <- c(before, answer_lines, after)',
-            '  }',
-            '',
-            '  full_text <- paste(lines, collapse = "\\n")',
-            '  rstudioapi::setDocumentContents(full_text, id = ctx$id)',
-            '  message("[tsifl] Filled ", filled, " code chunks")',
-            '})'
-          )
-          writeLines(script_lines, fill_script)
+            # Process exercises in REVERSE order so line insertions don't shift indices
+            ex_nums <- sort(as.integer(gsub("[^0-9]", "", names(chunks))), decreasing = TRUE)
 
-          rstudioapi::sendToConsole(
-            paste0('invisible(source("', fill_script, '", local = TRUE))'),
-            execute = TRUE, echo = FALSE, focus = FALSE
-          )
-          Sys.sleep(1)
-          add_message("action", paste0("Filled ", length(chunks), " exercises in Rmd"))
+            for (ex_num in ex_nums) {
+              ex_key <- paste0("Exercise ", ex_num)
+              code <- chunks[[ex_key]]
+              if (is.null(code)) next
 
-          # Also run all the code in the console so outputs/plots are produced
-          all_code <- paste(unlist(chunks), collapse = "\n\n")
-          if (nzchar(all_code)) {
+              # Find #### Exercise N header
+              header_pat <- paste0("^####\\s+Exercise\\s+", ex_num, "\\b")
+              header_idx <- grep(header_pat, lines)
+              if (length(header_idx) == 0) next
+              header_idx <- header_idx[1]
+
+              # Find next ```{r opening (within 10 lines)
+              chunk_start <- NA
+              for (i in (header_idx + 1):min(header_idx + 10, length(lines))) {
+                if (grepl("^```\\{r", lines[i])) { chunk_start <- i; break }
+              }
+              if (is.na(chunk_start)) next
+
+              # Find closing ``` (within 50 lines)
+              chunk_end <- NA
+              for (i in (chunk_start + 1):min(chunk_start + 50, length(lines))) {
+                if (grepl("^```\\s*$", lines[i])) { chunk_end <- i; break }
+              }
+              if (is.na(chunk_end)) next
+
+              # Splice: keep chunk_start (```{r...}), insert code, keep chunk_end (```)
+              code_lines <- strsplit(code, "\n")[[1]]
+              lines <- c(lines[1:chunk_start], code_lines, lines[chunk_end:length(lines)])
+              filled <- filled + 1
+            }
+
+            # Fill text answers (process in reverse too)
+            ans_nums <- sort(as.integer(gsub("[^0-9]", "", names(answers))), decreasing = TRUE)
+            for (ex_num in ans_nums) {
+              ex_key <- paste0("Exercise ", ex_num)
+              answer <- answers[[ex_key]]
+              if (is.null(answer)) next
+
+              header_pat <- paste0("^####\\s+Exercise\\s+", ex_num, "\\b")
+              header_idx <- grep(header_pat, lines)
+              if (length(header_idx) == 0) next
+              header_idx <- header_idx[1]
+
+              # Insert after header, before ```{r} or next ####
+              insert_at <- header_idx
+              for (i in (header_idx + 1):min(header_idx + 10, length(lines))) {
+                if (grepl("^```\\{r", lines[i]) || grepl("^####", lines[i])) break
+                insert_at <- i
+              }
+
+              answer_lines <- strsplit(answer, "\n")[[1]]
+              lines <- c(lines[1:insert_at], answer_lines, lines[(insert_at + 1):length(lines)])
+            }
+
+            # Write back to disk
+            writeLines(lines, file_path)
+            add_message("action", paste0("Filled ", filled, " exercises in ", basename(file_path)))
+
+            # Tell RStudio to revert/reload the file (it detects the disk change)
             tryCatch({
               rstudioapi::sendToConsole(
-                all_code, execute = TRUE, echo = TRUE, focus = FALSE
+                paste0('invisible(tryCatch(rstudioapi::navigateToFile("', file_path, '"), error=function(e){}))'),
+                execute = TRUE, echo = FALSE, focus = FALSE
               )
-              Sys.sleep(3)
             }, error = function(e) {})
+            Sys.sleep(0.5)
+
+            # Run all the code in the console
+            all_code <- paste(unlist(chunks), collapse = "\n\n")
+            if (nzchar(all_code)) {
+              tryCatch({
+                rstudioapi::sendToConsole(
+                  all_code, execute = TRUE, echo = TRUE, focus = FALSE
+                )
+                Sys.sleep(3)
+              }, error = function(e) {})
+            }
           }
         }, error = function(e) {
-          add_message("action", paste0("Could not fill Rmd chunks: ", e$message))
+          add_message("action", paste0("Could not fill Rmd: ", e$message))
         })
 
       } else if (type == "create_r_script") {
