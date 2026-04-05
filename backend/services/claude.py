@@ -2163,7 +2163,7 @@ def _parse_tool_response(response) -> dict:
     return {
         "reply":   reply,
         "action":  actions[0] if len(actions) == 1 else {},
-        "actions": actions    if len(actions) > 1  else [],
+        "actions": actions,   # Always return full list (post-processors need it)
     }
 
 # ── Streaming Entry Point (Improvement 92) ───────────────────────────────────
