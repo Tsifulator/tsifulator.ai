@@ -1146,49 +1146,21 @@ run_tsifl_server <- function(port = 7444) {
         #    and source() it via sendToConsole in the MAIN session.
         target <- payload$target  # "active", "new", or NULL
 
-        # Save generated code to temp file
+        # Always create a new script tab for run_r_code.
+        # (Rmd insertion is handled by fill_rmd_chunks, not run_r_code)
         code_file <- "/tmp/.tsifl_insert_code.R"
         tryCatch(writeLines(code, code_file), error = function(e) {})
 
-        # Build the insert script that will run in the main session
-        if (identical(target, "new")) {
-          insert_script <- paste0(
-            'local({\n',
-            '  code <- paste(readLines("', code_file, '"), collapse = "\\n")\n',
-            '  rstudioapi::documentNew(\n',
-            '    text = paste0("# tsifl — Generated Code\\n\\n", code, "\\n"),\n',
-            '    type = "r"\n',
-            '  )\n',
-            '})\n'
-          )
-        } else {
-          insert_script <- paste0(
-            'local({\n',
-            '  code <- paste(readLines("', code_file, '"), collapse = "\\n")\n',
-            '  ctx <- tryCatch(rstudioapi::getSourceEditorContext(), error = function(e) NULL)\n',
-            '  if (!is.null(ctx) && nzchar(ctx$id)) {\n',
-            '    is_rmd <- grepl("\\\\.(rmd|qmd)$", tolower(ctx$path))\n',
-            '    if (is_rmd) {\n',
-            '      txt <- paste0("\\n```{r, message=FALSE, warning=FALSE}\\n", code, "\\n```\\n")\n',
-            '    } else {\n',
-            '      txt <- paste0("\\n# tsifl\\n", code, "\\n")\n',
-            '    }\n',
-            '    rstudioapi::insertText(\n',
-            '      location = ctx$selection[[1]]$range$end,\n',
-            '      text = txt,\n',
-            '      id = ctx$id\n',
-            '    )\n',
-            '  } else {\n',
-            '    rstudioapi::documentNew(\n',
-            '      text = paste0("# tsifl — Generated Code\\n\\n", code, "\\n"),\n',
-            '      type = "r"\n',
-            '    )\n',
-            '  }\n',
-            '})\n'
-          )
-        }
+        insert_script <- paste0(
+          'local({\n',
+          '  code <- paste(readLines("', code_file, '"), collapse = "\\n")\n',
+          '  rstudioapi::documentNew(\n',
+          '    text = paste0("# tsifl — Generated Code\\n\\n", code, "\\n"),\n',
+          '    type = "r"\n',
+          '  )\n',
+          '})\n'
+        )
 
-        # Write insert script to disk and source it from main session
         script_file <- "/tmp/.tsifl_insert_script.R"
         tryCatch(writeLines(insert_script, script_file), error = function(e) {})
 

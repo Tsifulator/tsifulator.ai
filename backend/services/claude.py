@@ -1857,6 +1857,62 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
     result = _parse_tool_response(response)
     result["model_used"] = selected_model
 
+    # ── Rmd post-processor: convert run_r_code to fill_rmd_chunks ────────
+    # If user has an Rmd with exercise chunks open and Claude used run_r_code,
+    # convert it to fill_rmd_chunks so code goes into the right chunks
+    open_editor = context.get("open_editor", {})
+    active_file = (open_editor.get("active_file") or "").lower()
+    active_preview = open_editor.get("active_preview") or ""
+    is_rmd_with_exercises = (
+        active_file.endswith(".rmd") or active_file.endswith(".qmd")
+    ) and "exercise" in active_preview.lower() and "```{r" in active_preview.lower()
+
+    if is_rmd_with_exercises and result.get("actions"):
+        actions = result["actions"]
+        # Check if Claude used run_r_code instead of fill_rmd_chunks
+        has_run_r = any(a.get("type") == "run_r_code" for a in actions)
+        has_fill = any(a.get("type") == "fill_rmd_chunks" for a in actions)
+        if has_run_r and not has_fill:
+            logger.info("[RMD-FIX] Claude used run_r_code for Rmd with exercises — converting to fill_rmd_chunks")
+            # Combine all run_r_code actions into one
+            all_code = "\n\n".join(
+                a.get("payload", {}).get("code", "")
+                for a in actions if a.get("type") == "run_r_code"
+            )
+            # Try to split code into exercises by looking for "# Exercise N" or "# Question N" comments
+            import re
+            chunks = {}
+            # Split by exercise comments
+            parts = re.split(r'(?m)^#\s*(Exercise|Question)\s+(\d+)', all_code)
+            if len(parts) > 1:
+                # parts = [preamble, "Exercise", "1", code1, "Exercise", "2", code2, ...]
+                # Preamble (before first exercise marker) goes into Exercise 1
+                preamble = parts[0].strip()
+                i = 1
+                while i < len(parts) - 2:
+                    ex_num = parts[i + 1]
+                    ex_code = parts[i + 2].strip()
+                    key = f"Exercise {ex_num}"
+                    if preamble and key == "Exercise 1":
+                        chunks[key] = preamble + "\n" + ex_code if ex_code else preamble
+                        preamble = ""
+                    elif ex_code:
+                        chunks[key] = ex_code
+                    i += 3
+                if preamble and "Exercise 1" not in chunks:
+                    chunks["Exercise 1"] = preamble
+            else:
+                # Can't split — put everything in Exercise 1
+                chunks["Exercise 1"] = all_code
+
+            # Replace actions
+            non_r = [a for a in actions if a.get("type") != "run_r_code"]
+            fill_action = {
+                "type": "fill_rmd_chunks",
+                "payload": {"chunks": chunks}
+            }
+            result["actions"] = [fill_action] + non_r
+
     total_actions = len(result.get("actions", [])) or (1 if result.get("action") else 0)
     logger.info("[get_claude_response] model=%s, total_actions=%d, stop_reason=%s",
                 selected_model, total_actions, response.stop_reason)
