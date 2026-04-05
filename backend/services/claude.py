@@ -1865,7 +1865,7 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
     active_preview = open_editor.get("active_preview") or ""
     is_rmd_with_exercises = (
         active_file.endswith(".rmd") or active_file.endswith(".qmd")
-    ) and "exercise" in active_preview.lower() and "```{r" in active_preview.lower()
+    ) and ("exercise" in active_preview.lower() or "```{r" in active_preview.lower())
 
     if is_rmd_with_exercises and result.get("actions"):
         actions = result["actions"]
