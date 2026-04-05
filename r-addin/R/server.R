@@ -918,12 +918,29 @@ run_tsifl_server <- function(port = 7444) {
       open_tabs <- tryCatch({
         ctx <- rstudioapi::getActiveDocumentContext()
         doc_info <- list()
-        if (nchar(ctx$path) > 0) {
-          doc_info$active_file <- basename(ctx$path)
-          doc_info$active_file_path <- ctx$path
+
+        # Try multiple methods to get the file path
+        doc_path <- ctx$path
+        if (!nzchar(doc_path)) {
+          # Fallback: try documentPath for the active document
+          doc_path <- tryCatch(rstudioapi::documentPath(ctx$id), error = function(e) "")
+          if (is.null(doc_path)) doc_path <- ""
+        }
+
+        if (nzchar(doc_path)) {
+          doc_info$active_file <- basename(doc_path)
+          doc_info$active_file_path <- doc_path
         }
         if (length(ctx$contents) > 0) {
           doc_info$active_preview <- paste(ctx$contents, collapse = "\n")
+          # If we still don't have a filename, try to extract from YAML title
+          if (is.null(doc_info$active_file)) {
+            title_match <- regmatches(ctx$contents[3], regexpr("title:\\s*['\"]?(.+?)['\"]?\\s*$", ctx$contents[3], perl = TRUE))
+            if (length(title_match) > 0) {
+              # Use title to help identify the file
+              doc_info$active_file_hint <- trimws(gsub("title:\\s*['\"]?|['\"]?\\s*$", "", title_match))
+            }
+          }
         }
         doc_info
       }, error = function(e) list())
@@ -1395,12 +1412,33 @@ run_tsifl_server <- function(port = 7444) {
         tryCatch({
           # Get the file path from context
           file_path <- r_context$open_editor$active_file_path
+
+          # Also try to extract filename from active_file for searching
+          active_name <- r_context$open_editor$active_file
+          if (is.null(active_name)) active_name <- ""
+
           if (is.null(file_path) || !nzchar(file_path)) {
-            # Try to find .Rmd in working dir
-            wd <- r_context$working_dir
-            if (!is.null(wd)) {
-              rmd_files <- list.files(wd, pattern = "\\.Rmd$", full.names = TRUE, ignore.case = TRUE)
-              if (length(rmd_files) > 0) file_path <- rmd_files[1]
+            # Background job can't see editor path — search common directories
+            home <- Sys.getenv("HOME", path.expand("~"))
+            search_dirs <- c(
+              r_context$working_dir,
+              file.path(home, "Documents"),
+              file.path(home, "Downloads"),
+              file.path(home, "Desktop"),
+              home
+            )
+            search_dirs <- unique(search_dirs[!is.na(search_dirs) & nzchar(search_dirs)])
+
+            for (d in search_dirs) {
+              if (!dir.exists(d)) next
+              # If we know the filename, search for it specifically
+              if (nzchar(active_name)) {
+                candidate <- file.path(d, active_name)
+                if (file.exists(candidate)) { file_path <- candidate; break }
+              }
+              # Otherwise find any .Rmd
+              rmd_files <- list.files(d, pattern = "\\.Rmd$", full.names = TRUE, ignore.case = TRUE)
+              if (length(rmd_files) > 0) { file_path <- rmd_files[1]; break }
             }
           }
 
