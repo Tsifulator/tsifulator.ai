@@ -1411,6 +1411,112 @@ run_tsifl_server <- function(port = 7444) {
           add_message("action", paste0("Could not export plot: ", e$message))
         })
 
+      } else if (type == "fill_rmd_chunks") {
+        # Fill empty code chunks in the active Rmd file by exercise number.
+        # payload$chunks is a named list: {"Exercise 1": "code...", "Exercise 2": "code...", ...}
+        # payload$answers is a named list: {"Exercise 8": "text answer...", ...} (goes ABOVE the code chunk)
+        chunks  <- payload$chunks   # named list of exercise -> R code
+        answers <- payload$answers  # named list of exercise -> text answer (optional)
+        if (is.null(chunks)) chunks <- list()
+        if (is.null(answers)) answers <- list()
+
+        tryCatch({
+          # Write chunks and answers to temp files for the main session to read
+          chunks_file  <- "/tmp/.tsifl_rmd_chunks.rds"
+          answers_file <- "/tmp/.tsifl_rmd_answers.rds"
+          saveRDS(chunks, chunks_file)
+          saveRDS(answers, answers_file)
+
+          # Write the fill script
+          fill_script <- '/tmp/.tsifl_fill_rmd.R'
+          writeLines(c(
+            'local({',
+            '  ctx <- tryCatch(rstudioapi::getSourceEditorContext(), error = function(e) NULL)',
+            '  if (is.null(ctx) || !nzchar(ctx$id)) { message("[tsifl] No active editor"); return() }',
+            '  content <- ctx$contents',
+            paste0('  chunks <- readRDS("', chunks_file, '")'),
+            paste0('  answers <- readRDS("', answers_file, '")'),
+            '  lines <- content',
+            '  ',
+            '  for (ex_name in names(chunks)) {',
+            '    code <- chunks[[ex_name]]',
+            '    # Find the exercise header line: "#### Exercise N" or "#### Exercise N "',
+            '    ex_pattern <- paste0("^####\\\\s+", ex_name, "\\\\s*$")',
+            '    header_idx <- grep(ex_pattern, lines, ignore.case = TRUE)',
+            '    if (length(header_idx) == 0) next',
+            '    header_idx <- header_idx[1]',
+            '    ',
+            '    # Find the next ```{r code chunk opening after this header',
+            '    chunk_start <- NULL',
+            '    for (i in (header_idx + 1):min(header_idx + 15, length(lines))) {',
+            '      if (grepl("^```\\\\{r", lines[i])) { chunk_start <- i; break }',
+            '    }',
+            '    if (is.null(chunk_start)) next',
+            '    ',
+            '    # Find the closing ``` for this chunk',
+            '    chunk_end <- NULL',
+            '    for (i in (chunk_start + 1):min(chunk_start + 50, length(lines))) {',
+            '      if (grepl("^```\\\\s*$", lines[i])) { chunk_end <- i; break }',
+            '    }',
+            '    if (is.null(chunk_end)) next',
+            '    ',
+            '    # Replace everything between chunk_start and chunk_end with the code',
+            '    code_lines <- strsplit(code, "\\n")[[1]]',
+            '    lines <- c(lines[1:chunk_start], code_lines, lines[chunk_end:length(lines)])',
+            '  }',
+            '  ',
+            '  # Fill in text answers (go between #### header and ```{r})',
+            '  for (ex_name in names(answers)) {',
+            '    answer_text <- answers[[ex_name]]',
+            '    ex_pattern <- paste0("^####\\\\s+", ex_name, "\\\\s*$")',
+            '    header_idx <- grep(ex_pattern, lines, ignore.case = TRUE)',
+            '    if (length(header_idx) == 0) next',
+            '    header_idx <- header_idx[1]',
+            '    ',
+            '    # Find where to insert (after header, before ```{r} or next ####)',
+            '    insert_after <- header_idx',
+            '    for (i in (header_idx + 1):min(header_idx + 15, length(lines))) {',
+            '      if (grepl("^```\\\\{r", lines[i]) || grepl("^####", lines[i])) break',
+            '      insert_after <- i',
+            '    }',
+            '    ',
+            '    # Check if there is already text content (non-empty, non-label lines)',
+            '    existing <- lines[(header_idx + 1):insert_after]',
+            '    has_content <- any(nzchar(trimws(existing)) & !grepl("^(Research question:|Define|H0:|HA:)", existing))',
+            '    if (!has_content) {',
+            '      answer_lines <- strsplit(answer_text, "\\n")[[1]]',
+            '      lines <- c(lines[1:insert_after], answer_lines, lines[(insert_after + 1):length(lines)])',
+            '    }',
+            '  }',
+            '  ',
+            '  # Update the document content',
+            '  full_text <- paste(lines, collapse = "\\n")',
+            '  rstudioapi::setDocumentContents(full_text, id = ctx$id)',
+            '  message("[tsifl] Filled ", length(chunks), " code chunks and ", length(answers), " answers")',
+            '})'
+          ), fill_script)
+
+          rstudioapi::sendToConsole(
+            paste0('invisible(source("', fill_script, '", local = TRUE))'),
+            execute = TRUE, echo = FALSE, focus = FALSE
+          )
+          Sys.sleep(1)
+          add_message("action", paste0("Filled ", length(chunks), " exercises in Rmd"))
+
+          # Also run all the code in the console so outputs/plots are produced
+          all_code <- paste(unlist(chunks), collapse = "\n\n")
+          if (nzchar(all_code)) {
+            tryCatch({
+              rstudioapi::sendToConsole(
+                all_code, execute = TRUE, echo = TRUE, focus = FALSE
+              )
+              Sys.sleep(3)
+            }, error = function(e) {})
+          }
+        }, error = function(e) {
+          add_message("action", paste0("Could not fill Rmd chunks: ", e$message))
+        })
+
       } else if (type == "create_r_script") {
         code  <- payload$code
         title <- if (!is.null(payload$title)) payload$title else "tsifl Script"

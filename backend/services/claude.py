@@ -899,11 +899,24 @@ When the user sends screenshots of homework/assignment questions with "answer" o
 Before generating ANY R code, check the env_objects field in context. This tells you what data and variables the user has loaded. ALWAYS use the exact names from env_objects, not what the user typed.
 
 ### Core Rules
+
+**CRITICAL — Rmd homework detection:**
+When the user has an .Rmd file open (visible in open_editor.active_file) that contains empty ```{r} code chunks with "#### Exercise N" headers (visible in active_preview), and asks to "fill in", "answer", "do the exercises", "make the changes", or anything implying filling in a homework template:
+- Use **fill_rmd_chunks** action, NOT run_r_code
+- Map each exercise to its R code: {"Exercise 1": "library(tidyverse)\n...", "Exercise 2": "dim(AdsManager)"}
+- For text-only answers (no code needed), use the answers field: {"Exercise 8": "Research question: Is there a difference in pageviews between mobile and non-mobile devices?"}
+- NEVER generate code that uses readLines/writeLines/gsub to programmatically edit an Rmd file
+- NEVER wrap code in ```{r} fencing — the chunks already exist in the template
+- Each exercise's code should be JUST the R code, nothing else
+
+**When to use run_r_code vs fill_rmd_chunks:**
+- fill_rmd_chunks: user has Rmd template open, wants exercises filled in
+- run_r_code: user wants to run analysis, create a plot, answer a single question, or work outside an Rmd template
+
 - Action type: run_r_code with payload {code: "...", target: "active"|"new"}.
 - **target field** — decides where code appears in the editor:
-  - "active": insert at cursor in the currently open file (use for homework, labs, .Rmd reports, or when user says "add", "next question", "put this in")
+  - "active": insert at cursor in the currently open file
   - "new": create a new script tab (use for standalone analysis, "create a script", "new analysis", or when no file is open)
-  - Look at the open_editor.active_file in context. If it's a .Rmd/.Qmd → default to "active". If no file is open → use "new". If user says "new script" or "create a file" → use "new".
 - NEVER include library() calls for packages already listed in "Loaded packages" in the context — they are already loaded. Only add library() for packages NOT in that list.
 - Always use <- for assignment, not =.
 - Combine all code into ONE run_r_code action. Never split across multiple actions.
@@ -1489,7 +1502,8 @@ TOOLS = [
                                     "insert_table_of_contents: {}.\n"
                                     "add_comment: {range_description, comment_text}.\n"
                                     "set_page_margins: {top?, bottom?, left?, right?}.\n"
-                                    "run_r_code: {code, target?}. Runs R code in the console. target controls where code is placed in the editor: 'active' inserts at cursor in the open file (default for .Rmd/.Qmd homework), 'new' creates a new script tab. If omitted, auto-detects from active file type. Combine all code into ONE action.\n"
+                                    "run_r_code: {code, target?}. Runs R code in the console and places it in the editor. target: 'active' (insert at cursor), 'new' (new tab). Combine all code into ONE action.\n"
+                                    "fill_rmd_chunks: {chunks, answers?}. Fills empty code chunks in the active Rmd file. chunks is a map of exercise name to R code: {\"Exercise 1\": \"library(tidyverse)\\n...\", \"Exercise 2\": \"dim(AdsManager)\"}. answers is an optional map of exercise name to text answer (inserted above the code chunk): {\"Exercise 8\": \"Research question: Is there a difference...\"}. Use this INSTEAD of run_r_code when the user has an Rmd homework template open with empty ```{r} chunks and asks to fill in answers. NEVER generate code that uses readLines/writeLines/gsub to edit an Rmd file — use fill_rmd_chunks instead.\n"
                                     "install_package: {package}. Installs an R package.\n"
                                     "create_r_script: {code, title?}. Creates a new R script file in the editor without executing.\n"
                                     "export_plot: {to_app?, cell?, sheet?}. Captures current R plot and exports to transfer endpoint for Excel/PPT to pick up.\n"
