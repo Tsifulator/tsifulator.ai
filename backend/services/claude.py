@@ -1440,7 +1440,7 @@ TOOLS = [
                                     "Preferences: save_preference. "
                                     "PowerPoint: create_slide, add_text_box, add_shape, add_image, add_table, add_chart, modify_slide, set_slide_background, duplicate_slide, delete_slide, reorder_slides, apply_theme. "
                                     "Word: insert_text, insert_paragraph, insert_table, insert_image, format_text, insert_header, insert_footer, insert_page_break, insert_section_break, apply_style, find_and_replace, insert_table_of_contents, add_comment, set_page_margins. "
-                                    "R: run_r_code, install_package, create_r_script, export_plot. "
+                                    "R: run_r_code, fill_rmd_chunks, install_package, create_r_script, export_plot. "
                                     "Terminal: run_shell_command, write_file, open_url. "
                                     "Gmail: send_email, draft_email, reply_email, search_emails, summarize_thread, extract_action_items. "
                                     "VS Code: insert_code, replace_selection, create_file, edit_file, run_terminal_command, open_file, show_diff, explain_code, fix_error, refactor, generate_tests. "
