@@ -1434,7 +1434,7 @@ run_tsifl_server <- function(port = 7444) {
           }
 
           if (is.null(file_path) || !nzchar(file_path) || !file.exists(file_path)) {
-            # Still no path — search common directories
+            # Still no path — search common directories and match by content
             home <- Sys.getenv("HOME", path.expand("~"))
             search_dirs <- c(
               file.path(home, "Documents"),
@@ -1445,10 +1445,31 @@ run_tsifl_server <- function(port = 7444) {
             )
             search_dirs <- unique(search_dirs[!is.na(search_dirs) & nzchar(search_dirs)])
 
+            # Get the first few lines from the open editor to match against
+            preview_lines <- r_context$open_editor$active_preview
+            preview_title <- ""
+            if (!is.null(preview_lines)) {
+              # Extract YAML title for matching
+              title_m <- regmatches(preview_lines, regexpr("title:\\s*['\"]?(.+?)(?:['\"]?\\s*$)", preview_lines, perl = TRUE))
+              if (length(title_m) > 0) preview_title <- tolower(trimws(title_m))
+            }
+
             for (d in search_dirs) {
               if (!dir.exists(d)) next
               rmd_files <- list.files(d, pattern = "\\.Rmd$", full.names = TRUE, ignore.case = TRUE)
-              if (length(rmd_files) > 0) { file_path <- rmd_files[1]; break }
+              if (length(rmd_files) == 0) next
+              # If we have a title from preview, match against file contents
+              if (nzchar(preview_title)) {
+                for (f in rmd_files) {
+                  first_lines <- tryCatch(paste(readLines(f, n = 5, warn = FALSE), collapse = " "), error = function(e) "")
+                  if (grepl(preview_title, tolower(first_lines), fixed = TRUE)) {
+                    file_path <- f; break
+                  }
+                }
+                if (!is.null(file_path) && nzchar(file_path) && file.exists(file_path)) break
+              }
+              # Fallback: use first .Rmd found
+              file_path <- rmd_files[1]; break
             }
           }
 
