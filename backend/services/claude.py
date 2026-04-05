@@ -1867,9 +1867,12 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
     open_editor = context.get("open_editor", {})
     active_file = (open_editor.get("active_file") or "").lower()
     active_preview = open_editor.get("active_preview") or ""
-    is_rmd_with_exercises = (
-        active_file.endswith(".rmd") or active_file.endswith(".qmd")
-    ) and ("exercise" in active_preview.lower() or "```{r" in active_preview.lower())
+    preview_lower = active_preview.lower()
+    has_rmd_file = active_file.endswith(".rmd") or active_file.endswith(".qmd")
+    has_rmd_content = "```{r" in preview_lower and ("exercise" in preview_lower or "---" in active_preview[:10])
+    is_rmd_with_exercises = (has_rmd_file or has_rmd_content) and (
+        "exercise" in preview_lower or "```{r" in preview_lower
+    )
 
     if is_rmd_with_exercises:
         import re

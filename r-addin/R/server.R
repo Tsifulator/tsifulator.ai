@@ -933,12 +933,12 @@ run_tsifl_server <- function(port = 7444) {
         }
         if (length(ctx$contents) > 0) {
           doc_info$active_preview <- paste(ctx$contents, collapse = "\n")
-          # If we still don't have a filename, try to extract from YAML title
+          # If we still don't have a filename, detect Rmd from content
           if (is.null(doc_info$active_file)) {
-            title_match <- regmatches(ctx$contents[3], regexpr("title:\\s*['\"]?(.+?)['\"]?\\s*$", ctx$contents[3], perl = TRUE))
-            if (length(title_match) > 0) {
-              # Use title to help identify the file
-              doc_info$active_file_hint <- trimws(gsub("title:\\s*['\"]?|['\"]?\\s*$", "", title_match))
+            content_str <- tolower(doc_info$active_preview)
+            # If it has YAML header + exercise chunks, it's an Rmd
+            if (grepl("^---", ctx$contents[1]) && (grepl("exercise", content_str) || grepl("```\\{r", content_str))) {
+              doc_info$active_file <- "document.Rmd"
             }
           }
         }
