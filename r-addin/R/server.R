@@ -1031,7 +1031,9 @@ run_tsifl_server <- function(port = 7444) {
               }
             }
           }
-          if (!is.null(data$action) && is.list(data$action) && !is.null(data$action$type) &&
+          # Only use singular action if actions list was empty (avoid duplicates)
+          if (length(all_actions) == 0 &&
+              !is.null(data$action) && is.list(data$action) && !is.null(data$action$type) &&
               !identical(data$action$type, "none")) {
             all_actions <- c(all_actions, list(data$action))
           }
@@ -1060,9 +1062,6 @@ run_tsifl_server <- function(port = 7444) {
           }
 
           if (length(all_actions) > 0) set_status("running")
-          # Debug: log what actions we received
-          action_types <- sapply(all_actions, function(a) a$type %||% "unknown")
-          add_message("action", paste0("Actions: ", paste(action_types, collapse=", ")))
           r_code_executed <- FALSE
           for (action in all_actions) {
             tryCatch({
@@ -1419,14 +1418,20 @@ run_tsifl_server <- function(port = 7444) {
 
           if (is.null(file_path) || !nzchar(file_path)) {
             # Ask the main R session for the active document path
+            # Try multiple rstudioapi methods for reliability
             path_file <- "/tmp/.tsifl_rmd_path.txt"
             tryCatch({
-              unlink(path_file)  # remove old file
+              unlink(path_file)
               rstudioapi::sendToConsole(
-                paste0('local({ p <- tryCatch(rstudioapi::getActiveDocumentContext()$path, error=function(e)""); writeLines(p, "', path_file, '") })'),
+                paste0('local({ ',
+                  'p <- tryCatch(rstudioapi::getActiveDocumentContext()$path, error=function(e)""); ',
+                  'if(!nzchar(p)) p <- tryCatch(rstudioapi::documentPath(), error=function(e)""); ',
+                  'if(is.null(p)) p <- ""; ',
+                  'writeLines(p, "', path_file, '") ',
+                '})'),
                 execute = TRUE, echo = FALSE, focus = FALSE
               )
-              Sys.sleep(1)  # wait for main session to execute
+              Sys.sleep(1)
               if (file.exists(path_file)) {
                 file_path <- trimws(readLines(path_file, warn = FALSE)[1])
               }
@@ -1437,28 +1442,32 @@ run_tsifl_server <- function(port = 7444) {
             # Still no path — search common directories and match by content
             home <- Sys.getenv("HOME", path.expand("~"))
             search_dirs <- c(
+              r_context$working_dir,
               file.path(home, "Documents"),
               file.path(home, "Downloads"),
               file.path(home, "Desktop"),
-              r_context$working_dir,
-              home
+              home,
+              # Common course/project folders
+              file.path(home, "Documents", "R"),
+              file.path(home, "Documents", "Stats"),
+              file.path(home, "Documents", "School"),
+              file.path(home, "Documents", "Courses")
             )
             search_dirs <- unique(search_dirs[!is.na(search_dirs) & nzchar(search_dirs)])
 
-            # Get the first few lines from the open editor to match against
+            # Extract YAML title from open editor for matching
             preview_lines <- r_context$open_editor$active_preview
             preview_title <- ""
             if (!is.null(preview_lines)) {
-              # Extract YAML title for matching
               title_m <- regmatches(preview_lines, regexpr("title:\\s*['\"]?(.+?)(?:['\"]?\\s*$)", preview_lines, perl = TRUE))
               if (length(title_m) > 0) preview_title <- tolower(trimws(title_m))
             }
 
+            # Phase 1: Search listed dirs for title match
             for (d in search_dirs) {
               if (!dir.exists(d)) next
               rmd_files <- list.files(d, pattern = "\\.Rmd$", full.names = TRUE, ignore.case = TRUE)
               if (length(rmd_files) == 0) next
-              # If we have a title from preview, match against file contents
               if (nzchar(preview_title)) {
                 for (f in rmd_files) {
                   first_lines <- tryCatch(paste(readLines(f, n = 5, warn = FALSE), collapse = " "), error = function(e) "")
@@ -1468,12 +1477,36 @@ run_tsifl_server <- function(port = 7444) {
                 }
                 if (!is.null(file_path) && nzchar(file_path) && file.exists(file_path)) break
               }
-              # Fallback: use first .Rmd found
-              file_path <- rmd_files[1]; break
+            }
+
+            # Phase 2: If no title match, do a RECURSIVE search from home for title match
+            if (is.null(file_path) || !nzchar(file_path) || !file.exists(file_path)) {
+              if (nzchar(preview_title)) {
+                all_rmd <- list.files(home, pattern = "\\.Rmd$", full.names = TRUE,
+                                      ignore.case = TRUE, recursive = TRUE)
+                # Skip hidden dirs and library paths
+                all_rmd <- all_rmd[!grepl("/\\.|/Library/|/\\.Trash/", all_rmd)]
+                # Limit to first 50 to avoid slowness
+                all_rmd <- utils::head(all_rmd, 50)
+                for (f in all_rmd) {
+                  first_lines <- tryCatch(paste(readLines(f, n = 5, warn = FALSE), collapse = " "), error = function(e) "")
+                  if (grepl(preview_title, tolower(first_lines), fixed = TRUE)) {
+                    file_path <- f; break
+                  }
+                }
+              }
+            }
+
+            # Phase 3: Last resort — first .Rmd in any search dir
+            if (is.null(file_path) || !nzchar(file_path) || !file.exists(file_path)) {
+              for (d in search_dirs) {
+                if (!dir.exists(d)) next
+                rmd_files <- list.files(d, pattern = "\\.Rmd$", full.names = TRUE, ignore.case = TRUE)
+                if (length(rmd_files) > 0) { file_path <- rmd_files[1]; break }
+              }
             }
           }
 
-          add_message("action", paste0("fill_rmd: path='", file_path %||% "NULL", "'"))
           if (is.null(file_path) || !nzchar(file_path) || !file.exists(file_path)) {
             add_message("action", "Could not find Rmd file to fill")
           } else {
