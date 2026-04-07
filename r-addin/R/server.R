@@ -1211,24 +1211,22 @@ run_tsifl_server <- function(port = 7444) {
                           "par(mfrow")
         code_has_plot <- any(sapply(plot_keywords, function(kw) grepl(kw, code, fixed = TRUE)))
 
-        # If code produces a plot, append save command directly so it runs atomically
+        # If code produces a plot, OPEN a png device BEFORE running so any plot
+        # call (base R or ggplot) is captured automatically. Then close after.
         code_to_run <- code
         plot_path <- "/tmp/.tsifl_last_plot.png"
         if (code_has_plot) {
-          # Detect ggplot vs base R
-          is_ggplot <- grepl("ggplot(", code, fixed = TRUE) || grepl("geom_", code, fixed = TRUE)
-          if (is_ggplot) {
-            save_snippet <- sprintf(
-              '\ninvisible(tryCatch({ ggplot2::ggsave("%s", width=8, height=6, dpi=150) }, error=function(e) { tryCatch({ grDevices::dev.copy(grDevices::png, "%s", width=800, height=600, res=150); grDevices::dev.off() }, error=function(e2) {}) }))',
-              plot_path, plot_path
-            )
-          } else {
-            save_snippet <- sprintf(
-              '\ninvisible(tryCatch({ grDevices::dev.copy(grDevices::png, "%s", width=800, height=600, res=150); grDevices::dev.off() }, error=function(e) cat("")))',
-              plot_path
-            )
-          }
-          code_to_run <- paste0(code, save_snippet)
+          try(unlink(plot_path), silent = TRUE)
+          open_snippet <- sprintf(
+            'invisible(try(grDevices::png("%s", width=1000, height=700, res=150), silent=TRUE))\n',
+            plot_path
+          )
+          # After code: print last ggplot if any (ggsave fallback), then close device
+          close_snippet <- sprintf(
+            '\ninvisible(try({ if (exists(".Last.value") && inherits(.Last.value, "ggplot")) print(.Last.value) }, silent=TRUE))\ninvisible(try(grDevices::dev.off(), silent=TRUE))\ninvisible(try({ if (!file.exists("%s") || file.info("%s")$size < 200) { ggplot2::ggsave("%s", width=8, height=6, dpi=150) } }, silent=TRUE))',
+            plot_path, plot_path, plot_path
+          )
+          code_to_run <- paste0(open_snippet, code, close_snippet)
         }
 
         sent <- tryCatch({
