@@ -1878,6 +1878,11 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
     # If user has an Rmd with exercise chunks open and Claude used run_r_code,
     # convert it to fill_rmd_chunks so code goes into the right chunks
     open_editor = context.get("open_editor", {})
+    # Defensive: some clients send open_editor as a list of tabs; collapse to dict
+    if isinstance(open_editor, list):
+        open_editor = open_editor[0] if open_editor and isinstance(open_editor[0], dict) else {}
+    if not isinstance(open_editor, dict):
+        open_editor = {}
     active_file = (open_editor.get("active_file") or "").lower()
     active_preview = open_editor.get("active_preview") or ""
     preview_lower = active_preview.lower()
