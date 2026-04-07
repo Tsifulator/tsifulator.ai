@@ -672,7 +672,8 @@ async function handleSubmit() {
     setStatus("Done");
   } catch (err) {
     hideTypingIndicator();
-    appendMessage("assistant", "Could not reach tsifl backend.");
+    console.error("[tsifl] handleSubmit error:", err);
+    appendMessage("assistant", `Could not reach tsifl backend.\n${err?.name || ""}: ${err?.message || err}`);
     setStatus("Disconnected");
   } finally {
     setSubmitEnabled(true);

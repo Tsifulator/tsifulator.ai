@@ -56,7 +56,7 @@ app.add_middleware(
         "https://focused-solace-production-6839.up.railway.app",
         "null",  # Office add-ins send Origin: null
     ],
-    allow_origin_regex=r"^(chrome-extension|moz-extension|vscode-webview)://.*$",
+    allow_origin_regex=r"^((chrome-extension|moz-extension|vscode-webview)://.*|https://([a-z0-9-]+\.)*(officeapps\.live\.com|office\.com|office365\.com|microsoft\.com|sharepoint\.com))$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
