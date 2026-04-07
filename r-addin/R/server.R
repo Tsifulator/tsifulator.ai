@@ -1229,12 +1229,26 @@ run_tsifl_server <- function(port = 7444) {
           code_to_run <- paste0(open_snippet, code, close_snippet)
         }
 
+        send_err <- ""
         sent <- tryCatch({
           rstudioapi::sendToConsole(
             code_to_run, execute = TRUE, echo = TRUE, focus = FALSE
           )
           TRUE
-        }, error = function(e) FALSE)
+        }, error = function(e) { send_err <<- conditionMessage(e); FALSE })
+
+        # Fallback: write code to a temp file and source() it via sendToConsole
+        if (!sent) {
+          tryCatch({
+            tmp_script <- tempfile(fileext = ".R")
+            writeLines(code_to_run, tmp_script)
+            rstudioapi::sendToConsole(
+              sprintf('source("%s", echo = TRUE)', tmp_script),
+              execute = TRUE, echo = TRUE, focus = FALSE
+            )
+            sent <- TRUE
+          }, error = function(e) { send_err <<- paste(send_err, "| fallback:", conditionMessage(e)) })
+        }
 
         if (sent) {
           add_message("action", "Running in console")
@@ -1341,7 +1355,7 @@ run_tsifl_server <- function(port = 7444) {
             })
           }
         } else {
-          add_message("action", "Could not send to console")
+          add_message("action", paste0("Could not send to console: ", send_err))
         }
 
       } else if (type == "install_package") {
