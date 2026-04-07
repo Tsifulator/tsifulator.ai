@@ -1,0 +1,305 @@
+/*
+ * tsifl Design System — Shared CSS across all integrations
+ * Import this or copy these variables into each integration's CSS.
+ */
+
+:root {
+  /* Primary */
+  --tsifl-blue: #0D5EAF;
+  --tsifl-blue-hover: #0A4896;
+  --tsifl-blue-light: #EBF3FB;
+  --tsifl-blue-dark: #083D73;
+
+  /* Surfaces */
+  --tsifl-bg: #F8FAFC;
+  --tsifl-surface: #FFFFFF;
+  --tsifl-border: #E2E8F0;
+  --tsifl-border-focus: rgba(13, 94, 175, 0.4);
+
+  /* Text */
+  --tsifl-text: #1E293B;
+  --tsifl-muted: #64748B;
+  --tsifl-placeholder: #94A3B8;
+
+  /* Accent */
+  --tsifl-green: #16A34A;
+  --tsifl-green-light: #F0FDF4;
+  --tsifl-red: #DC2626;
+  --tsifl-red-light: #FEF2F2;
+  --tsifl-yellow: #D97706;
+  --tsifl-yellow-light: #FFFBEB;
+
+  /* Code */
+  --tsifl-code-bg: #1E293B;
+  --tsifl-code-text: #E2E8F0;
+
+  /* Typography */
+  --tsifl-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --tsifl-mono: "SF Mono", "Fira Code", "Cascadia Code", Consolas, "Courier New", monospace;
+
+  /* Spacing */
+  --tsifl-radius: 8px;
+  --tsifl-radius-sm: 6px;
+  --tsifl-radius-lg: 12px;
+
+  /* Shadows */
+  --tsifl-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --tsifl-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+  --tsifl-shadow-lg: 0 4px 6px rgba(0, 0, 0, 0.07), 0 2px 4px rgba(0, 0, 0, 0.06);
+}
+
+/* Dark mode */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --tsifl-bg: #0F172A;
+    --tsifl-surface: #1E293B;
+    --tsifl-border: #334155;
+    --tsifl-border-focus: rgba(96, 165, 250, 0.5);
+    --tsifl-text: #F1F5F9;
+    --tsifl-muted: #94A3B8;
+    --tsifl-placeholder: #64748B;
+    --tsifl-blue-light: #1E3A5F;
+    --tsifl-green-light: #14532D;
+    --tsifl-red-light: #450A0A;
+    --tsifl-yellow-light: #451A03;
+    --tsifl-code-bg: #0F172A;
+    --tsifl-code-text: #E2E8F0;
+    --tsifl-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --tsifl-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    --tsifl-shadow-lg: 0 4px 6px rgba(0, 0, 0, 0.5);
+  }
+}
+
+/* ── Base Reset ──────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--tsifl-font);
+  background: var(--tsifl-bg);
+  color: var(--tsifl-text);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Buttons ─────────────────────────────────────────── */
+.tsifl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: var(--tsifl-radius-sm);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s ease;
+}
+
+.tsifl-btn-primary {
+  background: var(--tsifl-blue);
+  color: #fff;
+}
+.tsifl-btn-primary:hover {
+  background: var(--tsifl-blue-hover);
+}
+
+.tsifl-btn-secondary {
+  background: transparent;
+  color: var(--tsifl-blue);
+  border: 1px solid var(--tsifl-border);
+}
+.tsifl-btn-secondary:hover {
+  background: var(--tsifl-blue-light);
+  border-color: var(--tsifl-blue);
+}
+
+.tsifl-btn-ghost {
+  background: var(--tsifl-bg);
+  color: var(--tsifl-muted);
+  border: 1px solid var(--tsifl-border);
+  font-size: 12px;
+  padding: 4px 10px;
+}
+.tsifl-btn-ghost:hover {
+  background: var(--tsifl-blue-light);
+  color: var(--tsifl-blue);
+  border-color: var(--tsifl-blue);
+}
+
+/* ── Inputs ──────────────────────────────────────────── */
+.tsifl-input {
+  width: 100%;
+  background: var(--tsifl-surface);
+  color: var(--tsifl-text);
+  border: 1px solid var(--tsifl-border);
+  border-radius: var(--tsifl-radius-sm);
+  padding: 10px 12px;
+  font-size: 14px;
+  font-family: var(--tsifl-font);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.tsifl-input:focus {
+  border-color: var(--tsifl-blue);
+  box-shadow: 0 0 0 3px rgba(13, 94, 175, 0.1);
+}
+.tsifl-input::placeholder {
+  color: var(--tsifl-placeholder);
+}
+
+/* ── Chat Bubbles ────────────────────────────────────── */
+.tsifl-msg {
+  padding: 10px 14px;
+  border-radius: var(--tsifl-radius);
+  font-size: 13px;
+  line-height: 1.6;
+  animation: tsifl-fadeInUp 0.3s ease;
+}
+.tsifl-msg-user {
+  background: var(--tsifl-blue-light);
+  color: var(--tsifl-text);
+  border-left: 3px solid var(--tsifl-blue);
+}
+.tsifl-msg-assistant {
+  background: var(--tsifl-surface);
+  color: var(--tsifl-text);
+  border: 1px solid var(--tsifl-border);
+}
+.tsifl-msg-action {
+  background: var(--tsifl-green-light);
+  color: var(--tsifl-text);
+  border-left: 3px solid var(--tsifl-green);
+  font-size: 12px;
+}
+
+/* ── Code Blocks ─────────────────────────────────────── */
+.tsifl-code-block {
+  position: relative;
+  background: var(--tsifl-code-bg);
+  color: var(--tsifl-code-text);
+  border-radius: var(--tsifl-radius-sm);
+  padding: 12px 14px;
+  margin: 8px 0;
+  font-family: var(--tsifl-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.tsifl-code-block .copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--tsifl-code-text);
+  border: none;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.tsifl-code-block:hover .copy-btn {
+  opacity: 1;
+}
+.tsifl-code-block .copy-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+code {
+  font-family: var(--tsifl-mono);
+  background: var(--tsifl-code-bg);
+  color: var(--tsifl-code-text);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+/* ── Typing Indicator ────────────────────────────────── */
+.tsifl-typing {
+  display: flex;
+  gap: 4px;
+  padding: 12px 14px;
+}
+.tsifl-typing span {
+  width: 8px;
+  height: 8px;
+  background: var(--tsifl-muted);
+  border-radius: 50%;
+  animation: tsifl-pulse 1.4s infinite ease-in-out;
+}
+.tsifl-typing span:nth-child(2) { animation-delay: 0.2s; }
+.tsifl-typing span:nth-child(3) { animation-delay: 0.4s; }
+
+/* ── Header ──────────────────────────────────────────── */
+.tsifl-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--tsifl-border);
+  background: var(--tsifl-surface);
+}
+.tsifl-header-title {
+  color: var(--tsifl-blue);
+  font-size: 15px;
+  font-weight: 700;
+}
+.tsifl-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── Quick Actions ───────────────────────────────────── */
+.tsifl-quick-actions {
+  display: flex;
+  gap: 4px;
+  padding: 6px 12px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--tsifl-border);
+}
+
+/* ── Animations ──────────────────────────────────────── */
+@keyframes tsifl-fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes tsifl-pulse {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes tsifl-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Timestamp ───────────────────────────────────────── */
+.tsifl-timestamp {
+  font-size: 10px;
+  color: var(--tsifl-muted);
+  margin-top: 4px;
+}
+
+/* ── Scrollbar ───────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--tsifl-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--tsifl-muted);
+}

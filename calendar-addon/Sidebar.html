@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    :root {
+      --blue: #0D5EAF; --blue-hover: #0A4896; --blue-light: #EBF3FB;
+      --bg: #FFFFFF; --surface: #F8FAFC; --border: #E2E8F0;
+      --text: #1E293B; --text-muted: #64748B; --text-dim: #94A3B8;
+      --green: #16A34A; --red: #DC2626;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0F172A; --surface: #1E293B; --border: #334155; --text: #F1F5F9; --text-muted: #94A3B8; --text-dim: #64748B; --blue-light: #1E3A5F; }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 13px; background: var(--bg); color: var(--text); height: 100vh; }
+    #app { display: flex; flex-direction: column; height: 100vh; }
+    #login-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; padding: 20px; gap: 8px; }
+    #login-screen h2 { color: var(--blue); font-size: 18px; }
+    #login-tagline { font-size: 11px; color: var(--text-muted); margin-bottom: 20px; }
+    #login-form { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+    #login-form input { width: 100%; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 13px; outline: none; }
+    #login-form input:focus { border-color: var(--blue); }
+    #login-btn { background: var(--blue); color: white; border: none; border-radius: 8px; padding: 10px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    #signup-btn { background: transparent; color: var(--blue); border: 1px solid var(--border); border-radius: 8px; padding: 9px; font-size: 13px; cursor: pointer; }
+    #auth-error { font-size: 11px; color: var(--red); text-align: center; min-height: 16px; }
+    #chat-screen { display: none; flex-direction: column; height: 100vh; }
+    #header { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--surface); }
+    #header .title { color: var(--blue); font-size: 14px; font-weight: 700; }
+    .hdr-btn { background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; font-size: 10px; font-weight: 600; cursor: pointer; }
+    #user-bar { font-size: 10px; color: var(--text-dim); padding: 3px 14px; background: var(--surface); border-bottom: 1px solid var(--border); }
+    #quick-actions { display: flex; gap: 4px; padding: 6px 12px; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
+    .quick-btn { background: var(--surface); color: var(--text-muted); border: 1px solid var(--border); border-radius: 12px; padding: 3px 10px; font-size: 10px; cursor: pointer; white-space: nowrap; }
+    .quick-btn:hover { background: var(--blue-light); color: var(--blue); }
+    #chat-history { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; background: var(--surface); }
+    .message { padding: 9px 12px; border-radius: 8px; line-height: 1.6; font-size: 13px; animation: fadeInUp 0.3s ease; }
+    .message.user { background: var(--blue-light); border-left: 3px solid var(--blue); }
+    .message.assistant { background: var(--bg); border: 1px solid var(--border); }
+    .message.action { background: rgba(22,163,74,0.08); border-left: 3px solid var(--green); font-size: 11px; color: var(--green); font-family: monospace; }
+    .typing-indicator { display: flex; gap: 4px; padding: 8px 12px; }
+    .typing-indicator span { width: 7px; height: 7px; background: var(--text-dim); border-radius: 50%; animation: pulse 1.4s infinite ease-in-out; }
+    .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+    #input-area { padding: 10px 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+    #user-input { width: 100%; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 13px; font-family: inherit; resize: none; outline: none; }
+    #user-input:focus { border-color: var(--blue); }
+    #submit-btn { background: var(--blue); color: white; border: none; border-radius: 8px; padding: 8px; font-size: 13px; font-weight: 600; cursor: pointer; width: 100%; }
+    #submit-btn:disabled { background: var(--surface); color: var(--text-dim); cursor: not-allowed; }
+    #status-bar { padding: 4px 12px; font-size: 10px; color: var(--text-dim); border-top: 1px solid var(--border); }
+    @keyframes fadeInUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes pulse { 0%,80%,100% { transform: scale(0.6); opacity: 0.4; } 40% { transform: scale(1); opacity: 1; } }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="login-screen">
+      <h2>tsifl Calendar</h2>
+      <div id="login-tagline">AI Calendar Assistant</div>
+      <div id="login-form">
+        <input type="email" id="auth-email" placeholder="Email"/>
+        <input type="password" id="auth-password" placeholder="Password"/>
+        <button id="login-btn">Sign In</button>
+        <button id="signup-btn">Create Account</button>
+        <div id="auth-error"></div>
+      </div>
+    </div>
+    <div id="chat-screen">
+      <div id="header">
+        <span class="title">tsifl Calendar</span>
+        <button class="hdr-btn" onclick="window.open('https://focused-solace-production-6839.up.railway.app/notes-app','_blank')">Notes</button>
+      </div>
+      <div id="user-bar"></div>
+      <div id="quick-actions">
+        <button class="quick-btn" data-prompt="What's on my calendar this week?">This week</button>
+        <button class="quick-btn" data-prompt="Schedule a meeting tomorrow at 2pm">New meeting</button>
+        <button class="quick-btn" data-prompt="What's my next event?">Next event</button>
+      </div>
+      <div id="chat-history"></div>
+      <div id="input-area">
+        <textarea id="user-input" placeholder="Schedule events, check availability..." rows="2"></textarea>
+        <button id="submit-btn">Send</button>
+      </div>
+      <div id="status-bar">Ready</div>
+    </div>
+  </div>
+  <script>
+    var currentUser = null;
+
+    // Try backend session first
+    (function() {
+      try {
+        var xhr = new XMLHttpRequest();
+        xhr.open("GET", "https://focused-solace-production-6839.up.railway.app/auth/get-session", false);
+        xhr.send();
+        if (xhr.status === 200) {
+          var data = JSON.parse(xhr.responseText);
+          if (data.session && data.session.refresh_token) {
+            google.script.run.withSuccessHandler(function(r) {
+              if (r.access_token) showChat({ id: r.user.id, email: r.user.email });
+              else showLogin();
+            }).withFailureHandler(function() { showLogin(); }).refreshToken(data.session.refresh_token);
+            return;
+          }
+        }
+      } catch(e) {}
+      showLogin();
+    })();
+
+    function showLogin() { document.getElementById("login-screen").style.display = "flex"; document.getElementById("chat-screen").style.display = "none"; }
+    function showChat(u) { currentUser = u; document.getElementById("login-screen").style.display = "none"; document.getElementById("chat-screen").style.display = "flex"; document.getElementById("user-bar").textContent = u.email + " \u00b7 Calendar"; }
+
+    document.getElementById("login-btn").onclick = function() {
+      var email = document.getElementById("auth-email").value.trim(), pw = document.getElementById("auth-password").value, err = document.getElementById("auth-error");
+      err.textContent = "";
+      if (!email || !pw) { err.textContent = "Enter email and password."; return; }
+      google.script.run.withSuccessHandler(function(r) {
+        if (r.error) { err.textContent = r.error_description || "Failed"; return; }
+        showChat({ id: r.user.id, email: r.user.email });
+      }).withFailureHandler(function(e) { err.textContent = e.message; }).signIn(email, pw);
+    };
+    document.getElementById("signup-btn").onclick = function() {
+      var email = document.getElementById("auth-email").value.trim(), pw = document.getElementById("auth-password").value, err = document.getElementById("auth-error");
+      err.textContent = "";
+      if (!email || !pw || pw.length < 6) { err.textContent = "6+ character password required."; return; }
+      google.script.run.withSuccessHandler(function(r) {
+        if (r.error) { err.textContent = r.error_description || "Failed"; return; }
+        err.style.color = "#16A34A"; err.textContent = "Check email to confirm.";
+      }).withFailureHandler(function(e) { err.textContent = e.message; }).signUp(email, pw);
+    };
+    document.getElementById("auth-password").addEventListener("keydown", function(e) { if (e.key === "Enter") document.getElementById("login-btn").click(); });
+
+    document.querySelectorAll(".quick-btn").forEach(function(b) {
+      b.onclick = function() { document.getElementById("user-input").value = b.dataset.prompt; handleSubmit(); };
+    });
+
+    document.getElementById("submit-btn").onclick = handleSubmit;
+    document.getElementById("user-input").addEventListener("keydown", function(e) {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
+    });
+
+    function handleSubmit() {
+      var input = document.getElementById("user-input"), msg = input.value.trim();
+      if (!msg) return;
+      input.value = "";
+      document.getElementById("submit-btn").disabled = true;
+      document.getElementById("status-bar").textContent = "Thinking...";
+      appendMsg("user", msg);
+      var h = document.getElementById("chat-history");
+      var t = document.createElement("div"); t.id = "typing"; t.className = "typing-indicator";
+      t.innerHTML = "<span></span><span></span><span></span>"; h.appendChild(t); h.scrollTop = h.scrollHeight;
+
+      google.script.run.withSuccessHandler(function(r) {
+        var el = document.getElementById("typing"); if (el) el.remove();
+        appendMsg("assistant", r.reply);
+        var ar = r.action_results || [];
+        if (ar.length) appendMsg("action", ar.map(function(a) { return a.type + ": " + a.message; }).join("\n"));
+        document.getElementById("submit-btn").disabled = false;
+        document.getElementById("status-bar").textContent = "Ready";
+      }).withFailureHandler(function(e) {
+        var el = document.getElementById("typing"); if (el) el.remove();
+        appendMsg("assistant", "Error: " + e.message);
+        document.getElementById("submit-btn").disabled = false;
+      }).sendChat(currentUser.id, msg);
+    }
+
+    function appendMsg(role, text) {
+      var h = document.getElementById("chat-history"), d = document.createElement("div");
+      d.className = "message " + role; d.textContent = text || "";
+      h.appendChild(d); h.scrollTop = h.scrollHeight;
+    }
+  </script>
+</body>
+</html>

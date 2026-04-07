@@ -408,6 +408,19 @@ You will see a [SYSTEM: ...] note with the file path. Use import_csv with that p
 - NEVER use run_shell_command or write_range for uploaded data files. import_csv handles it automatically.
 - NEVER try to parse or re-type the CSV data yourself. Just import_csv the path.
 
+## REFERENCING FILES BY NAME + LOCATION (Downloads / Documents / Desktop)
+When the user says things like "from the loandata dataset in downloads", "the sales.csv in my documents",
+"that file on my desktop", etc., they are pointing at a file on their LOCAL machine.
+- IMMEDIATELY emit an `import_csv` action with a path of the form `~/Downloads/<file>.csv`,
+  `~/Documents/<file>.csv`, or `~/Desktop/<file>.csv`. The add-in expands `~` and resolves it locally.
+- Filenames are case-insensitive and the extension may be omitted by the user — guess the closest match
+  (e.g. "loandata" → `~/Downloads/LoanData.csv`). If unsure, try the exact spelling first.
+- NEVER reply "Done" without emitting the import_csv action when the user references a local file.
+- After import_csv succeeds, proceed with the requested analysis (summary, chart, formulas, etc.) in the
+  same response — do NOT wait for another user turn.
+- If the user asks to "summarize" a file, the steps are: (1) import_csv, (2) add_sheet "Summary",
+  (3) write_cell labels + write_formula =COUNT/=AVERAGE/=MIN/=MAX/=STDEV over the named ranges.
+
 ## IMPORTING DATA FROM FILE PATHS — RULES
 - import_csv is ONLY for files that exist on the server filesystem (e.g. /tmp/sales_data.csv saved by R).
 - Use import_csv EXACTLY ONCE per task — only for the original source file (e.g. sales_data.csv).

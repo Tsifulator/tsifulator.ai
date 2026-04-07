@@ -49,6 +49,22 @@ def _find_file(path: str) -> str | None:
             if os.path.isfile(candidate):
                 return candidate
 
+    # 4. Fuzzy match: case-insensitive, ignore extension, allow stem-prefix match.
+    #    e.g. "loandata" or "loandata.csv" → "LoanData.csv"
+    target_stem = os.path.splitext(basename)[0].lower().replace(" ", "").replace("_", "")
+    for d in SEARCH_DIRS:
+        try:
+            for entry in os.listdir(d):
+                if not entry.lower().endswith((".csv", ".tsv", ".txt")):
+                    continue
+                entry_stem = os.path.splitext(entry)[0].lower().replace(" ", "").replace("_", "")
+                if entry_stem == target_stem or entry_stem.startswith(target_stem):
+                    full = os.path.join(d, entry)
+                    if os.path.isfile(full):
+                        return full
+        except (FileNotFoundError, PermissionError):
+            continue
+
     return None
 
 @router.post("/read-csv")
