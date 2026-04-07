@@ -35,6 +35,42 @@ Office.onReady(async () => {
   CURRENT_USER = await getCurrentUser();
   if (CURRENT_USER) showChatScreen(CURRENT_USER);
   else               showLoginScreen();
+
+  // ── Auto-poll for R→Excel plot transfers every 4s ──────────────────────────
+  // The R add-in pushes plots into /transfer/store; without polling they sit unread
+  // until the user manually triggers an import_image action. This makes it feel
+  // like a real push: drop a plot into the active sheet as soon as it arrives.
+  const seenTransferIds = new Set();
+  setInterval(async () => {
+    if (!CURRENT_USER) return;
+    try {
+      const resp = await fetch(`${BACKEND_URL}/transfer/pending/excel`);
+      if (!resp.ok) return;
+      const { pending = [] } = await resp.json();
+      const images = pending.filter(p => p.data_type === "image" && !seenTransferIds.has(p.transfer_id));
+      for (const item of images) {
+        seenTransferIds.add(item.transfer_id);
+        try {
+          const tResp = await fetch(`${BACKEND_URL}/transfer/${item.transfer_id}`);
+          if (!tResp.ok) continue;
+          const transfer = await tResp.json();
+          const cleanBase64 = String(transfer.data || "").replace(/^data:image\/[a-z+]+;base64,/, "");
+          if (!cleanBase64.startsWith("iVBOR") && !cleanBase64.startsWith("/9j/")) continue;
+          await Excel.run(async (ctx) => {
+            const sheet = ctx.workbook.worksheets.getActiveWorksheet();
+            const image = sheet.shapes.addImage(cleanBase64);
+            image.name  = "R_Plot_" + Date.now();
+            image.left  = 10;
+            image.top   = 200;
+            await ctx.sync();
+          });
+          appendMessage("assistant", "📈 R plot received and inserted into the active sheet.");
+        } catch (e) {
+          console.warn("[tsifl] auto plot import failed:", e);
+        }
+      }
+    } catch (_) { /* polling is best-effort */ }
+  }, 4000);
 });
 
 // ── Preferences (localStorage) ────────────────────────────────────────────────
