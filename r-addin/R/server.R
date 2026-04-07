@@ -397,15 +397,29 @@ run_tsifl_server <- function(port = 7444) {
         });
       });
 
-      // Paste from clipboard
-      document.querySelector('#user_input').addEventListener('paste', function(e) {
+      // Paste from clipboard — bind at DOCUMENT level so it survives textarea
+      // recreation on every send. Only acts when focus is in the tsifl input area.
+      document.addEventListener('paste', function(e) {
+        var ta = document.getElementById('user_input');
+        if (!ta) return;
+        var ae = document.activeElement;
+        // Accept paste if focus is the input, its parent area, or anywhere in body
+        // (user may have clicked in message bubble then pasted).
         var items = Array.from(e.clipboardData ? e.clipboardData.items : []);
+        var handled = false;
         items.forEach(function(item) {
-          if (item.type.startsWith('image/') || item.kind === 'file') {
+          if (item.type && item.type.startsWith('image/')) {
             var f = item.getAsFile();
-            if (f) readFileAsBase64(f);
+            if (f) { readFileAsBase64(f); handled = true; }
+          } else if (item.kind === 'file') {
+            var f = item.getAsFile();
+            if (f) { readFileAsBase64(f); handled = true; }
           }
         });
+        if (handled) {
+          console.log('[tsifl] Image pasted, total pending:', pendingImages.length);
+          try { ta.focus(); } catch(e) {}
+        }
       });
 
       // Read any file → base64
@@ -527,16 +541,7 @@ run_tsifl_server <- function(port = 7444) {
         ta.remove();
         newTa.id = 'user_input';
 
-        // Re-attach paste handler on new element
-        newTa.addEventListener('paste', function(e) {
-          var items = Array.from(e.clipboardData ? e.clipboardData.items : []);
-          items.forEach(function(item) {
-            if (item.type.startsWith('image/') || item.kind === 'file') {
-              var f = item.getAsFile();
-              if (f) readFileAsBase64(f);
-            }
-          });
-        });
+        // Paste handler is document-level now — no need to rebind.
 
         // Re-attach Enter key handler
         newTa.addEventListener('keydown', function(e) {
