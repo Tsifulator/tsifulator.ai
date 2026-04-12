@@ -1981,15 +1981,18 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
     tool_choice = {"type": "any"} if force_tools else {"type": "auto"}
 
     try:
-        response = client.messages.create(
+        # Use streaming to collect the full response (SDK requires streaming for large max_tokens)
+        collected_response = None
+        with client.messages.stream(
             model       = selected_model,
-            max_tokens  = 4096,
+            max_tokens  = 16384,
             system      = system_prompt,
             tools       = [] if skip_tools else TOOLS,
             tool_choice = tool_choice,
             messages    = messages,
-            timeout     = 600.0,  # 10 min — prevents SDK streaming requirement
-        )
+        ) as stream:
+            collected_response = stream.get_final_message()
+        response = collected_response
     except anthropic.BadRequestError as e:
         if "content filtering" in str(e).lower() or "blocked" in str(e).lower():
             return {
@@ -2412,15 +2415,15 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
                 yield text
     else:
         # For tool-use responses, fall back to non-streaming
-        response = client.messages.create(
+        with client.messages.stream(
             model       = selected_model,
-            max_tokens  = 4096,
+            max_tokens  = 16384,
             system      = system_prompt,
             tools       = TOOLS,
             tool_choice = {"type": "auto"},
             messages    = messages,
-            timeout     = 600.0,
-        )
+        ) as fallback_stream:
+            response = fallback_stream.get_final_message()
         result = _parse_tool_response(response)
         yield result.get("reply", "Done.")
 
