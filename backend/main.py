@@ -101,7 +101,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     _last_error_time = datetime.utcnow().isoformat()
     return JSONResponse(
         status_code=500,
-        content={"error": "Internal server error", "detail": f"{type(exc).__name__}: {exc}", "traceback": __import__('traceback').format_exc()}
+        content={"error": "Internal server error", "detail": str(exc) if os.getenv("ENV") == "development" else ""}
     )
 
 # Startup: auto-create Supabase tables if missing (Improvement 1)

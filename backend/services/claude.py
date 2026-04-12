@@ -15,7 +15,10 @@ logger = logging.getLogger(__name__)
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env", override=True)
 
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+client = anthropic.Anthropic(
+    api_key=os.getenv("ANTHROPIC_API_KEY"),
+    timeout=600.0,  # 10 min timeout — prevents SDK from requiring streaming
+)
 
 # ── Hybrid Model Router ──────────────────────────────────────────────────────
 # Routes queries to the optimal model tier based on complexity.
