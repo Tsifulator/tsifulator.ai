@@ -1986,6 +1986,7 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
             tools       = [] if skip_tools else TOOLS,
             tool_choice = tool_choice,
             messages    = messages,
+            timeout     = 600.0,  # 10 min — prevents SDK streaming requirement
         )
     except anthropic.BadRequestError as e:
         if "content filtering" in str(e).lower() or "blocked" in str(e).lower():
@@ -2416,6 +2417,7 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
             tools       = TOOLS,
             tool_choice = {"type": "auto"},
             messages    = messages,
+            timeout     = 600.0,
         )
         result = _parse_tool_response(response)
         yield result.get("reply", "Done.")
