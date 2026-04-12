@@ -258,3 +258,8 @@ async def launch_app(request: LaunchAppRequest):
             return {"status": "error", "message": str(e)}
     else:
         return {"status": "info", "message": f"Launch requested for {app_name} — run locally to use this feature"}
+
+@app.get("/debug/versions")
+def debug_versions():
+    import anthropic
+    return {"anthropic": anthropic.__version__}
