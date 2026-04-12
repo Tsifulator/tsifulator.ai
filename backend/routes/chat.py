@@ -223,6 +223,27 @@ def _postprocess_excel_actions(result: dict, context: dict) -> dict:
             injected.append({"type": "format_range", "payload": {"range": "B4:I4", "bold": True, "sheet": name}})
             print(f"[postprocess] FORCE-injected Calorie Journal formatting on {name}")
 
+        # FORCE: if sheet is named "Dental Insurance", fix F column direction
+        # SIMnet requires Variance = MaxBenefit - Billed = D - E, NOT E - D
+        if "dental" in name.lower() and "insurance" in name.lower():
+            import re as _re2
+            fixed_f = 0
+            for i, a in enumerate(actions):
+                p = a.get("payload", {})
+                if p.get("sheet", "") != name:
+                    continue
+                cell = p.get("cell", "").upper()
+                formula = p.get("formula", "")
+                # Fix F column: =En-Dn → =Dn-En
+                if cell and cell.startswith("F") and formula:
+                    m = _re2.match(r"=E(\d+)\s*-\s*D(\d+)", formula)
+                    if m and m.group(1) == m.group(2):
+                        row = m.group(1)
+                        actions[i]["payload"]["formula"] = f"=D{row}-E{row}"
+                        fixed_f += 1
+            if fixed_f:
+                print(f"[postprocess] Fixed {fixed_f} Dental Insurance F column formulas: =E-D → =D-E")
+
         # Detect one-variable data table pattern:
         # Look for a column of sequential values (500,600,700...) with an empty cell above+right
         _detect_and_inject_data_tables(name, preview, formulas, targeted_cells, injected)

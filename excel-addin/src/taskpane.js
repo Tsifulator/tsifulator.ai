@@ -750,7 +750,7 @@ async function handleSubmit() {
       const cuSessionId = data.cu_session_id;
       let cuDone = false;
       let cuPolls = 0;
-      const maxPolls = 120; // 2 minutes max (1s intervals)
+      const maxPolls = 300; // 5 minutes max (1s intervals) — Data Table + Solver GUI needs time
       while (!cuDone && cuPolls < maxPolls) {
         cuPolls++;
         await new Promise(r => setTimeout(r, 1000)); // wait 1 second
