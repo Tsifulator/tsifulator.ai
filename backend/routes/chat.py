@@ -18,7 +18,16 @@ from pydantic import BaseModel
 from services.claude import get_claude_response, get_claude_stream
 from services.usage import check_and_increment_usage
 from services.memory import save_message, get_recent_history, is_connected
-from services.computer_use import split_actions, create_session
+try:
+    from services.computer_use import split_actions, create_session
+except Exception as _cu_import_err:
+    import logging as _log
+    _log.getLogger(__name__).warning(f"computer_use import failed: {_cu_import_err}")
+    # Provide fallback stubs so chat still works without computer use
+    def split_actions(actions):
+        return actions, []  # All actions go to add-in, none to computer use
+    def create_session(actions, context):
+        return None
 
 # File extensions that should be saved to /tmp/ for import_csv
 _SAVEABLE_EXTENSIONS = {".csv", ".tsv", ".txt", ".json", ".xml"}
