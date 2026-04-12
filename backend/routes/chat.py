@@ -700,6 +700,56 @@ async def chat(request: ChatRequest):
     if app == "excel":
         result = _postprocess_excel_actions(result, request.context)
 
+    # 5.6. Server-side plot generation: convert create_plot → import_image
+    #       Generates charts with matplotlib on the server (no R needed),
+    #       stores the image via the transfer system, and replaces the action
+    #       so the add-in just fetches & inserts the PNG.
+    all_result_actions = result.get("actions", [])
+    for i, action in enumerate(all_result_actions):
+        if action.get("type") == "create_plot":
+            try:
+                from services.plot_service import create_plot
+                p = action.get("payload", {})
+                plot_result = create_plot(
+                    plot_type=p.get("plot_type", "bar"),
+                    data=p.get("data", {}),
+                    title=p.get("title", ""),
+                    x_label=p.get("x_label", ""),
+                    y_label=p.get("y_label", ""),
+                    width=p.get("width", 8),
+                    height=p.get("height", 5),
+                    style=p.get("style", "default"),
+                    options=p.get("options", {}),
+                )
+                if plot_result.get("success") and plot_result.get("image_base64"):
+                    # Store in transfer system
+                    import uuid as _uuid
+                    import time as _time
+                    from routes.transfer import _transfer_store, _save_store
+                    transfer_id = str(_uuid.uuid4())[:8]
+                    _transfer_store[transfer_id] = {
+                        "from_app": "server_plot",
+                        "to_app": "excel",
+                        "data_type": "image",
+                        "data": plot_result["image_base64"],
+                        "metadata": {"title": p.get("title", "Chart"), "mime_type": "image/png"},
+                        "created_at": _time.time(),
+                    }
+                    _save_store()
+                    # Replace create_plot action with import_image
+                    all_result_actions[i] = {
+                        "type": "import_image",
+                        "payload": {
+                            "transfer_id": transfer_id,
+                            "image_data": None,  # add-in will fetch via transfer_id
+                        }
+                    }
+                    logger.info(f"[plot] Generated {p.get('plot_type','chart')} chart → transfer {transfer_id}")
+                else:
+                    logger.error(f"[plot] Chart generation failed: {plot_result.get('error', 'unknown')}")
+            except Exception as plot_err:
+                logger.error(f"[plot] Error generating chart: {plot_err}")
+
     # 6. Save Claude's reply to history and persistent memory (skip for follow-ups)
     if not is_followup:
         _add_to_history(request.session_id, "assistant", result["reply"])
