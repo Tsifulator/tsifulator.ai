@@ -508,13 +508,29 @@ if __name__ == "__main__":
             run_applescript_standalone(sys.argv[2])
         elif first_arg == "--test-menu":
             # Quick test: python3 agent.py --test-menu
-            from excel_applescript import activate_excel, click_menu
+            from excel_applescript import activate_excel, open_data_table_dialog
             print("[test] Activating Excel...")
             activate_excel()
             time.sleep(1)
-            print("[test] Trying Data > What-If Analysis > Data Table...")
-            result = click_menu(["Data", "What-If Analysis", "Data Table..."])
-            print(f"[test] Result: {result}")
+            print("[test] Opening Data Table dialog via menu bar...")
+            open_data_table_dialog()
+            print("[test] Done — check if the Data Table dialog opened in Excel")
+        elif first_arg == "--test-all":
+            # Test all operations: python3 agent.py --test-all
+            from excel_applescript import activate_excel, search_menu
+            print("[test] Testing Help menu search...")
+            activate_excel()
+            time.sleep(0.5)
+            for term in ["Goal Seek", "Scenario Manager", "Solver", "Data Analysis"]:
+                print(f"[test] Searching for: {term}")
+                search_menu(term)
+                time.sleep(1)
+                import pyautogui
+                pyautogui.press('escape')
+                time.sleep(0.5)
+                pyautogui.press('escape')
+                time.sleep(0.5)
+            print("[test] All menu searches completed")
         else:
             # Computer Use mode: python3 agent.py "Create a data table"
             task = " ".join(sys.argv[1:])

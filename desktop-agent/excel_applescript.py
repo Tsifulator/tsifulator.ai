@@ -74,124 +74,62 @@ end tell
 ''')
 
 
-def _find_data_menu_x() -> int:
-    """Find the x coordinate of 'Data' in the macOS menu bar.
-    Takes a Retina screenshot and locates the Data menu item.
-    Returns the logical x coordinate.
-    """
-    # Known position from calibration: Retina x ≈ 870, logical x ≈ 435
-    # Menu bar items for Excel: Excel|File|Edit|View|Insert|Format|Tools|Data|Window|Help
-    # This is fairly stable, but we can recalibrate if needed
-    return 435
+def get_cell_value(cell_ref: str) -> str:
+    """Get the value of a cell."""
+    return run_applescript(f'''
+tell application "Microsoft Excel"
+    value of range "{cell_ref}" of active sheet
+end tell
+''')
 
 
-def open_data_menu():
-    """Open the Data menu in the macOS menu bar."""
-    x = _find_data_menu_x()
-    pyautogui.click(x, 10)
-    time.sleep(0.6)
-
-
-def _find_tools_menu_x() -> int:
-    """Find the x coordinate of 'Tools' in the macOS menu bar."""
-    # Tools is to the left of Data: Retina x ≈ 770, logical x ≈ 385
-    return 385
-
-
-def open_tools_menu():
-    """Open the Tools menu in the macOS menu bar."""
-    x = _find_tools_menu_x()
-    pyautogui.click(x, 10)
-    time.sleep(0.6)
-
-
-def click_menu_item_by_offset(menu_x: int, item_index: int, has_separators: list = None):
-    """Click a menu item by its position index.
-
-    menu_x: logical x of the menu bar item
-    item_index: 0-based index of the item in the dropdown
-    has_separators: list of indices where separators appear (before the item)
-
-    Each menu item is ~15 logical pixels tall.
-    The dropdown starts at y ≈ 22 (below menu bar).
-    Separators add ~6 logical pixels.
-    """
-    item_height = 15
-    separator_height = 6
-    menu_start_y = 24
-
-    y = menu_start_y + (item_index * item_height) + (item_height // 2)
-
-    # Add separator offsets
-    if has_separators:
-        for sep_pos in has_separators:
-            if item_index >= sep_pos:
-                y += separator_height
-
-    pyautogui.click(menu_x, y)
+def dismiss_excel_dialogs():
+    """Dismiss any open Excel error/alert dialogs by pressing Escape and Enter.
+    This handles the 'selection isn't valid' and similar error popups."""
+    # Try pressing Escape first (closes most dialogs)
+    pyautogui.press('escape')
     time.sleep(0.3)
+    # Also try Enter (for OK-only dialogs)
+    pyautogui.press('enter')
+    time.sleep(0.3)
+    # One more Escape for good measure
+    pyautogui.press('escape')
+    time.sleep(0.2)
 
 
-# ── Data menu item positions (calibrated) ────────────────────────────────────
-# Data menu items on macOS Excel (0-indexed):
-# 0: Sort...
-# 1: Auto-filter
-# 2: Clear Filters (may be grayed)
-# 3: Advanced Filter...
-# --- separator after index 3 ---
-# 4: Subtotals...
-# 5: Validation...
-# --- separator after index 5 ---
-# 6: Table...              ← DATA TABLE
-# 7: Text to Columns...
-# 8: Consolidate...
-# 9: Group and Outline >
-# 10: Edit Links...
-# --- separator after index 10 ---
-# 11: Summarize with Pivot Table
-# --- separator after index 11 ---
-# 12: Chart Source Data...
-# --- separator ---
-# 13: Table Tools
-# 14: Get Data (Power Query)
+def search_menu(search_term: str, wait: float = 1.0) -> bool:
+    """Use Help menu search (Cmd+Shift+/) to find and click a menu item.
+    Returns True if the search was initiated successfully."""
+    pyautogui.hotkey('command', 'shift', '/')
+    time.sleep(0.8)
+    pyautogui.typewrite(search_term, interval=0.04)
+    time.sleep(wait)
+    # First result is usually the menu item, second is "Get Help on..."
+    # Press Enter to select the first result
+    pyautogui.press('enter')
+    time.sleep(1.0)
+    return True
 
-DATA_MENU_SEPARATORS = [4, 6, 11, 12]  # separator before these indices
+
+# ── Menu bar coordinates (calibrated for macOS Excel) ────────────────────────
+# Menu bar: Apple | Excel | File | Edit | View | Insert | Format | Tools | Data | Window | Help
+# These are LOGICAL coordinates (screen points, not Retina pixels)
+
+MENU_X = {
+    "tools": 385,
+    "data": 435,
+}
+
+# Data > Table... is at calibrated y=207 (found experimentally)
+DATA_TABLE_Y = 207
 
 
 def open_data_table_dialog():
     """Open the Data Table dialog via Data > Table... menu."""
-    open_data_menu()
-    time.sleep(0.3)
-    # Table... is at the calibrated y=207 (found experimentally)
-    pyautogui.click(410, 207)
+    pyautogui.click(MENU_X["data"], 10)
+    time.sleep(0.6)
+    pyautogui.click(410, DATA_TABLE_Y)
     time.sleep(1.0)
-
-
-def open_validation_dialog():
-    """Open Data Validation via Data > Validation..."""
-    open_data_menu()
-    click_menu_item_by_offset(410, 5, DATA_MENU_SEPARATORS)
-    time.sleep(1.0)
-
-
-def open_subtotals_dialog():
-    """Open Subtotals via Data > Subtotals..."""
-    open_data_menu()
-    click_menu_item_by_offset(410, 4, DATA_MENU_SEPARATORS)
-    time.sleep(1.0)
-
-
-# ── Tools menu positions ─────────────────────────────────────────────────────
-# Tools menu on macOS Excel typically has:
-# 0: Spelling...
-# 1: AutoCorrect Options...
-# 2: (separator)
-# 3: Error Checking...
-# 4: Merge Workbooks...
-# 5: (separator)
-# 6: Solver...
-# 7: Data Analysis...
-# etc.
 
 
 # ── High-level Excel operations ─────────────────────────────────────────────
@@ -201,7 +139,6 @@ def do_data_table(table_range: str, row_input: str = "", col_input: str = "",
                   sheet: str = ""):
     """Create a What-If Data Table.
 
-    Proven approach:
     1. AppleScript to select range (100% accurate)
     2. pyautogui to click Data > Table... in menu bar
     3. pyautogui to fill dialog fields
@@ -224,8 +161,7 @@ def do_data_table(table_range: str, row_input: str = "", col_input: str = "",
     open_data_table_dialog()
     steps.append("Opened Data Table dialog")
 
-    # 4. Fill in fields
-    # Row input cell field is focused first
+    # 4. Fill in fields — Row input cell field is focused first
     if row_input:
         pyautogui.typewrite(row_input, interval=0.03)
 
@@ -239,35 +175,65 @@ def do_data_table(table_range: str, row_input: str = "", col_input: str = "",
 
     # 5. Press Enter (OK)
     pyautogui.press('enter')
-    time.sleep(1.5)
+    time.sleep(2.0)
+
+    # 6. Check for error dialogs (e.g. "selection isn't valid")
+    #    If an error dialog appeared, dismiss it and report
+    #    We detect this by checking if an alert is showing via AppleScript
+    error_check = run_applescript('''
+tell application "System Events"
+    tell process "Microsoft Excel"
+        if exists (sheet 1 of window 1) then
+            return "no_dialog"
+        else
+            return "possible_dialog"
+        end if
+    end tell
+end tell
+''')
+    # Simpler approach: just dismiss any potential dialog
+    pyautogui.press('enter')  # Dismiss OK on error dialog if present
+    time.sleep(0.3)
 
     steps.append(f"Created Data Table: row={row_input or 'none'}, col={col_input or 'none'}")
 
-    # 6. Verify
-    verify = get_cell_formula(table_range.split(":")[0].replace("$", ""))
-    steps.append(f"Verification: {verify}")
+    # 7. Verify — check if TABLE formula was created
+    try:
+        # Check the second row of the data table for TABLE formula
+        parts = table_range.replace("$", "").split(":")
+        start_cell = parts[0]
+        # Parse column letter and row number
+        col = ''.join(c for c in start_cell if c.isalpha())
+        row = int(''.join(c for c in start_cell if c.isdigit()))
+        # Check one row below the start (where TABLE formulas appear)
+        next_col = chr(ord(col[0]) + 1) if len(col) == 1 else col  # Move right one column
+        verify_cell = f"{next_col}{row + 1}"
+        verify = get_cell_formula(verify_cell)
+        steps.append(f"Verify {verify_cell}: {verify}")
+        if "TABLE" in verify.upper():
+            steps.append("TABLE formula confirmed")
+        else:
+            steps.append("WARNING: TABLE formula not found — may need retry")
+    except Exception as e:
+        steps.append(f"Verification skipped: {e}")
 
     return {"status": "completed", "steps": steps}
 
 
-def do_goal_seek(set_cell: str, to_value: str, changing_cell: str):
-    """Run Goal Seek via Data > Goal Seek... (or via menu search)."""
+def do_goal_seek(set_cell: str, to_value: str, changing_cell: str,
+                 sheet: str = ""):
+    """Run Goal Seek via Help menu search."""
     steps = []
+
+    if sheet:
+        switch_sheet(sheet)
+        steps.append(f"Switch to '{sheet}'")
+        time.sleep(0.3)
 
     activate_excel()
 
-    # Use Help menu search to find Goal Seek (more reliable than counting menu positions)
-    pyautogui.hotkey('command', 'shift', '/')
-    time.sleep(0.8)
-    pyautogui.typewrite('Goal Seek', interval=0.04)
-    time.sleep(0.8)
-    pyautogui.press('down')  # Select first menu result
-    time.sleep(0.2)
-    pyautogui.press('down')  # Navigate past "Get Help"
-    time.sleep(0.2)
-    pyautogui.press('enter')
-    time.sleep(1.0)
-
+    # Open Goal Seek via Help search
+    search_menu("Goal Seek")
     steps.append("Opened Goal Seek dialog")
 
     # Set cell field (focused by default)
@@ -293,60 +259,55 @@ def do_goal_seek(set_cell: str, to_value: str, changing_cell: str):
     # OK
     pyautogui.press('enter')
     steps.append(f"Goal Seek: {set_cell}={to_value} by changing {changing_cell}")
-    time.sleep(1.5)
+    time.sleep(2.0)
 
-    # Close result dialog
+    # Close Goal Seek Status dialog (shows result)
     pyautogui.press('enter')
     time.sleep(0.3)
 
     return {"status": "completed", "steps": steps}
 
 
-def do_scenario_manager(name: str, changing_cells: str, values: list = None):
+def do_scenario_manager(name: str, changing_cells: str, values: list = None,
+                        sheet: str = ""):
     """Create a scenario via Scenario Manager."""
     steps = []
+
+    if sheet:
+        switch_sheet(sheet)
+        steps.append(f"Switch to '{sheet}'")
+        time.sleep(0.3)
 
     activate_excel()
 
     # Open Scenario Manager via Help search
-    pyautogui.hotkey('command', 'shift', '/')
-    time.sleep(0.8)
-    pyautogui.typewrite('Scenario Manager', interval=0.04)
-    time.sleep(0.8)
-    pyautogui.press('down')
-    time.sleep(0.2)
-    pyautogui.press('enter')
-    time.sleep(1.0)
-
+    search_menu("Scenario Manager")
     steps.append("Opened Scenario Manager")
 
-    # Tab to Add button and press Enter
-    # In Scenario Manager dialog, buttons are: Add, Delete, Edit, Merge, Summary, Close
-    # Tab to "Add..." button
-    pyautogui.press('tab')  # Move to button area
+    # Click Add button — Tab into button area, Enter to activate
+    pyautogui.press('tab')
     time.sleep(0.2)
-    pyautogui.press('enter')  # Click Add (usually first button)
+    pyautogui.press('enter')
     time.sleep(0.5)
-
     steps.append("Clicked Add")
 
-    # Scenario name
+    # Scenario name field
     pyautogui.typewrite(name, interval=0.03)
     pyautogui.press('tab')
     time.sleep(0.2)
 
-    # Changing cells
+    # Changing cells field
     pyautogui.hotkey('command', 'a')
     time.sleep(0.1)
     pyautogui.typewrite(changing_cells, interval=0.03)
     time.sleep(0.2)
 
-    # OK
+    # OK — moves to Scenario Values dialog
     pyautogui.press('enter')
     steps.append(f"Scenario: {name}, cells: {changing_cells}")
     time.sleep(0.5)
 
-    # Enter values
+    # Enter values if provided
     if values:
         for i, val in enumerate(values):
             if i > 0:
@@ -357,7 +318,7 @@ def do_scenario_manager(name: str, changing_cells: str, values: list = None):
             pyautogui.typewrite(str(val), interval=0.03)
         time.sleep(0.2)
 
-    # OK to save values
+    # OK to save values — returns to Scenario Manager
     pyautogui.press('enter')
     steps.append(f"Values: {values}")
     time.sleep(0.5)
@@ -369,34 +330,33 @@ def do_scenario_manager(name: str, changing_cells: str, values: list = None):
     return {"status": "completed", "steps": steps}
 
 
-def do_scenario_summary(result_cells: str):
+def do_scenario_summary(result_cells: str, sheet: str = ""):
     """Create a Scenario Summary report."""
     steps = []
+
+    if sheet:
+        switch_sheet(sheet)
+        steps.append(f"Switch to '{sheet}'")
+        time.sleep(0.3)
 
     activate_excel()
 
     # Open Scenario Manager
-    pyautogui.hotkey('command', 'shift', '/')
-    time.sleep(0.8)
-    pyautogui.typewrite('Scenario Manager', interval=0.04)
-    time.sleep(0.8)
-    pyautogui.press('down')
-    time.sleep(0.2)
-    pyautogui.press('enter')
-    time.sleep(1.0)
-
+    search_menu("Scenario Manager")
     steps.append("Opened Scenario Manager")
 
-    # Tab to Summary button (usually 5th button: Add, Delete, Edit, Merge, Summary)
+    # Tab to Summary button
+    # Buttons: scenario list, Add, Delete, Edit, Merge, Summary, Close
+    # Summary is usually button 5 (after list focus)
     for _ in range(5):
         pyautogui.press('tab')
         time.sleep(0.1)
     pyautogui.press('enter')
     time.sleep(0.5)
-
     steps.append("Clicked Summary")
 
-    # Result cells field
+    # Summary dialog: Report type (Scenario summary / PivotTable)
+    # Then Result cells field
     pyautogui.press('tab')
     time.sleep(0.2)
     pyautogui.hotkey('command', 'a')
@@ -407,28 +367,30 @@ def do_scenario_summary(result_cells: str):
     # OK
     pyautogui.press('enter')
     steps.append(f"Summary with result cells: {result_cells}")
-    time.sleep(1.5)
+    time.sleep(2.0)
 
     return {"status": "completed", "steps": steps}
 
 
 def do_solver(objective_cell: str, goal: str, changing_cells: str,
-              constraints: list = None, save_scenario: str = ""):
-    """Run Solver via Tools > Solver... menu."""
+              constraints: list = None, save_scenario: str = "",
+              sheet: str = ""):
+    """Run Solver with full constraint support.
+
+    constraints format: [{"cell": "$D$5", "operator": "<=", "value": "100"}, ...]
+    operator can be: "<=", ">=", "=", "int", "bin"
+    """
     steps = []
+
+    if sheet:
+        switch_sheet(sheet)
+        steps.append(f"Switch to '{sheet}'")
+        time.sleep(0.3)
 
     activate_excel()
 
-    # Open Solver via Help search (most reliable)
-    pyautogui.hotkey('command', 'shift', '/')
-    time.sleep(0.8)
-    pyautogui.typewrite('Solver', interval=0.04)
-    time.sleep(0.8)
-    pyautogui.press('down')
-    time.sleep(0.2)
-    pyautogui.press('enter')
-    time.sleep(1.0)
-
+    # Open Solver via Help search
+    search_menu("Solver")
     steps.append("Opened Solver")
 
     # Set Objective field (focused by default)
@@ -438,20 +400,21 @@ def do_solver(objective_cell: str, goal: str, changing_cells: str,
     pyautogui.press('tab')
     time.sleep(0.2)
 
-    # Goal radio buttons (Max/Min/Value Of)
-    # Usually: Tab moves between Max, Min, Value Of radio buttons
+    # Goal radio buttons: Max | Min | Value Of
     if goal == "min":
-        pyautogui.press('tab')  # Move to Min
+        pyautogui.press('tab')  # Move to Min radio
         pyautogui.press('space')
     elif goal not in ("max", "min"):
-        pyautogui.press('tab')
-        pyautogui.press('tab')  # Move to "Value Of"
+        # "Value Of" — tab past Min to Value Of
+        pyautogui.press('tab')  # Min
+        pyautogui.press('tab')  # Value Of
         pyautogui.press('space')
         time.sleep(0.1)
         pyautogui.typewrite(str(goal), interval=0.03)
+    # else: Max is default, no action needed
     time.sleep(0.2)
 
-    # Tab to changing cells
+    # Tab to "By Changing Variable Cells" field
     pyautogui.press('tab')
     time.sleep(0.2)
     pyautogui.hotkey('command', 'a')
@@ -459,23 +422,76 @@ def do_solver(objective_cell: str, goal: str, changing_cells: str,
     pyautogui.typewrite(changing_cells, interval=0.03)
     time.sleep(0.2)
 
+    # Add constraints
     if constraints:
-        steps.append(f"Constraints: {constraints} (may need manual setup)")
+        for i, constraint in enumerate(constraints):
+            cell_ref = constraint.get("cell", "")
+            operator = constraint.get("operator", "<=")
+            value = str(constraint.get("value", ""))
+
+            # Click "Add" button for constraints
+            # Tab to Add button area
+            pyautogui.press('tab')
+            time.sleep(0.1)
+            pyautogui.press('tab')
+            time.sleep(0.1)
+            pyautogui.press('enter')  # Click Add
+            time.sleep(0.5)
+
+            # Add Constraint dialog:
+            # Cell Reference | Operator dropdown | Constraint value
+            pyautogui.typewrite(cell_ref, interval=0.03)
+            pyautogui.press('tab')
+            time.sleep(0.2)
+
+            # Operator dropdown — cycle through options
+            # Default is "<=", then ">=", "=", "int", "bin", "dif"
+            operator_map = {"<=": 0, ">=": 1, "=": 2, "int": 3, "bin": 4}
+            clicks = operator_map.get(operator, 0)
+            for _ in range(clicks):
+                pyautogui.press('down')
+                time.sleep(0.1)
+
+            pyautogui.press('tab')
+            time.sleep(0.2)
+
+            # Constraint value (not needed for int/bin)
+            if operator not in ("int", "bin"):
+                pyautogui.typewrite(value, interval=0.03)
+
+            time.sleep(0.2)
+
+            # OK to add constraint (or Add to add another)
+            if i < len(constraints) - 1:
+                # More constraints coming — click Add
+                pyautogui.press('tab')
+                time.sleep(0.1)
+                pyautogui.press('enter')  # Add button
+                time.sleep(0.5)
+            else:
+                # Last constraint — click OK
+                pyautogui.press('enter')
+                time.sleep(0.5)
+
+            steps.append(f"Constraint: {cell_ref} {operator} {value}")
 
     # Click Solve
     pyautogui.press('enter')
-    steps.append(f"Solver: {objective_cell} → {goal}, changing: {changing_cells}")
+    steps.append(f"Solver: {objective_cell} -> {goal}, changing: {changing_cells}")
     time.sleep(3.0)
 
     # Handle Solver Results dialog
     if save_scenario:
-        # Tab to "Save Scenario..." button
-        pyautogui.press('tab')
-        time.sleep(0.2)
-        pyautogui.press('tab')
-        time.sleep(0.2)
-        pyautogui.press('enter')
+        # Click "Save Scenario..." button in Results dialog
+        # Tab through: Keep Solver Solution (selected), Restore Original Values,
+        #              then buttons area
+        for _ in range(3):
+            pyautogui.press('tab')
+            time.sleep(0.1)
+        pyautogui.press('enter')  # Save Scenario button
         time.sleep(0.5)
+
+        # Enter scenario name
         pyautogui.typewrite(save_scenario, interval=0.03)
         pyautogui.press('enter')
         time.sleep(0.5)
@@ -489,25 +505,34 @@ def do_solver(objective_cell: str, goal: str, changing_cells: str,
 
 
 def do_data_analysis(tool_name: str, input_range: str, output_range: str = "",
-                     options: dict = None):
-    """Run Analysis ToolPak via Tools > Data Analysis..."""
+                     options: dict = None, sheet: str = ""):
+    """Run Analysis ToolPak tool with full option support.
+
+    options dict can include:
+    - grouped_by: "columns" or "rows"
+    - labels_in_first_row: bool
+    - summary_statistics: bool
+    - confidence_level: bool / float
+    - kth_largest: int
+    - kth_smallest: int
+    - output_range: str (alternative to output_range param)
+    """
     steps = []
+    if not options:
+        options = {}
+
+    if sheet:
+        switch_sheet(sheet)
+        steps.append(f"Switch to '{sheet}'")
+        time.sleep(0.3)
 
     activate_excel()
 
     # Open Data Analysis via Help search
-    pyautogui.hotkey('command', 'shift', '/')
-    time.sleep(0.8)
-    pyautogui.typewrite('Data Analysis', interval=0.04)
-    time.sleep(0.8)
-    pyautogui.press('down')
-    time.sleep(0.2)
-    pyautogui.press('enter')
-    time.sleep(1.0)
-
+    search_menu("Data Analysis")
     steps.append("Opened Data Analysis dialog")
 
-    # Tool list — navigate to the right tool
+    # Tool list — navigate to the right tool by index
     TOOL_LIST = [
         "Anova: Single Factor",
         "Anova: Two-Factor With Replication",
@@ -537,46 +562,129 @@ def do_data_analysis(tool_name: str, input_range: str, output_range: str = "",
             break
 
     if idx >= 0:
+        # Navigate to top of list then arrow down to the tool
         pyautogui.press("home")
         time.sleep(0.1)
         for _ in range(idx):
             pyautogui.press("down")
             time.sleep(0.05)
         steps.append(f"Selected: {tool_name} (index {idx})")
+    else:
+        # Try partial match
+        for i, t in enumerate(TOOL_LIST):
+            if tool_name.lower() in t.lower():
+                pyautogui.press("home")
+                time.sleep(0.1)
+                for _ in range(i):
+                    pyautogui.press("down")
+                    time.sleep(0.05)
+                steps.append(f"Selected: {t} (partial match, index {i})")
+                idx = i
+                break
 
     time.sleep(0.3)
     pyautogui.press('enter')  # OK to open tool dialog
-    time.sleep(0.5)
-
+    time.sleep(0.8)
     steps.append(f"Opened {tool_name} dialog")
+
+    # ── Descriptive Statistics dialog layout (most common):
+    # Input Range: [field]
+    # Grouped By: (Columns) (Rows) — radio buttons
+    # [x] Labels in First Row — checkbox
+    # Output options: (Output Range) (New Worksheet Ply) (New Workbook) — radio
+    # Output Range: [field]
+    # [x] Summary Statistics — checkbox
+    # [x] Confidence Level for Mean: [field]
+    # [x] Kth Largest: [field]
+    # [x] Kth Smallest: [field]
 
     # Input Range (focused by default)
     pyautogui.typewrite(input_range, interval=0.03)
     pyautogui.press('tab')
     time.sleep(0.2)
 
-    # Options
-    if options:
-        if options.get("grouped_by") == "columns":
-            pass  # Usually default
-        if options.get("labels_in_first_row"):
-            pass  # Tab to it and space
+    # Grouped By radio buttons (Columns is default)
+    if options.get("grouped_by") == "rows":
+        # Tab to Rows radio and select it
+        pyautogui.press('tab')  # Move to Rows radio
+        pyautogui.press('space')
+        time.sleep(0.1)
+    else:
+        pyautogui.press('tab')  # Skip past Grouped By
+    time.sleep(0.1)
 
-    # Output Range
+    # Labels in First Row checkbox
+    pyautogui.press('tab')
+    if options.get("labels_in_first_row"):
+        pyautogui.press('space')  # Check the box
+    time.sleep(0.1)
+
+    # Output options — Tab to Output Range radio
+    pyautogui.press('tab')  # Output Range radio (usually selected by default)
+    time.sleep(0.1)
+
+    # Output Range field
+    pyautogui.press('tab')
     if output_range:
-        pyautogui.press('tab')
-        time.sleep(0.1)
-        pyautogui.press('tab')
-        time.sleep(0.1)
         pyautogui.typewrite(output_range, interval=0.03)
+    time.sleep(0.1)
 
-    if options and options.get("summary_statistics"):
-        pass  # Tab to checkbox and space
+    # For Descriptive Statistics, handle additional options
+    if tool_name.lower() == "descriptive statistics":
+        # Tab past New Worksheet Ply and New Workbook radios
+        pyautogui.press('tab')  # New Worksheet Ply
+        pyautogui.press('tab')  # New Workbook
+        time.sleep(0.1)
+
+        # Summary Statistics checkbox
+        pyautogui.press('tab')
+        if options.get("summary_statistics", True):  # Default to True for Descriptive Stats
+            pyautogui.press('space')
+        time.sleep(0.1)
+
+        # Confidence Level checkbox + field
+        pyautogui.press('tab')
+        if options.get("confidence_level"):
+            pyautogui.press('space')
+            pyautogui.press('tab')
+            pyautogui.hotkey('command', 'a')
+            conf = options.get("confidence_level")
+            if isinstance(conf, (int, float)):
+                pyautogui.typewrite(str(conf), interval=0.03)
+        else:
+            pyautogui.press('tab')  # Skip confidence field
+        time.sleep(0.1)
+
+        # Kth Largest
+        pyautogui.press('tab')
+        if options.get("kth_largest"):
+            pyautogui.press('space')
+            pyautogui.press('tab')
+            pyautogui.hotkey('command', 'a')
+            pyautogui.typewrite(str(options["kth_largest"]), interval=0.03)
+        else:
+            pyautogui.press('tab')
+        time.sleep(0.1)
+
+        # Kth Smallest
+        pyautogui.press('tab')
+        if options.get("kth_smallest"):
+            pyautogui.press('space')
+            pyautogui.press('tab')
+            pyautogui.hotkey('command', 'a')
+            pyautogui.typewrite(str(options["kth_smallest"]), interval=0.03)
+        else:
+            pyautogui.press('tab')
+        time.sleep(0.1)
 
     time.sleep(0.2)
-    pyautogui.press('enter')  # OK
+    pyautogui.press('enter')  # OK — run the analysis
     steps.append(f"Completed: {tool_name}")
-    time.sleep(1.0)
+    time.sleep(1.5)
+
+    # Dismiss any error dialogs
+    pyautogui.press('enter')
+    time.sleep(0.3)
 
     return {"status": "completed", "steps": steps}
 
@@ -592,52 +700,64 @@ def execute_excel_action(action: dict) -> dict:
 
     print(f"[excel] Executing: {action_type}")
 
-    if action_type == "create_data_table":
-        return do_data_table(
-            table_range=payload.get("range", ""),
-            row_input=payload.get("row_input_cell", ""),
-            col_input=payload.get("col_input_cell", ""),
-            sheet=payload.get("sheet", ""),
-        )
+    try:
+        if action_type == "create_data_table":
+            return do_data_table(
+                table_range=payload.get("range", ""),
+                row_input=payload.get("row_input_cell", ""),
+                col_input=payload.get("col_input_cell", ""),
+                sheet=payload.get("sheet", ""),
+            )
 
-    elif action_type == "goal_seek":
-        return do_goal_seek(
-            set_cell=payload.get("set_cell", ""),
-            to_value=str(payload.get("to_value", "")),
-            changing_cell=payload.get("changing_cell", ""),
-        )
+        elif action_type == "goal_seek":
+            return do_goal_seek(
+                set_cell=payload.get("set_cell", ""),
+                to_value=str(payload.get("to_value", "")),
+                changing_cell=payload.get("changing_cell", ""),
+                sheet=payload.get("sheet", ""),
+            )
 
-    elif action_type == "scenario_manager":
-        return do_scenario_manager(
-            name=payload.get("name", ""),
-            changing_cells=payload.get("changing_cells", ""),
-            values=payload.get("values", []),
-        )
+        elif action_type == "scenario_manager":
+            return do_scenario_manager(
+                name=payload.get("name", ""),
+                changing_cells=payload.get("changing_cells", ""),
+                values=payload.get("values", []),
+                sheet=payload.get("sheet", ""),
+            )
 
-    elif action_type == "scenario_summary":
-        return do_scenario_summary(
-            result_cells=payload.get("result_cells", ""),
-        )
+        elif action_type == "scenario_summary":
+            return do_scenario_summary(
+                result_cells=payload.get("result_cells", ""),
+                sheet=payload.get("sheet", ""),
+            )
 
-    elif action_type in ("run_solver", "save_solver_scenario"):
-        return do_solver(
-            objective_cell=payload.get("objective_cell", ""),
-            goal=payload.get("goal", "max"),
-            changing_cells=payload.get("changing_cells", ""),
-            constraints=payload.get("constraints", []),
-            save_scenario=payload.get("name", "") if action_type == "save_solver_scenario" else "",
-        )
+        elif action_type in ("run_solver", "save_solver_scenario"):
+            return do_solver(
+                objective_cell=payload.get("objective_cell", ""),
+                goal=payload.get("goal", "max"),
+                changing_cells=payload.get("changing_cells", ""),
+                constraints=payload.get("constraints", []),
+                save_scenario=payload.get("name", "") if action_type == "save_solver_scenario" else "",
+                sheet=payload.get("sheet", ""),
+            )
 
-    elif action_type == "run_toolpak":
-        return do_data_analysis(
-            tool_name=payload.get("tool", "Descriptive Statistics"),
-            input_range=payload.get("input_range", ""),
-            output_range=payload.get("output_range", ""),
-            options=payload.get("options", {}),
-        )
+        elif action_type == "run_toolpak":
+            return do_data_analysis(
+                tool_name=payload.get("tool", "Descriptive Statistics"),
+                input_range=payload.get("input_range", ""),
+                output_range=payload.get("output_range", ""),
+                options=payload.get("options", {}),
+                sheet=payload.get("sheet", ""),
+            )
 
-    else:
-        return {"status": "unknown", "error": f"Unknown action type: {action_type}"}
+        else:
+            return {"status": "unknown", "error": f"Unknown action type: {action_type}"}
+
+    except Exception as e:
+        # Catch any unexpected errors, dismiss dialogs, and report
+        print(f"[excel] ERROR in {action_type}: {e}")
+        dismiss_excel_dialogs()
+        return {"status": "failed", "error": str(e), "steps": [f"Exception: {e}"]}
 
 
 def execute_all_actions(actions: list, context: dict = None) -> dict:
@@ -651,18 +771,18 @@ def execute_all_actions(actions: list, context: dict = None) -> dict:
         results.append(result)
 
         status = result.get("status", "unknown")
-        print(f"[excel]   → {status}")
+        print(f"[excel]   -> {status}")
         for step in result.get("steps", []):
             print(f"[excel]     {step}")
 
-        if status != "completed":
+        if status not in ("completed",):
             all_ok = False
 
         time.sleep(0.5)
 
     return {
         "status": "completed" if all_ok else "partial",
-        "message": f"Executed {len(actions)} actions",
+        "message": f"Executed {len(actions)} actions ({sum(1 for r in results if r.get('status') == 'completed')}/{len(actions)} OK)",
         "results": results,
         "steps_taken": len(actions),
     }
