@@ -410,7 +410,7 @@ def poll_and_execute():
                     known_types = {
                         "create_data_table", "goal_seek", "scenario_manager",
                         "scenario_summary", "run_solver", "save_solver_scenario",
-                        "run_toolpak",
+                        "run_toolpak", "install_addins", "uninstall_addins",
                     }
 
                     known_actions = [a for a in actions if a.get("type") in known_types]

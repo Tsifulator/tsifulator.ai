@@ -44,6 +44,8 @@ COMPUTER_USE_ACTIONS = {
     "create_data_table",     # What-If Data Table (the wizard, not formulas)
     "scenario_summary",      # Generate scenario summary report
     "run_toolpak",           # Analysis ToolPak (descriptive stats, etc.)
+    "install_addins",        # Install Excel add-ins (Solver, ToolPak)
+    "uninstall_addins",      # Uninstall Excel add-ins
     "computer_use",          # Generic computer use fallback
 }
 

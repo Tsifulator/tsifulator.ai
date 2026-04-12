@@ -203,10 +203,21 @@ Use these ONLY when the task specifically requires these Excel features:
   payload: { result_cells }
 - run_toolpak: Run Analysis ToolPak (e.g. Descriptive Statistics)
   payload: { tool: "Descriptive Statistics", input_range, output_range, options: { summary_statistics: true, labels_in_first_row: true } }
+- install_addins: Install Excel add-ins (Solver, Analysis ToolPak)
+  payload: { addins: ["Solver Add-in", "Analysis ToolPak"] }
+- uninstall_addins: Uninstall Excel add-ins
+  payload: { addins: ["Solver Add-in", "Analysis ToolPak"] }
 
 IMPORTANT: For SIMnet/homework assignments, PREFER these desktop automation actions
 over manual formula equivalents. SIMnet grades on whether the correct Excel tool was used,
 not just whether the values are correct.
+
+CRITICAL for Data Tables: When creating a data table formula cell (the cell at the intersection
+of the input column and output row), use =I5 or similar simple reference to a total/result cell.
+Do NOT use complex AVERAGE formulas. The Data Table dialog will handle the what-if substitution.
+
+CRITICAL for Variance/Array formulas: When the instruction says "maximum benefit minus amount billed",
+use =D:D-E:E (D minus E), NOT =E:E-D:D. Pay attention to the order of subtraction.
 
 ## DATA QUALITY RULES — CRITICAL
 - NEVER write placeholder text like "No Data Available", "N/A", "No Term Data", "TBD" as cell values. If you don't have data, use realistic synthetic financial data.
@@ -1647,6 +1658,12 @@ TOOLS = [
                                     "create_r_script: {code, title?}. Creates a new R script file in the editor without executing.\n"
                                     "export_plot: {to_app?, cell?, sheet?}. Captures current R plot and exports to transfer endpoint for Excel/PPT to pick up.\n"
                                     "import_image: {transfer_id?, image_data?, cell?, sheet?}. Inserts an image into Excel. Use when user asks to paste/import an R graph. Fetches from /transfer/pending/excel if no transfer_id.\n"
+                                    "create_plot: {plot_type, data, title?, x_label?, y_label?, options?}. Creates a chart SERVER-SIDE (no R needed) and auto-inserts it into Excel. "
+                                    "plot_type: 'scatter', 'bar', 'line', 'histogram', 'pie', 'box'. "
+                                    "data: {x: [...], y: [...]} or {labels: [...], values: [...]} or {series: [{name, x, y}, ...]}. "
+                                    "options: {trend_line?, color?, bins?, horizontal?, alpha?, point_size?}. "
+                                    "Use this when the user asks for a chart/plot from Excel data — it works without R installed. "
+                                    "Extract the data from the spreadsheet context and pass it directly in the data field.\n"
                                     "run_shell_command: {command}.\n"
                                     "write_file: {path, content}.\n"
                                     "open_url: {url}.\n"

@@ -99,13 +99,53 @@ def dismiss_excel_dialogs():
 
 def search_menu(search_term: str, wait: float = 1.0) -> bool:
     """Use Help menu search (Cmd+Shift+/) to find and click a menu item.
-    Returns True if the search was initiated successfully."""
+    Returns True if the search was initiated successfully.
+
+    IMPORTANT: This function verifies the Help search field is open before
+    typing, to avoid accidentally typing into a cell.
+    """
+    # First make sure Excel is focused and no cell is being edited
+    activate_excel()
+    pyautogui.press('escape')  # Cancel any cell editing
+    time.sleep(0.3)
+
+    # Open Help menu search
     pyautogui.hotkey('command', 'shift', '/')
-    time.sleep(0.8)
+    time.sleep(1.2)  # Wait longer for Help menu to appear
+
+    # Verify the Help search is actually open by checking if a menu bar
+    # search field appeared. We do this by checking the focused UI element.
+    # As a safety measure, press Escape and retry if needed.
+    for attempt in range(3):
+        # Try to detect if Help search is open by checking menu bar state
+        check = run_applescript('''
+tell application "System Events"
+    tell process "Microsoft Excel"
+        try
+            set focused_element to focused UI element
+            return description of focused_element
+        on error
+            return "unknown"
+        end try
+    end tell
+end tell
+''')
+        if "search" in check.lower() or "text field" in check.lower() or "unknown" in check.lower():
+            break
+        # Help search didn't open — retry
+        print(f"[excel] Help search not detected (attempt {attempt+1}), retrying...")
+        pyautogui.press('escape')
+        time.sleep(0.3)
+        activate_excel()
+        time.sleep(0.3)
+        pyautogui.hotkey('command', 'shift', '/')
+        time.sleep(1.5)
+
+    # Now type the search term
     pyautogui.typewrite(search_term, interval=0.04)
     time.sleep(wait)
-    # First result is usually the menu item, second is "Get Help on..."
-    # Press Enter to select the first result
+
+    # Select the first result
     pyautogui.press('enter')
     time.sleep(1.0)
     return True
@@ -689,6 +729,52 @@ def do_data_analysis(tool_name: str, input_range: str, output_range: str = "",
     return {"status": "completed", "steps": steps}
 
 
+def do_install_addins(addins: list):
+    """Install Excel add-ins (Solver, Analysis ToolPak) via Tools > Excel Add-ins."""
+    steps = []
+    activate_excel()
+
+    search_menu("Excel Add-ins")
+    time.sleep(1.0)
+    steps.append("Opened Excel Add-ins dialog")
+
+    # The add-ins list order:
+    # 1. Analysis ToolPak
+    # 2. Analysis ToolPak - VBA
+    # 3. Solver Add-in
+    # Check/uncheck as needed
+
+    want_toolpak = any("ToolPak" in a or "toolpak" in a.lower() for a in addins)
+    want_solver = any("Solver" in a or "solver" in a.lower() for a in addins)
+
+    if want_toolpak:
+        pyautogui.press('space')  # Toggle Analysis ToolPak
+        steps.append("Toggled Analysis ToolPak")
+    pyautogui.press('down')
+    time.sleep(0.1)
+    pyautogui.press('down')  # Skip VBA
+    time.sleep(0.1)
+    if want_solver:
+        pyautogui.press('space')  # Toggle Solver
+        steps.append("Toggled Solver Add-in")
+
+    time.sleep(0.2)
+    pyautogui.press('enter')  # OK
+    time.sleep(3.0)
+
+    # Dismiss any followup
+    pyautogui.press('enter')
+    time.sleep(0.5)
+
+    return {"status": "completed", "steps": steps}
+
+
+def do_uninstall_addins(addins: list):
+    """Uninstall Excel add-ins via Tools > Excel Add-ins."""
+    # Same as install — toggling unchecks them
+    return do_install_addins(addins)
+
+
 # ── Dispatcher ───────────────────────────────────────────────────────────────
 
 
@@ -749,6 +835,12 @@ def execute_excel_action(action: dict) -> dict:
                 options=payload.get("options", {}),
                 sheet=payload.get("sheet", ""),
             )
+
+        elif action_type == "install_addins":
+            return do_install_addins(payload.get("addins", []))
+
+        elif action_type == "uninstall_addins":
+            return do_uninstall_addins(payload.get("addins", []))
 
         else:
             return {"status": "unknown", "error": f"Unknown action type: {action_type}"}
