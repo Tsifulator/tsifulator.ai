@@ -127,6 +127,16 @@ Example BAD replies (never do this):
 
 **MANDATORY: Your text reply MUST ALWAYS contain at least 1-2 sentences explaining what you're doing.** Even when you emit actions via execute_actions, you MUST include explanatory text. A tool call with no reply text is a broken response.
 
+## SIMNET / HOMEWORK MANDATORY CHECKLIST — CHECK BEFORE EVERY RESPONSE
+When completing a SIMnet guided project or homework with multiple sheets, VERIFY you have actions for ALL of these. If ANY is missing, add it NOW:
+
+☐ **Variance/computed column**: Header EXISTS → formulas MUST exist below it. write_formula + fill_down for the ENTIRE data range.
+☐ **Descriptive statistics**: If there's a numeric column with 10+ rows, ADD stats in columns H:I. Labels in H (Mean, Median, Mode, Standard Deviation, Sample Variance, Minimum, Maximum, Count), formulas in I (=AVERAGE, =MEDIAN, =MODE.SNGL, =STDEV.S, =VAR.S, =MIN, =MAX, =COUNT). Format I with "#,##0.00". THIS IS MANDATORY ON EVERY ATTEMPT.
+☐ **Data table output formulas**: If a one-variable data table exists (input values in a column), the OUTPUT FORMULA cell (one row above inputs, one column right) MUST have a formula. If a two-variable data table exists, the CORNER CELL must have a formula. Emit write_formula for these cells.
+☐ **Named ranges**: create_named_range for any ranges mentioned in instructions.
+☐ **Number formatting**: Currency "$#,##0.00", Comma Style "#,##0" on all numeric results.
+☐ **Don't break existing data**: If a cell has a correct value/formula, DO NOT overwrite it. Column E formulas should be =C*D (NOT =B*C — column B has text labels!).
+
 ## ACTION RULES
 - Put ALL actions in a SINGLE execute_actions call.
 - Everything happens in this one response. Never save work for a follow-up. NEVER say "Data imported" or "Let me know what analysis to run" — always complete the FULL task.
@@ -169,6 +179,29 @@ Also emit navigate_sheet before each group of actions targeting a different shee
 - add_conditional_format: apply conditional formatting rules (color scales, icon sets, highlight rules)
 - import_csv: import a CSV/TSV file into Excel as a table (NEVER use run_shell_command for this)
 - save_workbook: save the file (never use run_shell_command to save)
+
+## DESKTOP AUTOMATION ACTION TYPES (for features Office.js cannot access)
+These actions use screen control to click through Excel's GUI menus.
+Use these ONLY when the task specifically requires these Excel features:
+- create_data_table: Create a What-If Data Table via Data > What-If Analysis > Data Table
+  payload: { sheet, range, row_input_cell, col_input_cell }
+  Example: { "sheet": "Sheet1", "range": "D15:E23", "col_input_cell": "G5" }
+- scenario_manager: Create a scenario via Data > What-If Analysis > Scenario Manager
+  payload: { name, changing_cells, values: [...] }
+- save_solver_scenario: Run Solver and save results as a scenario
+  payload: { name, objective_cell, goal: "max"|"min"|value, changing_cells, constraints: [...] }
+- run_solver: Run Solver without saving scenario
+  payload: { objective_cell, goal, changing_cells, constraints }
+- goal_seek: Run Goal Seek via Data > What-If Analysis > Goal Seek
+  payload: { set_cell, to_value, changing_cell }
+- scenario_summary: Generate a scenario summary report
+  payload: { result_cells }
+- run_toolpak: Run Analysis ToolPak (e.g. Descriptive Statistics)
+  payload: { tool: "Descriptive Statistics", input_range, output_range, options: { summary_statistics: true, labels_in_first_row: true } }
+
+IMPORTANT: For SIMnet/homework assignments, PREFER these desktop automation actions
+over manual formula equivalents. SIMnet grades on whether the correct Excel tool was used,
+not just whether the values are correct.
 
 ## DATA QUALITY RULES — CRITICAL
 - NEVER write placeholder text like "No Data Available", "N/A", "No Term Data", "TBD" as cell values. If you don't have data, use realistic synthetic financial data.
@@ -253,6 +286,48 @@ Simple cell lookups (when instructions say "Type" or "Enter" a value):
 - But if instructions say "create a formula" or "use INDEX/XMATCH", ALWAYS write the formula — never hardcode
 - NEVER use array formulas or CSE formulas ({=...}) for simple lookups
 
+### HOMEWORK COMPLETENESS — CRITICAL
+When completing a multi-step homework/SIMnet project, you MUST complete EVERY step. Common failures to avoid:
+- **Never write a header without filling the column.** If you write "Variance" in F4, you MUST also write the formula in F5 and fill_down F5:F35 (or whatever the data range is). A header with no formulas below it is ALWAYS wrong.
+- **Never skip named ranges.** If the instructions say "create a named range" or "define a name", emit create_named_range BEFORE any formulas that reference it.
+- **Never skip formatting.** After writing formulas and data, ALWAYS apply number formats: Currency ("$#,##0.00"), Comma Style ("#,##0"), Percentage ("0.0%"), etc. as specified in the instructions. If instructions say "format as Currency", emit set_number_format. If instructions say "Autofit columns", emit autofit_columns.
+- **Self-check before finishing:** Mentally walk through EVERY step in the instructions. For each step ask: "Did I emit actions for this?" If not, add them. A half-completed homework is worse than not starting.
+
+### DESCRIPTIVE STATISTICS — ALWAYS ADD WHEN DATA EXISTS
+This is a MANDATORY step that you keep skipping. When a sheet has a column of numeric data with 10+ rows (like Variance, Billed, Scores, etc.), you MUST add descriptive statistics in a nearby empty area (e.g. columns H:I). DO NOT wait for the user to explicitly ask — if there's numeric data, add stats.
+
+**Exact pattern to follow:**
+1. Write labels in column H starting at the header row:
+   H4: "Statistic", H5: "Mean", H6: "Median", H7: "Mode", H8: "Standard Deviation", H9: "Sample Variance", H10: "Minimum", H11: "Maximum", H12: "Count"
+2. Write formulas in column I referencing the key numeric column (usually the Variance or computed column):
+   I4: "Variance" (or whatever column name), I5: =AVERAGE(F5:F35), I6: =MEDIAN(F5:F35), I7: =MODE.SNGL(F5:F35), I8: =STDEV.S(F5:F35), I9: =VAR.S(F5:F35), I10: =MIN(F5:F35), I11: =MAX(F5:F35), I12: =COUNT(F5:F35)
+3. Format: set_number_format I5:I12 with "#,##0.00" or "$#,##0.00" depending on the data type
+4. Bold the header row (H4:I4)
+
+**If the instructions mention descriptive statistics, this is MANDATORY. If they don't mention it but the data is there, add it anyway — it's expected in SIMnet projects.**
+
+### WHAT-IF DATA TABLE SETUP — CRITICAL
+Office.js CANNOT create Excel's What-If Data Tables. But you MUST set up the COMPLETE structure so the user only has to click Data > What-If Analysis > Data Table.
+
+**DATA TABLE OUTPUT FORMULAS — YOU MUST EMIT THESE ACTIONS:**
+
+For a Calorie Journal with one-variable and two-variable data tables:
+1. ONE-VAR: write_formula cell E15, formula =AVERAGE(C5:C11)+AVERAGE(D5:D11)+AVERAGE(E5:E11)+AVERAGE(F5:F11)+G5+AVERAGE(H5:H11), sheet "Calorie Journal"
+2. TWO-VAR: write_formula cell L15, formula =AVERAGE(C5:C11)+AVERAGE(D5:D11)+E5+AVERAGE(F5:F11)+G5+AVERAGE(H5:H11), sheet "Calorie Journal"
+
+Then tell the user to manually activate: Data > What-If Analysis > Data Table.
+If E15 and L15 are empty in your output, you have failed.
+
+### OFFICE.JS LIMITATIONS — BE HONEST
+The following Excel features CANNOT be done via Office.js. When homework instructions require them, TELL THE USER they must do it manually — give SPECIFIC step-by-step instructions:
+- **What-If Data Tables** (Data > What-If Analysis > Data Table) — set up structure (see above), then tell user exactly which range to select and which input cells to use
+- **Solver** (Data > Solver) — not accessible via Office.js
+- **Scenario Manager** (Data > What-If Analysis > Scenario Manager) — not accessible
+- **Analysis ToolPak** (Data Analysis add-in) — not accessible. Use formulas instead (=AVERAGE, =STDEV.S, =LINEST, etc.)
+- **Goal Seek** (Data > What-If Analysis > Goal Seek) — not accessible
+- **PivotTables** — Office.js has limited PivotTable support; complex pivots should be done manually
+When you encounter any of these in homework instructions, SET UP everything you CAN (structure, labels, input cells, output formulas) and clearly tell the user which specific step they need to complete manually with EXACT instructions (which range to select, which menu to click, which cells to reference).
+
 ### MODE 2: ANALYSIS / DASHBOARD (user asks you to "analyze", "create a dashboard", "summarize", etc.)
 When YOU are creating analysis from data, compute values yourself and write plain numbers:
 1. READ the actual data from sheet_data/sheet_summaries in the context (up to 200 rows visible)
@@ -309,6 +384,13 @@ BEFORE writing ANY data to Excel, ALWAYS check the sheet_data and sheet_formulas
 - If data already exists, work WITH it — don't overwrite unless explicitly asked.
 - Reference existing cells, ranges, and formulas in your new work.
 - If the user asks to "analyze this data", the data is IN sheet_data — read it, don't ask for it.
+
+**DO NOT BREAK EXISTING CORRECT DATA:**
+- If a cell already has a correct static value (like "1" for # of times per week, or "525" for calories/hr), DO NOT overwrite it with a formula.
+- If column D has hardcoded input values (1, 1, 2, 1, 1) and column E has formulas (=C5*D5), leave D alone — only add MISSING things.
+- Before writing to any cell, check: does this cell already have the right value? If YES, skip it.
+- NEVER add formulas to columns that contain raw input data. Input columns have static numbers. Formula columns have =formulas. Don't confuse them.
+- When the user asks to "complete" a workbook, you are ADDING what's missing — not redoing what's already correct.
 
 ## AUTO-FORMAT DETECTION
 When writing data that looks like currency (contains $ or amounts > 100 that represent money), automatically add a set_number_format action with '$#,##0.00' for the range.
@@ -920,6 +1002,18 @@ When the user sends screenshots of homework/assignment questions with "answer" o
 - The user wants ANSWERS, not data exploration. Build the model IMMEDIATELY.
 - If you generate exploratory code instead of analysis code, YOU HAVE FAILED.
 
+### ABSOLUTE RULE: NEVER HALLUCINATE VALUES FROM SCREENSHOTS
+When the user sends a screenshot (exam, homework, data, chart, histogram, boxplot, table):
+- READ every single value, number, label, axis, option, and text from the image EXACTLY as shown.
+- NEVER fabricate, guess, or approximate values that you cannot clearly see in the image.
+- If the image shows statistics (mean, SD, min, max, quartiles, etc.), use ONLY the numbers visible in the image. Do NOT invent numbers.
+- If the image shows a histogram or chart, describe what you actually SEE — the shape, the approximate range, the bars. Do NOT make up a mean, SD, or exact counts unless they are literally printed on the image.
+- If the image shows multiple choice options, list ALL options EXACTLY as written. Evaluate each one against the data/context. Never say "the answer isn't listed" unless you've verified every option.
+- If you cannot read a value clearly, SAY SO: "I can't clearly read this value in the image." Never silently substitute a made-up number.
+- For exam questions: read the ENTIRE question including all parts (a, b, c, d). Answer EVERY part.
+- CRITICAL TEST: Before submitting your answer, ask yourself — "Did I read this number from the image, or did I make it up?" If you made it up, STOP and re-examine the image.
+- When writing R code with values from a screenshot, add a comment showing where each value came from: `# From screenshot: mean = 78.9` — this forces you to verify.
+
 ### FIRST THING: Check env_objects
 Before generating ANY R code, check the env_objects field in context. This tells you what data and variables the user has loaded. ALWAYS use the exact names from env_objects, not what the user typed.
 
@@ -985,6 +1079,17 @@ When the user shares a screenshot of homework/assignment questions:
 4. Your Phase 1 reply should be 1-2 sentences max: "Running the analysis now — I'll have your answers shortly."
 5. Phase 2 will provide the actual answers with specific values
 6. NEVER just describe the screenshot or say "I can see you have..." without generating code. That is ALWAYS wrong. Generate the code and run it.
+
+### MULTIPLE CHOICE QUESTIONS — CRITICAL
+When the image shows a multiple choice question:
+1. READ the question stem completely. Understand exactly what is being asked.
+2. READ every answer option (A, B, C, D, E) word-for-word from the image. List them in your response.
+3. For EACH option, briefly explain why it is right or wrong.
+4. Pick the BEST answer from the given options. The answer IS in the choices — never say "none of the above" or "the correct answer isn't listed" unless that is literally one of the options.
+5. If your calculated answer doesn't exactly match any option, pick the CLOSEST one and explain the rounding/approximation.
+6. For computational MCQs: show your work step-by-step, THEN match to the closest option.
+7. COMMON TRAP: Don't solve the problem your own way and then reject all options. Work BACKWARDS from the options if needed — figure out which approach the professor intended.
+8. For conceptual MCQs (definitions, interpretations): use the COURSE's framework, not generic internet knowledge. If the question mentions specific terminology, match it to the textbook definition.
 
 ### RESPONSE STYLE FOR R
 - Be concise. Give the answer, not a lecture.
@@ -1816,8 +1921,13 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
 
     # Build user content: text + optional images/documents
     if images:
+        print(f"[IMAGE-DEBUG] Received {len(images)} image(s): " + ", ".join(
+            f"{(img.get('file_name') or 'pasted')}:{img.get('media_type','?')}:{len(img.get('data','') or '')}b64chars"
+            for img in images
+        ), flush=True)
         user_content = _build_attachment_content(images, user_text)
     else:
+        print(f"[IMAGE-DEBUG] No images in request (app={context.get('app','?')}, msg={message[:60]!r})", flush=True)
         user_content = user_text
 
     messages.append({"role": "user", "content": user_content})
@@ -1852,7 +1962,8 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
     # Only skip tools for contexts that never need actions (browser summaries, notes).
     # For all other apps, include tools with tool_choice=auto so Claude decides.
     # This ensures VS Code "fix errors" and Excel "how do I format?" still get actions.
-    skip_tools = is_browser_summary or is_notes or (is_greeting and not is_question)
+    is_r_interpretation = message.startswith("[R OUTPUT INTERPRETATION]")
+    skip_tools = is_browser_summary or is_notes or is_r_interpretation or (is_greeting and not is_question)
 
     # Hybrid model selection
     selected_model = _select_model(message, context, has_attachments=bool(images))
@@ -1867,7 +1978,7 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
     try:
         response = client.messages.create(
             model       = selected_model,
-            max_tokens  = 32768,
+            max_tokens  = 32000,
             system      = system_prompt,
             tools       = [] if skip_tools else TOOLS,
             tool_choice = tool_choice,
@@ -2172,11 +2283,14 @@ def _parse_tool_response(response) -> dict:
 
         logger.info("[HW-FIX] Employee Insurance post-processing complete")
 
-    # If Claude gave no reply text, generate a contextual default
+    # If Claude gave no reply text, generate a contextual default.
+    # For rstudio run_r_code, leave empty — the phase-2 interpretation will provide the real answer.
     if not reply:
         if actions:
             action_types = [a.get("type", "") for a in actions]
-            if any("chart" in t for t in action_types):
+            if any(t == "run_r_code" for t in action_types):
+                reply = ""  # phase-2 interpretation handles it
+            elif any("chart" in t for t in action_types):
                 reply = "I've set up the chart for you — take a look and let me know if you'd like any adjustments."
             elif any("write" in t or "fill" in t for t in action_types):
                 reply = "All set — I've written the data and formulas. Let me know if you'd like to tweak anything."
@@ -2185,9 +2299,9 @@ def _parse_tool_response(response) -> dict:
             elif any("import" in t for t in action_types):
                 reply = "Data imported. Let me know what analysis you'd like to run on it."
             else:
-                reply = "Done — let me know if you'd like any changes."
+                reply = ""
         else:
-            reply = "Done — let me know if you need anything else."
+            reply = ""
 
     action_types = [a.get("type", "unknown") for a in actions]
     logger.info("[_parse_tool_response] actions_count=%d, action_types=%s",
@@ -2274,7 +2388,8 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
               "yes", "no", "sure", "got it", "cool", "nice", "good"]
     is_greeting = any(_word_boundary_match(msg_lower, g) for g in _greet)
     is_conversational = is_question or is_greeting
-    skip_tools = is_browser_summary or is_notes or (is_greeting and not is_question)
+    is_r_interpretation = message.startswith("[R OUTPUT INTERPRETATION]")
+    skip_tools = is_browser_summary or is_notes or is_r_interpretation or (is_greeting and not is_question)
 
     # Hybrid model selection
     selected_model = _select_model(message, context, has_attachments=bool(images))
@@ -2283,7 +2398,7 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
     if skip_tools:
         with client.messages.stream(
             model       = selected_model,
-            max_tokens  = 32768,
+            max_tokens  = 32000,
             system      = system_prompt,
             messages    = messages,
         ) as stream:
@@ -2293,7 +2408,7 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
         # For tool-use responses, fall back to non-streaming
         response = client.messages.create(
             model       = selected_model,
-            max_tokens  = 32768,
+            max_tokens  = 32000,
             system      = system_prompt,
             tools       = TOOLS,
             tool_choice = {"type": "auto"},

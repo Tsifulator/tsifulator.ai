@@ -438,6 +438,36 @@ async function handleSubmit() {
   setStatus("Reading workbook...");
   input.style.height = "auto";
 
+  // Detect cross-app R request: "from R", "in R", "use R", "R plot", "generate in R"
+  const rJobPattern = /\b(from r\b|in r\b|use r\b|with r\b|r plot|r-?generated|generate.*in r|run.*in r|rstudio|r addin|r studio)\b/i;
+  if (rJobPattern.test(message)) {
+    try {
+      setStatus("Sending to RStudio...");
+      showTypingIndicator("thinking");
+      await fetch(`${BACKEND_URL}/transfer/store`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from_app: "excel",
+          to_app: "rstudio",
+          data_type: "r_job",
+          data: message + "\n\nIMPORTANT: Emit ONE run_r_code action that BOTH loads the data AND creates the plot in the same block. Do NOT just inspect/str/head — produce the actual plot. End by mentioning 'excel' so the plot gets exported.",
+          metadata: { requested_by: CURRENT_USER.id },
+        }),
+      });
+      hideTypingIndicator();
+      appendMessage("assistant", "Sent to RStudio. Make sure tsifl is open there — the plot will appear in this sheet automatically once R finishes.");
+      setStatus("Waiting for R...");
+      setSubmitEnabled(true);
+      return;
+    } catch (e) {
+      hideTypingIndicator();
+      appendMessage("assistant", "Couldn't reach the R job queue: " + (e?.message || e));
+      setSubmitEnabled(true);
+      return;
+    }
+  }
+
   try {
     const excelContext = await getExcelContext();
     setStatus("Thinking...");
@@ -455,8 +485,15 @@ async function handleSubmit() {
     });
 
     if (!response.ok) {
-      const err = await response.json();
-      appendMessage("assistant", `⚠️ ${err.detail}`);
+      let detail = `Server error (${response.status})`;
+      try {
+        const err = await response.json();
+        detail = err.detail || detail;
+      } catch (_) {
+        try { detail = await response.text(); } catch (_2) {}
+      }
+      hideTypingIndicator();
+      appendMessage("assistant", `⚠️ ${detail}`);
       setStatus("Error");
       return;
     }
@@ -702,6 +739,40 @@ async function handleSubmit() {
             console.log("[tsifl] Employee Insurance safety net complete");
           });
         } catch (e) { console.warn("[tsifl] Employee Insurance safety net failed:", e.message); }
+      }
+    }
+
+    // ── Computer Use session polling ────────────────────────────────────
+    // If the backend started a computer use session, poll until complete
+    if (data.cu_session_id) {
+      setStatus("🖥️ Desktop automation running...");
+      appendMessage("assistant", "🖥️ Running desktop automation for advanced Excel features...");
+      const cuSessionId = data.cu_session_id;
+      let cuDone = false;
+      let cuPolls = 0;
+      const maxPolls = 120; // 2 minutes max (1s intervals)
+      while (!cuDone && cuPolls < maxPolls) {
+        cuPolls++;
+        await new Promise(r => setTimeout(r, 1000)); // wait 1 second
+        try {
+          const statusResp = await fetch(`${BACKEND_URL}/computer-use/status/${cuSessionId}`);
+          if (statusResp.ok) {
+            const statusData = await statusResp.json();
+            if (statusData.status === "completed") {
+              cuDone = true;
+              appendMessage("assistant", `✅ Desktop automation completed (${statusData.steps_taken} steps)`);
+            } else if (statusData.status === "failed") {
+              cuDone = true;
+              appendMessage("assistant", `⚠️ Desktop automation failed: ${statusData.error || "unknown error"}`);
+            }
+            // else still running, keep polling
+          }
+        } catch (pollErr) {
+          console.warn("[tsifl] CU poll error:", pollErr.message);
+        }
+      }
+      if (!cuDone) {
+        appendMessage("assistant", "⚠️ Desktop automation timed out. Check Excel for partial results.");
       }
     }
 
@@ -1746,7 +1817,7 @@ async function executeAction(action) {
           });
         }
       } else {
-        appendMessage("assistant", "No R plot found. Generate a plot in RStudio first, then try again.");
+        appendMessage("assistant", "I can't run R from Excel directly. To bring an R plot here: open tsifl in RStudio, ask for the plot there with the word \"excel\" in your message (e.g. \"plot loandata regression and send to excel\"), and it'll appear in this sheet automatically.");
       }
     } catch (e) {
       console.error("import_image failed:", e);
