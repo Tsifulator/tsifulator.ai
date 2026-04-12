@@ -1981,7 +1981,7 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
     try:
         response = client.messages.create(
             model       = selected_model,
-            max_tokens  = 32000,
+            max_tokens  = 8192,
             system      = system_prompt,
             tools       = [] if skip_tools else TOOLS,
             tool_choice = tool_choice,
@@ -2402,7 +2402,7 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
     if skip_tools:
         with client.messages.stream(
             model       = selected_model,
-            max_tokens  = 32000,
+            max_tokens  = 8192,
             system      = system_prompt,
             messages    = messages,
         ) as stream:
@@ -2412,7 +2412,7 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
         # For tool-use responses, fall back to non-streaming
         response = client.messages.create(
             model       = selected_model,
-            max_tokens  = 32000,
+            max_tokens  = 8192,
             system      = system_prompt,
             tools       = TOOLS,
             tool_choice = {"type": "auto"},
