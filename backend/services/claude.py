@@ -15,9 +15,11 @@ logger = logging.getLogger(__name__)
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env", override=True)
 
+import httpx as _httpx
+
 client = anthropic.Anthropic(
     api_key=os.getenv("ANTHROPIC_API_KEY"),
-    timeout=600.0,  # 10 min timeout — prevents SDK from requiring streaming
+    timeout=_httpx.Timeout(600.0, connect=10.0),
 )
 
 # ── Hybrid Model Router ──────────────────────────────────────────────────────
@@ -1981,7 +1983,7 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
     try:
         response = client.messages.create(
             model       = selected_model,
-            max_tokens  = 8192,
+            max_tokens  = 4096,
             system      = system_prompt,
             tools       = [] if skip_tools else TOOLS,
             tool_choice = tool_choice,
@@ -2402,7 +2404,7 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
     if skip_tools:
         with client.messages.stream(
             model       = selected_model,
-            max_tokens  = 8192,
+            max_tokens  = 4096,
             system      = system_prompt,
             messages    = messages,
         ) as stream:
@@ -2412,7 +2414,7 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
         # For tool-use responses, fall back to non-streaming
         response = client.messages.create(
             model       = selected_model,
-            max_tokens  = 8192,
+            max_tokens  = 4096,
             system      = system_prompt,
             tools       = TOOLS,
             tool_choice = {"type": "auto"},
