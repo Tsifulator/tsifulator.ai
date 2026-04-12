@@ -289,16 +289,48 @@ run_tsifl_server <- function(port = 7444) {
     shiny::tags$head(
       shiny::tags$style(shiny::HTML(CSS)),
       shiny::tags$script(shiny::HTML("
-        // Keep-alive ping every 30 seconds to prevent WebSocket idle disconnect
+        // Keep-alive ping every 10 seconds to prevent WebSocket idle disconnect
         setInterval(function() {
-          if (Shiny && Shiny.setInputValue) {
+          if (typeof Shiny !== 'undefined' && Shiny.setInputValue) {
             Shiny.setInputValue('_keepalive', Date.now(), {priority: 'event'});
           }
-        }, 30000);
+        }, 10000);
 
-        // Reconnect if WebSocket drops
+        // Also use visibility change to immediately ping when tab becomes active
+        document.addEventListener('visibilitychange', function() {
+          if (!document.hidden && typeof Shiny !== 'undefined' && Shiny.setInputValue) {
+            Shiny.setInputValue('_keepalive', Date.now(), {priority: 'event'});
+          }
+        });
+
+        // Aggressive reconnect if WebSocket drops
+        var _tsiflReconnecting = false;
         $(document).on('shiny:disconnected', function(event) {
-          setTimeout(function() { location.reload(); }, 3000);
+          if (_tsiflReconnecting) return;
+          _tsiflReconnecting = true;
+          var attempts = 0;
+          function tryReconnect() {
+            attempts++;
+            fetch('http://127.0.0.1:7444', {mode: 'no-cors'}).then(function() {
+              location.reload();
+            }).catch(function() {
+              if (attempts < 360) { // retry for 30 min
+                setTimeout(tryReconnect, 5000);
+              }
+            });
+          }
+          var chatEl = document.getElementById('chat_history');
+          if (chatEl) {
+            var old = document.getElementById('reconnect-notice');
+            if (!old) {
+              var notice = document.createElement('div');
+              notice.id = 'reconnect-notice';
+              notice.style.cssText = 'text-align:center;padding:12px;color:#64748B;font-size:13px;';
+              notice.textContent = 'Reconnecting...';
+              chatEl.appendChild(notice);
+            }
+          }
+          setTimeout(tryReconnect, 1000);
         });
       "))
     ),
@@ -306,28 +338,10 @@ run_tsifl_server <- function(port = 7444) {
     shiny::div(id = "header",
       shiny::span(id = "logo", "\u26a1 tsifl"),
       shiny::div(style = "display:flex;align-items:center;gap:6px;",
-        shiny::tags$button(
-          id = "notes_btn",
-          onclick = paste0("window.open('", BACKEND_URL, "/notes-app','_blank')"),
-          style = "background:#F2F2F7;color:#8E8E93;border:none;border-radius:12px;padding:4px 10px;font-size:11px;font-weight:500;cursor:pointer;",
-          "Notes"
-        ),
         shiny::uiOutput("tasks_label")
       )
     ),
 
-    # Quick actions
-    shiny::div(id = "quick_actions", style = "display:flex;gap:6px;padding:8px 14px;flex-wrap:wrap;border-bottom:1px solid #F0F0F0;",
-      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 't_test', {priority: 'event'})", style = "background:#F2F2F7;color:#8E8E93;border:none;border-radius:14px;padding:4px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;", "t-test"),
-      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'linear_reg', {priority: 'event'})", style = "background:#F2F2F7;color:#8E8E93;border:none;border-radius:14px;padding:4px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;", "Linear Reg"),
-      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'anova', {priority: 'event'})", style = "background:#F2F2F7;color:#8E8E93;border:none;border-radius:14px;padding:4px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;", "ANOVA"),
-      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'ggplot_scatter', {priority: 'event'})", style = "background:#F2F2F7;color:#8E8E93;border:none;border-radius:14px;padding:4px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;", "ggplot"),
-      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'summary_stats', {priority: 'event'})", style = "background:#F2F2F7;color:#8E8E93;border:none;border-radius:14px;padding:4px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;", "Summary"),
-      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'correlation', {priority: 'event'})", style = "background:#F2F2F7;color:#8E8E93;border:none;border-radius:14px;padding:4px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;", "Correlation"),
-      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'which_test', {priority: 'event'})", style = "background:#F2F2F7;color:#8E8E93;border:none;border-radius:14px;padding:4px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;", "Which test?"),
-      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'profile_data', {priority: 'event'})", style = "background:#F2F2F7;color:#8E8E93;border:none;border-radius:14px;padding:4px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;", "Profile data"),
-      shiny::tags$button(class = "quick-btn", onclick = "Shiny.setInputValue('quick_action', 'compare_models', {priority: 'event'})", style = "background:#F2F2F7;color:#8E8E93;border:none;border-radius:14px;padding:4px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;", "Compare models")
-    ),
 
     shiny::div(id = "chat_history",
       shiny::uiOutput("chat_messages"),
@@ -348,7 +362,7 @@ run_tsifl_server <- function(port = 7444) {
       shiny::div(id = "input_actions",
         shiny::tags$button(id = "attach_btn", title = "Attach file", "+"),
         shiny::tags$button(id = "send_btn", style = "width:100%;",
-          onclick = "var t=document.getElementById('user_input');if(t&&t.value.trim()){var m=t.value.trim();t.value='';t.style.color='transparent';this.textContent='...';Shiny.setInputValue('send_message',m,{priority:'event'});setTimeout(function(){t.style.color='';document.getElementById('send_btn').textContent='Send';},500);}",
+          onclick = "if(window._tsiflSend){window._tsiflSend();}",
           "Send")
       ),
       shiny::div(id = "status_bar", class = "idle", shiny::HTML('<span class="status-dot"></span><span id="status_text"></span>'))
@@ -397,30 +411,36 @@ run_tsifl_server <- function(port = 7444) {
         });
       });
 
-      // Paste from clipboard — bind at DOCUMENT level so it survives textarea
-      // recreation on every send. Only acts when focus is in the tsifl input area.
-      document.addEventListener('paste', function(e) {
-        var ta = document.getElementById('user_input');
-        if (!ta) return;
-        var ae = document.activeElement;
-        // Accept paste if focus is the input, its parent area, or anywhere in body
-        // (user may have clicked in message bubble then pasted).
-        var items = Array.from(e.clipboardData ? e.clipboardData.items : []);
+      // Paste from clipboard — bind at WINDOW level with capture so it runs
+      // before Shiny/textarea handlers can swallow it. Handles both items[] and files[].
+      function handlePasteEvent(e) {
+        var cd = e.clipboardData || window.clipboardData;
+        if (!cd) return;
         var handled = false;
-        items.forEach(function(item) {
-          if (item.type && item.type.startsWith('image/')) {
-            var f = item.getAsFile();
-            if (f) { readFileAsBase64(f); handled = true; }
-          } else if (item.kind === 'file') {
-            var f = item.getAsFile();
-            if (f) { readFileAsBase64(f); handled = true; }
-          }
+        // Try files[] first (most reliable for screenshots)
+        var files = cd.files ? Array.from(cd.files) : [];
+        files.forEach(function(f) {
+          if (f) { readFileAsBase64(f); handled = true; }
         });
-        if (handled) {
-          console.log('[tsifl] Image pasted, total pending:', pendingImages.length);
-          try { ta.focus(); } catch(e) {}
+        // Fallback to items[]
+        if (!handled && cd.items) {
+          Array.from(cd.items).forEach(function(item) {
+            if (item.kind === 'file' || (item.type && item.type.startsWith('image/'))) {
+              var f = item.getAsFile();
+              if (f) { readFileAsBase64(f); handled = true; }
+            }
+          });
         }
-      });
+        if (handled) {
+          e.preventDefault();
+          e.stopPropagation();
+          console.log('[tsifl] Image pasted, total pending:', pendingImages.length);
+          var ta = document.getElementById('user_input');
+          if (ta) { try { ta.focus(); } catch(_) {} }
+        }
+      }
+      window.addEventListener('paste', handlePasteEvent, true);
+      document.addEventListener('paste', handlePasteEvent, true);
 
       // Read any file → base64
       function readFileAsBase64(file) {
@@ -524,11 +544,11 @@ run_tsifl_server <- function(port = 7444) {
         var btn = document.getElementById('send_btn');
         if (btn) btn.textContent = 'Sending...';
 
-        // Pass images
-        try {
-          Shiny.setInputValue('pending_images', JSON.stringify(window._tsiflImages || []));
-          if (window._tsiflImages) window._tsiflImages.length = 0;
-        } catch(e) {}
+        // Pack images directly into send_message payload to avoid race
+        var imgPayload = JSON.stringify(window._tsiflImages || []);
+        if (window._tsiflImages) window._tsiflImages.length = 0;
+        try { updatePreview(); } catch(e) {}
+        console.log('[tsifl] Sending with images:', imgPayload.length, 'chars');
 
         // Hide old textarea and create new one
         ta.style.display = 'none';
@@ -551,8 +571,8 @@ run_tsifl_server <- function(port = 7444) {
           }
         });
 
-        // Send message to Shiny
-        Shiny.setInputValue('send_message', msg, {priority: 'event'});
+        // Send message to Shiny with images embedded in payload
+        Shiny.setInputValue('send_message', JSON.stringify({msg: msg, images: imgPayload, ts: Date.now()}), {priority: 'event'});
       };
 
       // Enter key sends (Shift+Enter for newline)
@@ -749,6 +769,13 @@ run_tsifl_server <- function(port = 7444) {
     messages    <- shiny::reactiveVal(list())
     tasks_left  <- shiny::reactiveVal(NA)
 
+    # Server-side heartbeat — keeps the session alive even when viewer tab
+    # is inactive and JS keepalive stops running
+    shiny::observe({
+      shiny::invalidateLater(10000)  # every 10 seconds
+      invisible(NULL)  # no-op, just prevent session GC
+    })
+
     # Status helper — sends phase to JS for animated rotation
     set_status <- function(phase, text = NULL) {
       session$sendCustomMessage("tsifl_status", list(phase = phase, text = text))
@@ -883,6 +910,7 @@ run_tsifl_server <- function(port = 7444) {
       }
     )
 
+
     get_r_context <- function() {
       # (B) Fire a one-shot capture as safety net (in case the watcher isn't running)
       tryCatch(
@@ -980,16 +1008,60 @@ run_tsifl_server <- function(port = 7444) {
       }
     }, ignoreInit = TRUE)
 
-    shiny::observeEvent(input$send_message, {
-      msg <- trimws(input$send_message)
-      if (nchar(msg) == 0) return()
+    # Poll the backend for cross-app R jobs sent from Excel (every 5s)
+    seen_r_jobs <- new.env(parent = emptyenv())
+    shiny::observe({
+      shiny::invalidateLater(5000)
+      tryCatch({
+        resp <- httr2::request(BACKEND_URL) |>
+          httr2::req_url_path_append("transfer", "pending", "rstudio") |>
+          httr2::req_options(ssl_verifypeer = 0) |>
+          httr2::req_timeout(5) |>
+          httr2::req_perform()
+        pending <- httr2::resp_body_json(resp, simplifyVector = FALSE)$pending
+        if (is.list(pending) && length(pending) > 0) {
+          for (p in pending) {
+            if (identical(p$data_type, "r_job") && !is.null(p$transfer_id) &&
+                is.null(seen_r_jobs[[p$transfer_id]])) {
+              seen_r_jobs[[p$transfer_id]] <- TRUE
+              # Fetch the full transfer to get the prompt
+              tryCatch({
+                full_resp <- httr2::request(BACKEND_URL) |>
+                  httr2::req_url_path_append("transfer", p$transfer_id) |>
+                  httr2::req_options(ssl_verifypeer = 0) |>
+                  httr2::req_timeout(5) |>
+                  httr2::req_perform()
+                full <- httr2::resp_body_json(full_resp, simplifyVector = FALSE)
+                job_prompt <- full$data
+                if (is.character(job_prompt) && nchar(job_prompt) > 0) {
+                  session$sendCustomMessage("trigger_send", list(msg = job_prompt))
+                }
+              }, error = function(e) {})
+            }
+          }
+        }
+      }, error = function(e) {})
+    })
 
-      # Capture pending images from JS
-      images_json <- input$pending_images
+
+    shiny::observeEvent(input$send_message, {
+      raw <- input$send_message
+      if (is.null(raw) || nchar(raw) == 0) return()
+
+      # New format: JSON {msg, images, ts}. Fallback: plain string.
+      msg <- ""
       images <- list()
-      if (!is.null(images_json) && nchar(images_json) > 2) {
-        images <- jsonlite::fromJSON(images_json, simplifyVector = FALSE)
+      parsed <- tryCatch(jsonlite::fromJSON(raw, simplifyVector = FALSE), error = function(e) NULL)
+      if (is.list(parsed) && !is.null(parsed$msg)) {
+        msg <- trimws(parsed$msg)
+        if (!is.null(parsed$images) && nchar(parsed$images) > 2) {
+          images <- jsonlite::fromJSON(parsed$images, simplifyVector = FALSE)
+        }
+      } else {
+        msg <- trimws(raw)
       }
+      if (nchar(msg) == 0) return()
+      cat("[tsifl] send_message received:", length(images), "images\n")
 
       # Input already cleared by JS — just show user message + start thinking
       add_message("user", msg, images = if (length(images) > 0) images else NULL)
@@ -1008,6 +1080,10 @@ run_tsifl_server <- function(port = 7444) {
         body$images <- images
       }
 
+      # Capture locals so the deferred callback can access them
+      local_msg <- msg
+      local_wants_excel <- grepl("excel|export", msg, ignore.case = TRUE)
+
       # Wait for Shiny to flush UI updates, THEN start the blocking HTTP call
       session$onFlushed(function() {
         later::later(function() {
@@ -1023,7 +1099,9 @@ run_tsifl_server <- function(port = 7444) {
 
           set_status("generating")
           data <- httr2::resp_body_json(resp, simplifyVector = FALSE)
-          add_message("assistant", data$reply)
+          if (!is.null(data$reply) && nchar(trimws(data$reply)) > 0) {
+            add_message("assistant", data$reply)
+          }
 
           if (!is.null(data$tasks_remaining) && data$tasks_remaining >= 0)
             tasks_left(data$tasks_remaining)
@@ -1070,7 +1148,7 @@ run_tsifl_server <- function(port = 7444) {
           r_code_executed <- FALSE
           for (action in all_actions) {
             tryCatch({
-              execute_r_action(action, add_message, r_context)
+              execute_r_action(action, add_message, r_context, user_wants_excel = local_wants_excel)
               if (identical(action$type, "run_r_code")) r_code_executed <- TRUE
             }, error = function(e) {
               add_message("action", paste0("Error: ", e$message))
@@ -1102,7 +1180,7 @@ run_tsifl_server <- function(port = 7444) {
                 phase1_reply <- if (!is.null(data$reply)) substr(data$reply, 1, 3000) else ""
                 followup_msg <- paste0(
                   "[R OUTPUT INTERPRETATION]\n",
-                  "The user asked: \"", msg, "\"\n\n",
+                  "The user asked: \"", local_msg, "\"\n\n",
                   "Your earlier analysis identified these questions/tasks:\n", phase1_reply, "\n\n",
                   "R code executed:\n```r\n", substr(r_codes, 1, 2000), "\n```\n\n",
                   "R output:\n```\n", substr(r_output, 1, 8000), "\n```\n\n",
@@ -1117,7 +1195,8 @@ run_tsifl_server <- function(port = 7444) {
                   "Example format:\n",
                   "**a.** Categorical variables: sex, smoker\n\n",
                   "**b.** F-statistic p-value is **0.00** (< 0.05), model is significant\n\n",
-                  "**c.** R-squared = **0.7509**, meaning 75.09% of variation is explained"
+                  "**c.** R-squared = **0.7509**, meaning 75.09% of variation is explained\n\n",
+                  "End your reply with a single short line asking if the user wants a plot or any additional analysis. Do NOT say 'Done' or 'let me know if you'd like changes'."
                 )
 
                 followup_body <- list(
@@ -1157,7 +1236,7 @@ run_tsifl_server <- function(port = 7444) {
     })
 
     # ── Action executor ──────────────────────────────────────────────────────
-    execute_r_action <- function(action, add_message, r_context = list()) {
+    execute_r_action <- function(action, add_message, r_context = list(), user_wants_excel = FALSE) {
       type    <- action$type
       payload <- action$payload
 
@@ -1222,16 +1301,13 @@ run_tsifl_server <- function(port = 7444) {
         plot_path <- "/tmp/.tsifl_last_plot.png"
         if (code_has_plot) {
           try(unlink(plot_path), silent = TRUE)
-          open_snippet <- sprintf(
-            'invisible(try(grDevices::png("%s", width=1000, height=700, res=150), silent=TRUE))\n',
-            plot_path
+          # Run code normally so plot renders in RStudio Plots pane, then
+          # copy the current device to png (and ggsave as fallback for ggplot).
+          save_snippet <- sprintf(
+            '\ninvisible(try({ if (exists(".Last.value") && inherits(.Last.value, "ggplot")) print(.Last.value) }, silent=TRUE))\ninvisible(try(grDevices::dev.copy(grDevices::png, filename="%s", width=1000, height=700, res=150), silent=TRUE))\ninvisible(try(grDevices::dev.off(), silent=TRUE))\ninvisible(try({ if (!file.exists("%s") || file.info("%s")$size < 200) { ggplot2::ggsave("%s", width=8, height=6, dpi=150) } }, silent=TRUE))',
+            plot_path, plot_path, plot_path, plot_path
           )
-          # After code: print last ggplot if any (ggsave fallback), then close device
-          close_snippet <- sprintf(
-            '\ninvisible(try({ if (exists(".Last.value") && inherits(.Last.value, "ggplot")) print(.Last.value) }, silent=TRUE))\ninvisible(try(grDevices::dev.off(), silent=TRUE))\ninvisible(try({ if (!file.exists("%s") || file.info("%s")$size < 200) { ggplot2::ggsave("%s", width=8, height=6, dpi=150) } }, silent=TRUE))',
-            plot_path, plot_path, plot_path
-          )
-          code_to_run <- paste0(open_snippet, code, close_snippet)
+          code_to_run <- paste0(code, save_snippet)
         }
 
         send_err <- ""
@@ -1331,8 +1407,7 @@ run_tsifl_server <- function(port = 7444) {
             # Cross-app capture is best-effort, don't break the main flow
           })
 
-          # Auto-export plot to transfer store (plot was saved atomically with the code)
-          if (code_has_plot) {
+          if (code_has_plot && isTRUE(user_wants_excel)) {
             tryCatch({
               if (file.exists(plot_path) && file.info(plot_path)$size > 100) {
                 img_b64 <- base64enc::base64encode(plot_path)
@@ -1633,19 +1708,21 @@ run_tsifl_server <- function(port = 7444) {
   }
 
   # ── Launch ─────────────────────────────────────────────────────────────────
-  # Set options to prevent idle timeout — keep the Shiny app alive indefinitely
+  # Prevent idle timeout — keep alive indefinitely
   options(
     shiny.autoreload = FALSE,
-    shiny.maxRequestSize = 50 * 1024^2  # 50MB max upload
+    shiny.maxRequestSize = 50 * 1024^2,  # 50MB max upload
+    shiny.idle.timeout = 0,              # Never kill idle sessions
+    shiny.sanitize.errors = FALSE,       # Show real errors for debugging
+    httpuv.timeout = 0                   # Never timeout httpuv connections
   )
 
   shiny_app <- shiny::shinyApp(
     ui = ui,
     server = server,
     options = list(
-      # Disable session idle timeout (default is 0 which means disconnect on WebSocket close)
-      # Setting to very large number keeps session alive
-      sessionTimeout = 0
+      sessionTimeout = 86400000,  # 24 hours in ms
+      ws.max.idle = 86400         # WebSocket max idle: 24 hours (seconds)
     )
   )
 

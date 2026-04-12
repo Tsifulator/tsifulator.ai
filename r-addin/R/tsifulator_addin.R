@@ -8,7 +8,7 @@ tsifulator_addin <- function() {
 
   PORT <- 7444
 
-  # ── Check if already running ───────────────────────────────────────────────
+  # ── Check if already running & responsive ──────────────────────────────────
   already_up <- tryCatch({
     con <- url(paste0("http://127.0.0.1:", PORT), open = "r")
     close(con)
@@ -16,8 +16,23 @@ tsifulator_addin <- function() {
   }, error = function(e) FALSE)
 
   if (already_up) {
-    rstudioapi::viewer(paste0("http://127.0.0.1:", PORT))
-    return(invisible(NULL))
+    # Verify it's actually responsive (not a zombie port)
+    responsive <- tryCatch({
+      resp <- httr2::request(paste0("http://127.0.0.1:", PORT)) |>
+        httr2::req_timeout(3) |>
+        httr2::req_perform()
+      TRUE
+    }, error = function(e) FALSE)
+
+    if (responsive) {
+      rstudioapi::viewer(paste0("http://127.0.0.1:", PORT))
+      return(invisible(NULL))
+    } else {
+      # Zombie process — kill it so we can restart fresh
+      message("tsifl: stale session detected, restarting...")
+      tryCatch(system(paste0("lsof -ti:", PORT, " | xargs kill -9"), intern = TRUE), error = function(e) {})
+      Sys.sleep(0.5)
+    }
   }
 
   # ── Write a tiny launcher script for the background job ───────────────────
@@ -30,21 +45,17 @@ tsifulator_addin <- function() {
   )
 
   # ── Launch as RStudio background job ──────────────────────────────────────
-  # The job runs the Shiny server in a SEPARATE R process.
-  # The main R session stays completely free:
-  #   - sendToConsole() from the job goes to the main console
-  #   - plots in the main console go straight to the Plots pane
   rstudioapi::jobRunScript(
     path       = job_script,
     name       = "\u26a1 tsifl",
     workingDir = getwd()
   )
 
-  # ── Wait for the server to start (up to 8 seconds) ────────────────────────
-  message("tsifl: starting background server...")
+  # ── Wait for the server to start (faster polling: 0.25s intervals, 5s max)
+  message("tsifl: starting...")
   started <- FALSE
-  for (i in seq_len(16)) {
-    Sys.sleep(0.5)
+  for (i in seq_len(20)) {
+    Sys.sleep(0.25)
     ok <- tryCatch({
       con <- url(paste0("http://127.0.0.1:", PORT), open = "r")
       close(con)
@@ -54,13 +65,13 @@ tsifulator_addin <- function() {
   }
 
   if (!started) {
-    message("tsifl: server took longer than expected \u2014 try running Addins > tsifl again in a moment.")
+    message("tsifl: server took longer than expected \u2014 try again in a moment.")
     return(invisible(NULL))
   }
 
   # ── Open the UI in the RStudio Viewer pane ────────────────────────────────
   rstudioapi::viewer(paste0("http://127.0.0.1:", PORT))
-  message("tsifl: ready. Your R console is free \u2014 plots will appear in the Plots pane.")
+  message("tsifl: ready \u2713")
 
   invisible(NULL)
 }

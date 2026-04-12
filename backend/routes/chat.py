@@ -505,6 +505,11 @@ class ChatResponse(BaseModel):
     model_used: str = ""
     cu_session_id: str | None = None  # Computer use session ID (if any actions need GUI)
 
+@router.get("/debug/postprocess-version")
+async def debug_postprocess_version():
+    """Verify which version of postprocessing code is deployed."""
+    return {"e15_formula": "=I5", "version": "v2_fixed_2026-04-12", "data_table_injection": "disabled"}
+
 @router.get("/debug")
 async def debug():
     """Quick test: does the tool call work and return actions?"""
