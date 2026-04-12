@@ -119,12 +119,15 @@ def _postprocess_excel_actions(result: dict, context: dict) -> dict:
             if removed:
                 print(f"[postprocess] Removed {removed} broken E15/L15 actions from model output")
 
-            # Inject correct formulas
+            # Inject correct formulas — SIMnet requires E15=I5 and L15=I5
+            # These are the base formulas for one-var and two-var data tables.
+            # The actual data table outputs (E16:E23, M16:T23) MUST be created
+            # via Excel's Data Table GUI (desktop agent), not formula approximations.
             injected.append({
                 "type": "write_formula",
                 "payload": {
                     "cell": "E15",
-                    "formula": "=AVERAGE(C5:C11)+AVERAGE(D5:D11)+AVERAGE(E5:E11)+AVERAGE(F5:F11)+G5+AVERAGE(H5:H11)",
+                    "formula": "=I5",
                     "sheet": name
                 }
             })
@@ -132,11 +135,11 @@ def _postprocess_excel_actions(result: dict, context: dict) -> dict:
                 "type": "write_formula",
                 "payload": {
                     "cell": "L15",
-                    "formula": "=AVERAGE(C5:C11)+AVERAGE(D5:D11)+E5+AVERAGE(F5:F11)+G5+AVERAGE(H5:H11)",
+                    "formula": "=I5",
                     "sheet": name
                 }
             })
-            print(f"[postprocess] FORCE-injected E15 and L15 formulas on {name}")
+            print(f"[postprocess] FORCE-injected E15=I5 and L15=I5 on {name}")
 
             # FORCE-inject B5:B11 day names (model never writes these correctly)
             import re as _re
@@ -191,47 +194,18 @@ def _postprocess_excel_actions(result: dict, context: dict) -> dict:
                 _re.match(r"B1[6-9]$|B20$", a.get("payload", {}).get("cell", "").upper())
             )]
 
-            # FORCE-inject data table OUTPUT formulas
-            # Office.js can't run Data Table wizard, so we inject equivalent formulas
-            # One-var table: E15 varies G5 (dinner). E16:E23 = E15 with G5 replaced by D16:D23
-            #   => =$E$15-$G$5+D16 (since formula is linear in G5)
-            # Remove any existing model writes to E16:E23
+            # Data table outputs (E16:E23, M16:T23) must be created via Excel's
+            # Data Table GUI dialog — the desktop agent handles this.
+            # Remove any model writes to those cells so they don't conflict.
             one_var_cells = {f"E{r}" for r in range(16, 24)}
-            actions[:] = [a for a in actions if not (
-                a.get("payload", {}).get("sheet", "") == name and
-                a.get("payload", {}).get("cell", "").upper() in one_var_cells
-            )]
-            for row in range(16, 24):
-                injected.append({
-                    "type": "write_formula",
-                    "payload": {
-                        "cell": f"E{row}",
-                        "formula": f"=$E$15-$G$5+D{row}",
-                        "sheet": name
-                    }
-                })
-            print(f"[postprocess] FORCE-injected one-var data table outputs E16:E23 on {name}")
-
-            # Two-var table: L15 varies E5 (lunch, columns) and G5 (dinner, rows)
-            # M16:T23 = L15 with E5 replaced by column header and G5 replaced by row input
-            #   => =$L$15-$E$5-$G$5+M$15+$L16 (linear in both E5 and G5)
             two_var_cols = ["M", "N", "O", "P", "Q", "R", "S", "T"]
             two_var_cells = {f"{c}{r}" for c in two_var_cols for r in range(16, 24)}
+            all_dt_cells = one_var_cells | two_var_cells
             actions[:] = [a for a in actions if not (
                 a.get("payload", {}).get("sheet", "") == name and
-                a.get("payload", {}).get("cell", "").upper() in two_var_cells
+                a.get("payload", {}).get("cell", "").upper() in all_dt_cells
             )]
-            for col in two_var_cols:
-                for row in range(16, 24):
-                    injected.append({
-                        "type": "write_formula",
-                        "payload": {
-                            "cell": f"{col}{row}",
-                            "formula": f"=$L$15-$E$5-$G$5+{col}$15+$L{row}",
-                            "sheet": name
-                        }
-                    })
-            print(f"[postprocess] FORCE-injected two-var data table outputs M16:T23 on {name}")
+            print(f"[postprocess] Cleared model writes to data table output cells on {name}")
 
             # FORCE-inject number formatting for Calorie Journal
             # Main data area: comma style
@@ -293,32 +267,10 @@ def _postprocess_excel_actions(result: dict, context: dict) -> dict:
         )
 
         if not h_has_data and not stats_targeted:
-            first_data_row = 5  # typical SIMnet pattern
-            last_data_row = first_data_row + data_rows - 1
-            data_range = f"{variance_col_letter}{first_data_row}:{variance_col_letter}{last_data_row}"
-
-            # Inject navigate + stats labels + formulas
-            injected.append({"type": "navigate_sheet", "payload": {"sheet": name}})
-            stats = [
-                ("H4", "Statistic", None), ("I4", "Variance", None),
-                ("H5", "Mean", f"=AVERAGE({data_range})"),
-                ("H6", "Median", f"=MEDIAN({data_range})"),
-                ("H7", "Mode", f"=MODE.SNGL({data_range})"),
-                ("H8", "Standard Deviation", f"=STDEV.S({data_range})"),
-                ("H9", "Sample Variance", f"=VAR.S({data_range})"),
-                ("H10", "Minimum", f"=MIN({data_range})"),
-                ("H11", "Maximum", f"=MAX({data_range})"),
-                ("H12", "Count", f"=COUNT({data_range})"),
-            ]
-            for cell, label, formula in stats:
-                if formula:
-                    injected.append({"type": "write_formula", "payload": {"cell": cell.replace("H", "I"), "formula": formula, "sheet": name}})
-                injected.append({"type": "write_cell", "payload": {"cell": cell, "value": label, "sheet": name}})
-
-            # Format stats
-            injected.append({"type": "set_number_format", "payload": {"range": f"I5:I12", "format": "#,##0.00", "sheet": name}})
-            injected.append({"type": "format_range", "payload": {"range": "H4:I4", "bold": True, "sheet": name}})
-            print(f"[postprocess] Injected descriptive statistics for {name}")
+            # Don't inject manual stats — SIMnet requires Descriptive Statistics
+            # to be generated via the Analysis ToolPak (Data Analysis > Descriptive Statistics).
+            # The desktop agent handles this as a run_toolpak action.
+            print(f"[postprocess] Skipping manual stats injection for {name} — ToolPak should generate these")
 
     # --- 3. Fix Workout Plan issues ---
     import re
@@ -457,17 +409,16 @@ def _detect_and_inject_data_tables(sheet_name: str, preview: list, formulas: lis
                 has_e15_formula = "E15" in targeted_formulas
                 print(f"[postprocess/dt] E15 empty: {e15_empty}, has formula in actions: {has_e15_formula}")
                 if e15_empty and not has_e15_formula:
-                    # Detect which column has meal data (look for SUM formulas in column I)
-                    # Standard Calorie Journal: C=Breakfast, D=MorningSnack, E=Lunch, F=AfternoonSnack, G=Dinner, H=Dessert
+                    # SIMnet requires E15 = =I5 (references the daily total SUM)
                     injected.append({
                         "type": "write_formula",
                         "payload": {
                             "cell": "E15",
-                            "formula": "=AVERAGE(C5:C11)+AVERAGE(D5:D11)+AVERAGE(E5:E11)+AVERAGE(F5:F11)+G5+AVERAGE(H5:H11)",
+                            "formula": "=I5",
                             "sheet": sheet_name
                         }
                     })
-                    print(f"[postprocess] Injected one-var data table formula E15 on {sheet_name}")
+                    print(f"[postprocess] Injected one-var data table formula E15=I5 on {sheet_name}")
     except (IndexError, TypeError):
         pass
 
@@ -493,15 +444,16 @@ def _detect_and_inject_data_tables(sheet_name: str, preview: list, formulas: lis
                 has_l15_formula = "L15" in targeted_formulas
                 print(f"[postprocess/dt] L15 empty: {l15_empty}, has formula in actions: {has_l15_formula}")
                 if l15_empty and not has_l15_formula:
+                    # SIMnet requires L15 = =I5 (same as E15)
                     injected.append({
                         "type": "write_formula",
                         "payload": {
                             "cell": "L15",
-                            "formula": "=AVERAGE(C5:C11)+AVERAGE(D5:D11)+E5+AVERAGE(F5:F11)+G5+AVERAGE(H5:H11)",
+                            "formula": "=I5",
                             "sheet": sheet_name
                         }
                     })
-                    print(f"[postprocess] Injected two-var data table formula L15 on {sheet_name}")
+                    print(f"[postprocess] Injected two-var data table formula L15=I5 on {sheet_name}")
     except (IndexError, TypeError):
         pass
 
