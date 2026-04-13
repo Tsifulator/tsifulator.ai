@@ -363,6 +363,17 @@ def run_computer_use_loop(instructions: str, session_id: str):
     return {"status": "failed", "error": "Max iterations reached", "steps_taken": iteration}
 
 
+def _is_cancelled(http, session_id: str) -> bool:
+    """Check if the backend session has been cancelled by the user."""
+    try:
+        resp = http.get(f"{BACKEND_URL}/computer-use/status/{session_id}")
+        if resp.status_code == 200:
+            return resp.json().get("status") == "cancelled"
+    except Exception:
+        pass
+    return False
+
+
 def poll_and_execute():
     """Main loop: poll backend for pending tasks, execute them."""
     print(f"[agent] Tsifl Desktop Agent starting...")
@@ -420,9 +431,12 @@ def poll_and_execute():
 
                     if known_actions:
                         print(f"[agent] AppleScript path: {len(known_actions)} known actions")
-                        result = applescript_execute(known_actions, context)
+                        result = applescript_execute(
+                            known_actions, context,
+                            cancel_check=lambda: _is_cancelled(http, session_id),
+                        )
 
-                    if unknown_actions:
+                    if unknown_actions and not _is_cancelled(http, session_id):
                         print(f"[agent] Computer Use fallback: {len(unknown_actions)} unknown actions")
                         from services_local import build_instructions
                         instructions = build_instructions(unknown_actions, context)
@@ -436,6 +450,12 @@ def poll_and_execute():
 
                     if not result:
                         result = {"status": "completed", "message": "No actions to execute", "steps_taken": 0}
+
+                    # If cancelled mid-run, override status
+                    if _is_cancelled(http, session_id):
+                        result["status"] = "cancelled"
+                        result["message"] = "Stopped by user"
+                        print(f"[agent] Session {session_id} was cancelled")
 
                     # Report result back to backend
                     http.post(

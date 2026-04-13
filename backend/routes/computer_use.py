@@ -97,6 +97,20 @@ async def claim_session(session_id: str):
     return {"status": "running"}
 
 
+@router.post("/cancel/{session_id}")
+async def cancel_session(session_id: str):
+    """Cancel a running or pending session (called by the add-in Stop button)."""
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session["status"] in ("completed", "failed", "cancelled"):
+        return {"status": session["status"], "message": "Already finished"}
+    session["status"] = "cancelled"
+    session["error"] = "Cancelled by user"
+    print(f"[computer_use] Session {session_id} CANCELLED by user")
+    return {"status": "cancelled"}
+
+
 @router.post("/complete/{session_id}")
 async def complete_session(session_id: str, report: CompletionReport):
     """Desktop agent reports completion of a session."""

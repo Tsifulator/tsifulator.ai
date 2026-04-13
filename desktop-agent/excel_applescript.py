@@ -97,36 +97,61 @@ def dismiss_excel_dialogs():
     time.sleep(0.2)
 
 
+def ensure_clean_state():
+    """Make sure Excel is in a clean, predictable state before starting an action.
+    Dismisses dialogs, cancels editing, selects A1."""
+    activate_excel()
+    time.sleep(0.3)
+    # Dismiss any open dialogs/menus/cell editing
+    for _ in range(4):
+        pyautogui.press('escape')
+        time.sleep(0.15)
+    time.sleep(0.3)
+    # Select A1 to ensure we're not in an unexpected cell
+    run_applescript('tell application "Microsoft Excel" to select range "A1" of active sheet')
+    time.sleep(0.2)
+
+
 def search_menu(search_term: str, wait: float = 1.0) -> bool:
     """Use Help menu search (Cmd+Shift+/) to find and click a menu item.
     Returns True if the search was initiated successfully.
 
-    IMPORTANT: This function verifies the Help search field is open before
-    typing, to avoid accidentally typing into a cell.
+    Strategy: use AppleScript to click the Help menu bar item first (reliable),
+    then use the search field that appears at the top.
+    Fallback: Cmd+Shift+/ shortcut.
     """
-    # First make sure Excel is focused and no cell is being edited
+    # 1. Make sure Excel is focused and nothing is being edited
     activate_excel()
-    pyautogui.press('escape')  # Cancel any cell editing
+    time.sleep(0.3)
+    # Dismiss any open dialogs/cell editing with multiple Escapes
+    for _ in range(3):
+        pyautogui.press('escape')
+        time.sleep(0.15)
     time.sleep(0.3)
 
-    # Open Help menu search
-    pyautogui.hotkey('command', 'shift', '/')
-    time.sleep(2.0)  # Wait for Help menu to fully appear
+    # 2. Open Help menu search via AppleScript (most reliable)
+    # This clicks the Help menu bar item which has a search field at top
+    result = run_applescript('''
+tell application "System Events"
+    tell process "Microsoft Excel"
+        -- Click Help menu to open it (search field is at top)
+        click menu bar item "Help" of menu bar 1
+    end tell
+end tell
+''')
+    time.sleep(1.0)
 
-    # Press Escape once more to ensure no cell is in edit mode
-    # (the Help search field stays open after Escape if it was already focused)
-    pyautogui.press('escape')
-    time.sleep(0.3)
+    if "ERROR" in result:
+        # Fallback: use keyboard shortcut
+        print(f"[excel] Help menu click failed, trying Cmd+Shift+/")
+        pyautogui.hotkey('command', 'shift', '/')
+        time.sleep(1.5)
 
-    # Re-open Help search in case Escape closed it
-    pyautogui.hotkey('command', 'shift', '/')
-    time.sleep(1.5)
-
-    # Now type the search term
+    # 3. Type the search term — the Help menu search field should be focused
     pyautogui.typewrite(search_term, interval=0.04)
     time.sleep(wait)
 
-    # Select the first result
+    # 4. Select the first result
     pyautogui.press('enter')
     time.sleep(1.0)
     return True
@@ -183,13 +208,8 @@ def do_data_table(table_range: str, row_input: str = "", col_input: str = "",
     """
     steps = []
 
-    # 0. Clean slate — dismiss any leftover dialogs/menus from prior actions
-    pyautogui.press('escape')
-    time.sleep(0.2)
-    pyautogui.press('escape')
-    time.sleep(0.2)
-    activate_excel()
-    time.sleep(0.5)
+    # 0. Clean slate
+    ensure_clean_state()
 
     # 1. Switch sheet if needed
     if sheet:
@@ -316,15 +336,17 @@ def do_goal_seek(set_cell: str, to_value: str, changing_cell: str,
 
 def do_scenario_manager(name: str, changing_cells: str, values: list = None,
                         sheet: str = ""):
-    """Create a scenario via Scenario Manager."""
+    """Create a scenario via Scenario Manager.
+    Uses Help menu search to open Scenario Manager reliably."""
     steps = []
+
+    # Clean state before starting
+    ensure_clean_state()
 
     if sheet:
         switch_sheet(sheet)
         steps.append(f"Switch to '{sheet}'")
         time.sleep(0.3)
-
-    activate_excel()
 
     # Open Scenario Manager via Help search
     search_menu("Scenario Manager")
@@ -387,12 +409,12 @@ def do_scenario_summary(result_cells: str, sheet: str = ""):
     """Create a Scenario Summary report."""
     steps = []
 
+    ensure_clean_state()
+
     if sheet:
         switch_sheet(sheet)
         steps.append(f"Switch to '{sheet}'")
         time.sleep(0.3)
-
-    activate_excel()
 
     # Open Scenario Manager
     search_menu("Scenario Manager")
@@ -435,12 +457,12 @@ def do_solver(objective_cell: str, goal: str, changing_cells: str,
     """
     steps = []
 
+    ensure_clean_state()
+
     if sheet:
         switch_sheet(sheet)
         steps.append(f"Switch to '{sheet}'")
         time.sleep(0.3)
-
-    activate_excel()
 
     # Open Solver via Help search
     search_menu("Solver")
@@ -591,12 +613,12 @@ def do_data_analysis(tool_name: str, input_range: str, output_range: str = "",
     if not options:
         options = {}
 
+    ensure_clean_state()
+
     if sheet:
         switch_sheet(sheet)
         steps.append(f"Switch to '{sheet}'")
         time.sleep(0.3)
-
-    activate_excel()
 
     # Open Data Analysis via Help search
     search_menu("Data Analysis")
@@ -762,7 +784,7 @@ def do_data_analysis(tool_name: str, input_range: str, output_range: str = "",
 def do_install_addins(addins: list):
     """Install Excel add-ins (Solver, Analysis ToolPak) via Tools > Excel Add-ins."""
     steps = []
-    activate_excel()
+    ensure_clean_state()
 
     search_menu("Excel Add-ins")
     time.sleep(1.0)
@@ -890,18 +912,33 @@ def execute_excel_action(action: dict) -> dict:
             return {"status": "unknown", "error": f"Unknown action type: {action_type}"}
 
     except Exception as e:
-        # Catch any unexpected errors, dismiss dialogs, and report
+        # Catch any unexpected errors, clean up, and report
         print(f"[excel] ERROR in {action_type}: {e}")
-        dismiss_excel_dialogs()
+        try:
+            _emergency_cleanup()
+        except Exception:
+            pass
         return {"status": "failed", "error": str(e), "steps": [f"Exception: {e}"]}
 
 
-def execute_all_actions(actions: list, context: dict = None) -> dict:
-    """Execute a list of structured Excel actions sequentially."""
+def execute_all_actions(actions: list, context: dict = None, cancel_check=None) -> dict:
+    """Execute a list of structured Excel actions sequentially.
+
+    cancel_check: optional callable returning True if the user pressed Stop.
+    """
     results = []
     all_ok = True
+    cancelled = False
 
     for i, action in enumerate(actions):
+        # Check for user cancellation before each action
+        if cancel_check and cancel_check():
+            print(f"[excel] ⛔ CANCELLED by user before action {i+1}/{len(actions)}")
+            cancelled = True
+            # Clean up: dismiss any open dialogs and return to safe state
+            _emergency_cleanup()
+            break
+
         print(f"[excel] Action {i+1}/{len(actions)}: {action.get('type')}")
         result = execute_excel_action(action)
         results.append(result)
@@ -916,9 +953,33 @@ def execute_all_actions(actions: list, context: dict = None) -> dict:
 
         time.sleep(0.5)
 
+    if cancelled:
+        return {
+            "status": "cancelled",
+            "message": f"Stopped by user after {len(results)}/{len(actions)} actions",
+            "results": results,
+            "steps_taken": len(results),
+        }
+
     return {
         "status": "completed" if all_ok else "partial",
         "message": f"Executed {len(actions)} actions ({sum(1 for r in results if r.get('status') == 'completed')}/{len(actions)} OK)",
         "results": results,
         "steps_taken": len(actions),
     }
+
+
+def _emergency_cleanup():
+    """Dismiss any open dialogs and return Excel to a safe state."""
+    print("[excel] Emergency cleanup — dismissing dialogs...")
+    for _ in range(5):
+        pyautogui.press('escape')
+        time.sleep(0.2)
+    # Try to select A1 to get back to a known state
+    try:
+        activate_excel()
+        time.sleep(0.3)
+        run_applescript('tell application "Microsoft Excel" to select range "A1" of active sheet')
+    except Exception:
+        pass
+    print("[excel] Cleanup done")

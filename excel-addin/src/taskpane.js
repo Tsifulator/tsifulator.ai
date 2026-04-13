@@ -750,12 +750,13 @@ async function handleSubmit() {
       setStatus("🖥️ Desktop automation running...");
       showTypingIndicator("automating");
       const cuSessionId = data.cu_session_id;
+      showStopButton(cuSessionId);
       let cuDone = false;
       let cuPolls = 0;
-      const maxPolls = 300; // 5 minutes max (1s intervals) — Data Table + Solver GUI needs time
+      const maxPolls = 300; // 5 minutes max (1s intervals)
       while (!cuDone && cuPolls < maxPolls) {
         cuPolls++;
-        await new Promise(r => setTimeout(r, 1000)); // wait 1 second
+        await new Promise(r => setTimeout(r, 1000));
         try {
           const statusResp = await fetch(`${BACKEND_URL}/computer-use/status/${cuSessionId}`);
           if (statusResp.ok) {
@@ -766,13 +767,16 @@ async function handleSubmit() {
             } else if (statusData.status === "failed") {
               cuDone = true;
               appendMessage("assistant", `⚠️ Desktop automation failed: ${statusData.error || "unknown error"}`);
+            } else if (statusData.status === "cancelled") {
+              cuDone = true;
+              appendMessage("assistant", `🛑 Stopped.`);
             }
-            // else still running, keep polling
           }
         } catch (pollErr) {
           console.warn("[tsifl] CU poll error:", pollErr.message);
         }
       }
+      hideStopButton();
       hideTypingIndicator();
       if (!cuDone) {
         appendMessage("assistant", "⚠️ Desktop automation timed out. Check Excel for partial results.");
@@ -2282,6 +2286,50 @@ function hideTypingIndicator() {
 
 function setStatus(text)           { document.getElementById("status-bar").textContent = text; }
 function setSubmitEnabled(enabled) { document.getElementById("submit-btn").disabled = !enabled; }
+
+// ── Stop Button (emergency abort for desktop automation) ────────────────────
+
+let _activeStopSessionId = null;
+
+function showStopButton(sessionId) {
+  _activeStopSessionId = sessionId;
+  hideStopButton(); // remove any stale one
+  const btn = document.createElement("button");
+  btn.id = "stop-automation-btn";
+  btn.textContent = "Stop";
+  btn.title = "Stop desktop automation";
+  btn.style.cssText = `
+    position: fixed; bottom: 60px; right: 16px; z-index: 9999;
+    background: #e74c3c; color: #fff; border: none; border-radius: 8px;
+    padding: 8px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25); transition: opacity 0.2s;
+  `;
+  btn.addEventListener("click", async () => {
+    btn.textContent = "Stopping...";
+    btn.disabled = true;
+    try {
+      await fetch(`${BACKEND_URL}/computer-use/cancel/${sessionId}`, { method: "POST" });
+    } catch (e) {
+      console.warn("[tsifl] Cancel request failed:", e.message);
+    }
+  });
+  document.body.appendChild(btn);
+}
+
+function hideStopButton() {
+  _activeStopSessionId = null;
+  const btn = document.getElementById("stop-automation-btn");
+  if (btn) btn.remove();
+}
+
+// Escape key triggers stop during automation
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && _activeStopSessionId) {
+    e.preventDefault();
+    const btn = document.getElementById("stop-automation-btn");
+    if (btn && !btn.disabled) btn.click();
+  }
+});
 
 // ── Action Summary Helper ────────────────────────────────────────────────────
 
