@@ -747,7 +747,6 @@ async function handleSubmit() {
     if (data.cu_session_id) {
       setStatus("🖥️ Desktop automation running...");
       showTypingIndicator("automating");
-      appendMessage("assistant", "🖥️ Running desktop automation for advanced Excel features...");
       const cuSessionId = data.cu_session_id;
       let cuDone = false;
       let cuPolls = 0;
@@ -761,7 +760,7 @@ async function handleSubmit() {
             const statusData = await statusResp.json();
             if (statusData.status === "completed") {
               cuDone = true;
-              appendMessage("assistant", `✅ Desktop automation completed (${statusData.steps_taken} steps)`);
+              appendMessage("assistant", `✅ Done — advanced features applied.`);
             } else if (statusData.status === "failed") {
               cuDone = true;
               appendMessage("assistant", `⚠️ Desktop automation failed: ${statusData.error || "unknown error"}`);

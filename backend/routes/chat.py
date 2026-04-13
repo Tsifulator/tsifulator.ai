@@ -753,8 +753,7 @@ async def chat(request: ChatRequest):
         # poll /computer-use/pending, claim it, and execute via AppleScript+pyautogui.
         # Do NOT run execute_session() server-side (server can't control the user's screen).
         cu_session_id = create_session(cu_actions, request.context)
-        cu_note = f"\n\n*(🖥️ {len(cu_actions)} actions queued for desktop automation — session: {cu_session_id})*"
-        result["reply"] = result.get("reply", "") + cu_note
+        # Don't append verbose session info to the reply — the add-in shows its own loading animation
         print(f"[hybrid] Split: {len(addin_actions)} add-in + {len(cu_actions)} computer-use (session {cu_session_id})")
 
     return ChatResponse(
