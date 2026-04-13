@@ -1339,15 +1339,25 @@ async function executeAction(action) {
   }
 
   // ── autofit_columns ────────────────────────────────────────────────────────
-  // Autofit specific columns: { sheet?, columns: ["A","B","F"] } or { column: "F" }
+  // Autofit or set width: { sheet?, columns: ["A","B"], width?: 10 }
+  // Also accepts range: "L:L" format to extract column letter
   else if (type === "autofit_columns") {
     await Excel.run(async (ctx) => {
       const sheet   = getSheet(ctx, payload.sheet);
-      const cols    = payload.columns || (payload.column ? [payload.column] : null);
+      // Extract column list from columns, column, or range (e.g. "L:L")
+      let cols = payload.columns || (payload.column ? [payload.column] : null);
+      if (!cols && payload.range) {
+        const m = payload.range.match(/^([A-Z]+):/i);
+        if (m) cols = [m[1].toUpperCase()];
+      }
       if (cols) {
         for (const col of cols) {
           const colRange = sheet.getRange(`${col}:${col}`);
-          colRange.format.autofitColumns();
+          if (payload.width) {
+            colRange.format.columnWidth = payload.width * 7.5; // approx char-width to points
+          } else {
+            colRange.format.autofitColumns();
+          }
         }
       } else {
         // Autofit all used columns

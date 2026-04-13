@@ -111,15 +111,16 @@ def search_menu(search_term: str, wait: float = 1.0) -> bool:
 
     # Open Help menu search
     pyautogui.hotkey('command', 'shift', '/')
-    time.sleep(1.2)  # Wait longer for Help menu to appear
+    time.sleep(2.0)  # Wait for Help menu to fully appear
 
-    # Verify the Help search is actually open by checking if a menu bar
-    # search field appeared. We do this by checking the focused UI element.
-    # As a safety measure, press Escape and retry if needed.
-    # Brief pause to let Help search appear, then just type
-    # (Skip System Events focus check — causes AppleScript syntax errors
-    #  and Help search is reliable enough with Cmd+Shift+/)
-    time.sleep(0.5)
+    # Press Escape once more to ensure no cell is in edit mode
+    # (the Help search field stays open after Escape if it was already focused)
+    pyautogui.press('escape')
+    time.sleep(0.3)
+
+    # Re-open Help search in case Escape closed it
+    pyautogui.hotkey('command', 'shift', '/')
+    time.sleep(1.5)
 
     # Now type the search term
     pyautogui.typewrite(search_term, interval=0.04)
@@ -368,9 +369,16 @@ def do_scenario_manager(name: str, changing_cells: str, values: list = None,
     steps.append(f"Values: {values}")
     time.sleep(0.5)
 
-    # Close Scenario Manager
+    # Close Scenario Manager — click Close button explicitly
+    # After adding a scenario, focus returns to the scenario list.
+    # Tab to the Close button (last button: Add, Delete, Edit, Merge, Summary, Close)
+    # Press Escape first to ensure we're not in a sub-dialog, then
+    # use Cmd+. or Escape which triggers the Close button on the manager dialog
     pyautogui.press('escape')
     time.sleep(0.3)
+    # Double-check: press Escape again to ensure dialog is fully dismissed
+    pyautogui.press('escape')
+    time.sleep(0.5)
 
     return {"status": "completed", "steps": steps}
 
@@ -419,7 +427,7 @@ def do_scenario_summary(result_cells: str, sheet: str = ""):
 
 def do_solver(objective_cell: str, goal: str, changing_cells: str,
               constraints: list = None, save_scenario: str = "",
-              sheet: str = ""):
+              restore_original: bool = True, sheet: str = ""):
     """Run Solver with full constraint support.
 
     constraints format: [{"cell": "$D$5", "operator": "<=", "value": "100"}, ...]
@@ -526,23 +534,40 @@ def do_solver(objective_cell: str, goal: str, changing_cells: str,
     time.sleep(3.0)
 
     # Handle Solver Results dialog
+    # Dialog layout: "Keep Solver Solution" radio (selected by default),
+    #   "Restore Original Values" radio, then buttons area
+
+    if restore_original:
+        # Select "Restore Original Values" radio button
+        pyautogui.press('tab')   # Move to Restore Original Values radio
+        time.sleep(0.1)
+        pyautogui.press('space')  # Select it
+        time.sleep(0.2)
+        steps.append("Selected Restore Original Values")
+
     if save_scenario:
         # Click "Save Scenario..." button in Results dialog
-        # Tab through: Keep Solver Solution (selected), Restore Original Values,
-        #              then buttons area
-        for _ in range(3):
-            pyautogui.press('tab')
-            time.sleep(0.1)
+        # Tab to the Save Scenario button (past radio buttons into buttons area)
+        if restore_original:
+            # Already past Restore Original Values, tab to buttons
+            for _ in range(2):
+                pyautogui.press('tab')
+                time.sleep(0.1)
+        else:
+            # From Keep Solver Solution, tab past Restore Original Values to buttons
+            for _ in range(3):
+                pyautogui.press('tab')
+                time.sleep(0.1)
         pyautogui.press('enter')  # Save Scenario button
         time.sleep(0.5)
 
         # Enter scenario name
         pyautogui.typewrite(save_scenario, interval=0.03)
-        pyautogui.press('enter')
+        pyautogui.press('enter')  # OK to close scenario name dialog
         time.sleep(0.5)
         steps.append(f"Saved scenario: {save_scenario}")
 
-    # OK to keep solution
+    # OK to close Solver Results dialog
     pyautogui.press('enter')
     time.sleep(0.5)
 
@@ -842,6 +867,7 @@ def execute_excel_action(action: dict) -> dict:
                 changing_cells=payload.get("changing_cells", ""),
                 constraints=payload.get("constraints", []),
                 save_scenario=payload.get("name", "") if action_type == "save_solver_scenario" else "",
+                restore_original=payload.get("restore_original", True),
                 sheet=payload.get("sheet", ""),
             )
 
