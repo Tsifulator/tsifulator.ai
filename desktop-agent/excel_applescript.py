@@ -143,15 +143,17 @@ def ensure_clean_state():
 
 def verify_dialog(expected_title_fragment: str, timeout: float = 3.0) -> bool:
     """Check if a dialog/window containing expected_title_fragment is open.
-    Uses AppleScript to inspect the front window name."""
+    Checks: 1) front window name, 2) sheet dialogs, 3) any window with matching name."""
     start = time.time()
     while time.time() - start < timeout:
+        # Check front window name
         result = run_applescript('''
 tell application "System Events"
     tell process "Microsoft Excel"
         try
-            set winName to name of front window
-            return winName
+            -- Check all windows, not just front
+            set winNames to name of every window
+            return winNames as string
         on error
             return "NO_WINDOW"
         end try
@@ -161,6 +163,25 @@ end tell
         if expected_title_fragment.lower() in result.lower():
             print(f"[excel] Dialog verified: '{result}' matches '{expected_title_fragment}'")
             return True
+
+        # Also check if it's a sheet dialog (title shows as parent window)
+        # by looking for specific buttons that indicate the dialog is open
+        if expected_title_fragment.lower() in ("add-ins", "add-in"):
+            # Add-ins dialog has an OK button
+            btn_check = run_applescript('''
+tell application "System Events"
+    tell process "Microsoft Excel"
+        try
+            if exists (button "OK" of sheet 1 of front window) then return "OK_FOUND"
+        end try
+        return "NO"
+    end tell
+end tell
+''')
+            if "OK_FOUND" in btn_check:
+                print(f"[excel] Dialog verified via sheet button: Add-Ins")
+                return True
+
         time.sleep(0.3)
     print(f"[excel] Dialog NOT found: expected '{expected_title_fragment}', got '{result}'")
     return False
@@ -170,38 +191,39 @@ end tell
 # These are much more reliable than Help menu search.
 
 MENU_PATHS = {
+    # macOS Excel: ALL of these are under the Tools menu, using "..." (NOT unicode "…")
     "Scenario Manager": '''
 tell application "System Events"
     tell process "Microsoft Excel"
-        click menu item "Scenario Manager…" of menu 1 of menu item "What-If Analysis" of menu 1 of menu bar item "Data" of menu bar 1
+        click menu item "Scenarios..." of menu 1 of menu bar item "Tools" of menu bar 1
     end tell
 end tell
 ''',
     "Solver": '''
 tell application "System Events"
     tell process "Microsoft Excel"
-        click menu item "Solver…" of menu 1 of menu bar item "Data" of menu bar 1
+        click menu item "Solver..." of menu 1 of menu bar item "Tools" of menu bar 1
     end tell
 end tell
 ''',
     "Data Analysis": '''
 tell application "System Events"
     tell process "Microsoft Excel"
-        click menu item "Data Analysis…" of menu 1 of menu bar item "Data" of menu bar 1
+        click menu item "Data Analysis..." of menu 1 of menu bar item "Tools" of menu bar 1
     end tell
 end tell
 ''',
     "Excel Add-ins": '''
 tell application "System Events"
     tell process "Microsoft Excel"
-        click menu item "Excel Add-ins…" of menu 1 of menu bar item "Tools" of menu bar 1
+        click menu item "Excel Add-ins..." of menu 1 of menu bar item "Tools" of menu bar 1
     end tell
 end tell
 ''',
     "Goal Seek": '''
 tell application "System Events"
     tell process "Microsoft Excel"
-        click menu item "Goal Seek…" of menu 1 of menu item "What-If Analysis" of menu 1 of menu bar item "Data" of menu bar 1
+        click menu item "Goal Seek..." of menu 1 of menu bar item "Tools" of menu bar 1
     end tell
 end tell
 ''',
@@ -209,7 +231,7 @@ end tell
 
 # What the front window title should contain when each dialog is open
 DIALOG_TITLES = {
-    "Scenario Manager": "Scenario Manager",
+    "Scenario Manager": "Scenario",  # macOS title may be "Scenario Manager" or just "Scenarios"
     "Solver": "Solver",
     "Data Analysis": "Data Analysis",
     "Excel Add-ins": "Add-Ins",
@@ -243,7 +265,7 @@ def open_dialog(name: str) -> bool:
 
     check_stop()
 
-    # Attempt 2: Try without unicode ellipsis (use ... instead of …)
+    # Attempt 2: Try alternate encodings (... vs …) and alternate names
     if script:
         alt_script = script.replace("…", "...")
         if alt_script != script:
@@ -252,6 +274,27 @@ def open_dialog(name: str) -> bool:
                 time.sleep(1.0)
                 if verify_dialog(expected_title):
                     return True
+
+    # Attempt 2b: Try alternate menu item names (Scenarios vs Scenario Manager, etc.)
+    alt_names = {
+        "Scenario Manager": ["Scenarios...", "Scenario Manager...", "Scenarios…", "Scenario Manager…"],
+        "Data Analysis": ["Data Analysis...", "Data Analysis…", "Analysis ToolPak..."],
+        "Solver": ["Solver...", "Solver…"],
+    }
+    for alt_name in alt_names.get(name, []):
+        check_stop()
+        alt_script = f'''
+tell application "System Events"
+    tell process "Microsoft Excel"
+        click menu item "{alt_name}" of menu 1 of menu bar item "Tools" of menu bar 1
+    end tell
+end tell
+'''
+        result = run_applescript(alt_script)
+        if "ERROR" not in result:
+            time.sleep(1.0)
+            if verify_dialog(expected_title):
+                return True
 
     check_stop()
 
@@ -499,11 +542,21 @@ def do_scenario_manager(name: str, changing_cells: str, values: list = None,
     steps.append(f"Scenario '{name}': cells={changing_cells}, values={values}")
     time.sleep(0.5)
 
-    # Close Scenario Manager
-    pyautogui.press('escape')
-    time.sleep(0.3)
-    pyautogui.press('escape')
+    # Close Scenario Manager — use AppleScript to click Close button
+    close_result = run_applescript('''
+tell application "System Events"
+    tell process "Microsoft Excel"
+        try
+            click button "Close" of front window
+        on error
+            -- Fallback: press Escape
+            key code 53
+        end try
+    end tell
+end tell
+''')
     time.sleep(0.5)
+    steps.append("Closed Scenario Manager")
 
     return {"status": "completed", "steps": steps}
 
