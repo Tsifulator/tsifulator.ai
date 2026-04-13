@@ -29,7 +29,7 @@ def run_applescript(script: str) -> str:
             ["osascript", "-e", script],
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=30,
         )
         if result.returncode != 0:
             print(f"[excel] AppleScript error: {result.stderr.strip()}")
@@ -116,30 +116,10 @@ def search_menu(search_term: str, wait: float = 1.0) -> bool:
     # Verify the Help search is actually open by checking if a menu bar
     # search field appeared. We do this by checking the focused UI element.
     # As a safety measure, press Escape and retry if needed.
-    for attempt in range(3):
-        # Try to detect if Help search is open by checking menu bar state
-        check = run_applescript('''
-tell application "System Events"
-    tell process "Microsoft Excel"
-        try
-            set focused_element to focused UI element
-            return description of focused_element
-        on error
-            return "unknown"
-        end try
-    end tell
-end tell
-''')
-        if "search" in check.lower() or "text field" in check.lower() or "unknown" in check.lower():
-            break
-        # Help search didn't open — retry
-        print(f"[excel] Help search not detected (attempt {attempt+1}), retrying...")
-        pyautogui.press('escape')
-        time.sleep(0.3)
-        activate_excel()
-        time.sleep(0.3)
-        pyautogui.hotkey('command', 'shift', '/')
-        time.sleep(1.5)
+    # Brief pause to let Help search appear, then just type
+    # (Skip System Events focus check — causes AppleScript syntax errors
+    #  and Help search is reliable enough with Cmd+Shift+/)
+    time.sleep(0.5)
 
     # Now type the search term
     pyautogui.typewrite(search_term, interval=0.04)
@@ -165,10 +145,27 @@ DATA_TABLE_Y = 207
 
 
 def open_data_table_dialog():
-    """Open the Data Table dialog via Data > Table... menu."""
-    pyautogui.click(MENU_X["data"], 10)
-    time.sleep(0.6)
-    pyautogui.click(410, DATA_TABLE_Y)
+    """Open the Data Table dialog via Data > Table... (item 9 in Data menu).
+    Uses menu item index for reliability — name matching fails due to ellipsis encoding."""
+    result = run_applescript('''
+tell application "System Events"
+    tell process "Microsoft Excel"
+        click menu item 9 of menu 1 of menu bar item "Data" of menu bar 1
+    end tell
+end tell
+''')
+    if "ERROR" in result:
+        print(f"[excel] Menu index click failed ({result}), trying by name...")
+        result2 = run_applescript('''
+tell application "System Events"
+    tell process "Microsoft Excel"
+        click menu item "Table..." of menu 1 of menu bar item "Data" of menu bar 1
+    end tell
+end tell
+''')
+        if "ERROR" in result2:
+            print(f"[excel] Name click also failed, trying Help search...")
+            search_menu("Table", wait=1.5)
     time.sleep(1.0)
 
 

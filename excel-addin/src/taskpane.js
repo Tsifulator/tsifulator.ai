@@ -746,6 +746,7 @@ async function handleSubmit() {
     // If the backend started a computer use session, poll until complete
     if (data.cu_session_id) {
       setStatus("🖥️ Desktop automation running...");
+      showTypingIndicator("automating");
       appendMessage("assistant", "🖥️ Running desktop automation for advanced Excel features...");
       const cuSessionId = data.cu_session_id;
       let cuDone = false;
@@ -771,6 +772,7 @@ async function handleSubmit() {
           console.warn("[tsifl] CU poll error:", pollErr.message);
         }
       }
+      hideTypingIndicator();
       if (!cuDone) {
         appendMessage("assistant", "⚠️ Desktop automation timed out. Check Excel for partial results.");
       }
@@ -2208,6 +2210,18 @@ const _thinkingMessages = {
     'Dropping formulas like it\'s bonus season...',
     'One more sync and we\'re golden...',
     'This is the part where your model becomes legendary...',
+  ],
+  automating: [
+    'Controlling Excel like a Bloomberg terminal operator...',
+    'Clicking through menus so you don\'t have to...',
+    'Data Table dialog? Already on it...',
+    'Installing add-ins like a seasoned IT admin...',
+    'Your desktop agent is in the zone...',
+    'Running Solver while you grab coffee...',
+    'The kind of automation that makes VBA obsolete...',
+    'GUI operations running at machine speed...',
+    'Setting up what-if scenarios like a pro...',
+    'ToolPak? Solver? Consider them handled...',
   ]
 };
 

@@ -37,7 +37,7 @@ from dotenv import load_dotenv
 # Load API key from project .env
 env_path = Path(__file__).parent.parent / ".env"
 if env_path.exists():
-    load_dotenv(env_path)
+    load_dotenv(env_path, override=True)
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 BACKEND_URL = os.getenv("BACKEND_URL", "https://focused-solace-production-6839.up.railway.app")
