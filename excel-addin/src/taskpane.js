@@ -745,15 +745,14 @@ async function handleSubmit() {
     }
 
     // ── Computer Use session polling ────────────────────────────────────
-    // If the backend started a computer use session, poll until complete
+    // If the backend started a computer use session, show access modal and poll
     if (data.cu_session_id) {
-      setStatus("🖥️ Desktop automation running...");
-      showTypingIndicator("automating");
       const cuSessionId = data.cu_session_id;
-      showStopButton(cuSessionId);
+      setStatus("Desktop automation...");
+      showAccessModal(cuSessionId);
       let cuDone = false;
       let cuPolls = 0;
-      const maxPolls = 300; // 5 minutes max (1s intervals)
+      const maxPolls = 300;
       while (!cuDone && cuPolls < maxPolls) {
         cuPolls++;
         await new Promise(r => setTimeout(r, 1000));
@@ -763,23 +762,25 @@ async function handleSubmit() {
             const statusData = await statusResp.json();
             if (statusData.status === "completed") {
               cuDone = true;
-              appendMessage("assistant", `✅ Done — advanced features applied.`);
+              hideAccessModal();
+              appendMessage("assistant", `Done — advanced features applied.`);
             } else if (statusData.status === "failed") {
               cuDone = true;
-              appendMessage("assistant", `⚠️ Desktop automation failed: ${statusData.error || "unknown error"}`);
+              hideAccessModal();
+              appendMessage("assistant", `Desktop automation failed: ${statusData.error || "unknown error"}`);
             } else if (statusData.status === "cancelled") {
               cuDone = true;
-              appendMessage("assistant", `🛑 Stopped.`);
+              hideAccessModal();
+              appendMessage("assistant", `Stopped.`);
             }
           }
         } catch (pollErr) {
           console.warn("[tsifl] CU poll error:", pollErr.message);
         }
       }
-      hideStopButton();
-      hideTypingIndicator();
+      hideAccessModal();
       if (!cuDone) {
-        appendMessage("assistant", "⚠️ Desktop automation timed out. Check Excel for partial results.");
+        appendMessage("assistant", "Desktop automation timed out. Check Excel for partial results.");
       }
     }
 
@@ -2287,47 +2288,77 @@ function hideTypingIndicator() {
 function setStatus(text)           { document.getElementById("status-bar").textContent = text; }
 function setSubmitEnabled(enabled) { document.getElementById("submit-btn").disabled = !enabled; }
 
-// ── Stop Button (emergency abort for desktop automation) ────────────────────
+// ── Access Modal (desktop automation overlay) ───────────────────────────────
 
-let _activeStopSessionId = null;
+let _activeAccessSessionId = null;
 
-function showStopButton(sessionId) {
-  _activeStopSessionId = sessionId;
-  hideStopButton(); // remove any stale one
-  const btn = document.createElement("button");
-  btn.id = "stop-automation-btn";
-  btn.textContent = "Stop";
-  btn.title = "Stop desktop automation";
-  btn.style.cssText = `
-    position: fixed; bottom: 60px; right: 16px; z-index: 9999;
-    background: #e74c3c; color: #fff; border: none; border-radius: 8px;
-    padding: 8px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.25); transition: opacity 0.2s;
+function showAccessModal(sessionId) {
+  _activeAccessSessionId = sessionId;
+  hideAccessModal(); // remove stale
+
+  const overlay = document.createElement("div");
+  overlay.id = "access-modal-overlay";
+
+  const modal = document.createElement("div");
+  modal.id = "access-modal";
+  modal.innerHTML = `
+    <div class="access-modal-icon">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+        <line x1="8" y1="21" x2="16" y2="21"/>
+        <line x1="12" y1="17" x2="12" y2="21"/>
+      </svg>
+    </div>
+    <div class="access-modal-title">tsifl wants access to your computer</div>
+    <div class="access-modal-text">
+      If at any time you want to stop, press <strong>Esc</strong> or <strong>right-click</strong>.<br/>
+      Please don't touch your computer while progress is being made.
+    </div>
+    <div class="access-modal-progress">
+      <div class="access-modal-spinner"></div>
+      <span class="access-modal-status">Working...</span>
+    </div>
+    <button id="access-modal-stop">Stop</button>
   `;
-  btn.addEventListener("click", async () => {
-    btn.textContent = "Stopping...";
-    btn.disabled = true;
-    try {
-      await fetch(`${BACKEND_URL}/computer-use/cancel/${sessionId}`, { method: "POST" });
-    } catch (e) {
-      console.warn("[tsifl] Cancel request failed:", e.message);
-    }
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  // Stop button click
+  document.getElementById("access-modal-stop").addEventListener("click", () => _cancelAccess());
+
+  // Right-click anywhere on the overlay also stops
+  overlay.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    _cancelAccess();
   });
-  document.body.appendChild(btn);
 }
 
-function hideStopButton() {
-  _activeStopSessionId = null;
-  const btn = document.getElementById("stop-automation-btn");
-  if (btn) btn.remove();
+function hideAccessModal() {
+  _activeAccessSessionId = null;
+  const el = document.getElementById("access-modal-overlay");
+  if (el) el.remove();
+}
+
+async function _cancelAccess() {
+  const sessionId = _activeAccessSessionId;
+  if (!sessionId) return;
+  const btn = document.getElementById("access-modal-stop");
+  if (btn) { btn.textContent = "Stopping..."; btn.disabled = true; }
+  const statusEl = document.querySelector(".access-modal-status");
+  if (statusEl) statusEl.textContent = "Stopping...";
+  try {
+    await fetch(`${BACKEND_URL}/computer-use/cancel/${sessionId}`, { method: "POST" });
+  } catch (e) {
+    console.warn("[tsifl] Cancel request failed:", e.message);
+  }
 }
 
 // Escape key triggers stop during automation
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && _activeStopSessionId) {
+  if (e.key === "Escape" && _activeAccessSessionId) {
     e.preventDefault();
-    const btn = document.getElementById("stop-automation-btn");
-    if (btn && !btn.disabled) btn.click();
+    _cancelAccess();
   }
 });
 
