@@ -31,6 +31,7 @@ import os
 import sys
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -363,6 +364,25 @@ def run_computer_use_loop(instructions: str, session_id: str):
     return {"status": "failed", "error": "Max iterations reached", "steps_taken": iteration}
 
 
+def _cancel_watcher_loop(http, session_id: str, stop_fn):
+    """Background thread: polls backend every 500ms for cancel status.
+    When detected, calls stop_fn() to set the global stop flag."""
+    while True:
+        try:
+            resp = http.get(f"{BACKEND_URL}/computer-use/status/{session_id}")
+            if resp.status_code == 200:
+                status = resp.json().get("status")
+                if status == "cancelled":
+                    print(f"[agent] Cancel detected for {session_id} — setting stop flag")
+                    stop_fn()
+                    return
+                if status in ("completed", "failed"):
+                    return  # Already done, no need to watch
+        except Exception:
+            pass
+        time.sleep(0.5)
+
+
 def _is_cancelled(http, session_id: str) -> bool:
     """Check if the backend session has been cancelled by the user."""
     try:
@@ -416,7 +436,10 @@ def poll_and_execute():
 
                     # PRIMARY: Use AppleScript for known Excel operations
                     # FALLBACK: Use computer use only for unknown actions
-                    from excel_applescript import execute_all_actions as applescript_execute
+                    from excel_applescript import (
+                        execute_all_actions as applescript_execute,
+                        clear_stop, set_stop,
+                    )
 
                     known_types = {
                         "create_data_table", "goal_seek", "scenario_manager",
@@ -426,6 +449,16 @@ def poll_and_execute():
 
                     known_actions = [a for a in actions if a.get("type") in known_types]
                     unknown_actions = [a for a in actions if a.get("type") not in known_types]
+
+                    # Start background cancel watcher — polls every 500ms
+                    # Sets the global stop flag so check_stop() raises mid-action
+                    clear_stop()
+                    cancel_watcher = threading.Thread(
+                        target=_cancel_watcher_loop,
+                        args=(http, session_id, set_stop),
+                        daemon=True,
+                    )
+                    cancel_watcher.start()
 
                     result = None
 
@@ -447,6 +480,11 @@ def poll_and_execute():
                                 result["status"] = "partial"
                         else:
                             result = cu_result
+
+                    # Stop the cancel watcher
+                    set_stop()
+                    cancel_watcher.join(timeout=2)
+                    clear_stop()
 
                     if not result:
                         result = {"status": "completed", "message": "No actions to execute", "steps_taken": 0}
