@@ -376,7 +376,7 @@ def _postprocess_excel_actions(result: dict, context: dict) -> dict:
 
     if injected:
         result["actions"] = actions + injected
-        result["reply"] = result.get("reply", "") + f"\n\n*(Auto-added {len(injected)} missing actions)*"
+        # Don't append verbose injection notes to the reply
         print(f"[postprocess] Injected {len(injected)} actions total")
 
     return result
@@ -753,7 +753,9 @@ async def chat(request: ChatRequest):
         # poll /computer-use/pending, claim it, and execute via AppleScript+pyautogui.
         # Do NOT run execute_session() server-side (server can't control the user's screen).
         cu_session_id = create_session(cu_actions, request.context)
-        # Don't append verbose session info to the reply — the add-in shows its own loading animation
+        # Replace Claude's verbose reply — the add-in typing animation handles UX during automation
+        # and the "Done" message appears after completion
+        result["reply"] = ""
         print(f"[hybrid] Split: {len(addin_actions)} add-in + {len(cu_actions)} computer-use (session {cu_session_id})")
 
     return ChatResponse(

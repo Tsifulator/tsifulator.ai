@@ -182,6 +182,14 @@ def do_data_table(table_range: str, row_input: str = "", col_input: str = "",
     """
     steps = []
 
+    # 0. Clean slate — dismiss any leftover dialogs/menus from prior actions
+    pyautogui.press('escape')
+    time.sleep(0.2)
+    pyautogui.press('escape')
+    time.sleep(0.2)
+    activate_excel()
+    time.sleep(0.5)
+
     # 1. Switch sheet if needed
     if sheet:
         result = switch_sheet(sheet)
@@ -759,8 +767,21 @@ def do_install_addins(addins: list):
     pyautogui.press('enter')  # OK
     time.sleep(3.0)
 
-    # Dismiss any followup
+    # Aggressively dismiss any followup dialogs and menus
     pyautogui.press('enter')
+    time.sleep(0.5)
+    pyautogui.press('escape')
+    time.sleep(0.3)
+    pyautogui.press('escape')
+    time.sleep(0.3)
+    pyautogui.press('escape')
+    time.sleep(0.5)
+
+    # Click on the spreadsheet area to ensure focus is back on the sheet
+    activate_excel()
+    time.sleep(0.5)
+    # Click a safe cell to make sure we're out of any dialog/menu state
+    run_applescript('tell application "Microsoft Excel" to select range "A1" of active sheet')
     time.sleep(0.5)
 
     return {"status": "completed", "steps": steps}

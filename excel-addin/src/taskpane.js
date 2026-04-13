@@ -500,7 +500,9 @@ async function handleSubmit() {
 
     const data = await response.json();
     hideTypingIndicator();
-    appendMessage("assistant", data.reply);
+    if (data.reply && data.reply.trim()) {
+      appendMessage("assistant", data.reply);
+    }
 
     if (data.tasks_remaining >= 0) {
       document.getElementById("tasks-remaining").textContent =
