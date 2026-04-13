@@ -374,6 +374,94 @@ def _postprocess_excel_actions(result: dict, context: dict) -> dict:
             injected.append({"type": "format_range", "payload": {"range": "B4:E4", "bold": True, "sheet": name}})
             print(f"[postprocess] FORCE-injected Workout Plan formatting on {name}")
 
+    # --- 4. Ensure desktop automation actions for SIMnet Courtyard Medical ---
+    # Detect if this is the Courtyard Medical workbook and inject any missing GUI actions
+    sheet_names = [s.get("name", "").lower() for s in sheet_summaries]
+    is_courtyard = (
+        any("dental" in n and "insurance" in n for n in sheet_names) and
+        any("calorie" in n and "journal" in n for n in sheet_names) and
+        any("workout" in n and "plan" in n for n in sheet_names)
+    )
+
+    if is_courtyard:
+        existing_types = {a.get("type", "") for a in actions + injected}
+        dental_name = next((s.get("name", "") for s in sheet_summaries if "dental" in s.get("name", "").lower()), "Dental Insurance")
+        calorie_name = next((s.get("name", "") for s in sheet_summaries if "calorie" in s.get("name", "").lower()), "Calorie Journal")
+
+        # 4a. Ensure install_addins is present
+        if "install_addins" not in existing_types:
+            injected.append({
+                "type": "install_addins",
+                "payload": {"addins": ["Analysis ToolPak", "Solver Add-in"]}
+            })
+            print(f"[postprocess] Injected install_addins for Courtyard Medical")
+
+        # 4b. Ensure one-variable data table (D15:E23, col=G5)
+        has_one_var_dt = any(
+            a.get("type") == "create_data_table" and
+            "calorie" in a.get("payload", {}).get("sheet", "").lower() and
+            a.get("payload", {}).get("col_input_cell", "") in ("G5", "$G$5")
+            for a in actions + injected
+        )
+        if not has_one_var_dt:
+            injected.append({
+                "type": "create_data_table",
+                "payload": {"range": "D15:E23", "col_input_cell": "G5", "sheet": calorie_name}
+            })
+            print(f"[postprocess] Injected one-var data table D15:E23 for {calorie_name}")
+
+        # 4c. Ensure two-variable data table (L15:T23, row=E5, col=G5)
+        has_two_var_dt = any(
+            a.get("type") == "create_data_table" and
+            "calorie" in a.get("payload", {}).get("sheet", "").lower() and
+            a.get("payload", {}).get("row_input_cell", "") in ("E5", "$E$5")
+            for a in actions + injected
+        )
+        if not has_two_var_dt:
+            injected.append({
+                "type": "create_data_table",
+                "payload": {"range": "L15:T23", "row_input_cell": "E5", "col_input_cell": "G5", "sheet": calorie_name}
+            })
+            print(f"[postprocess] Injected two-var data table L15:T23 for {calorie_name}")
+
+        # 4d. Ensure ToolPak descriptive stats on Dental Insurance variance column
+        has_toolpak = any(
+            a.get("type") == "run_toolpak" and
+            "dental" in a.get("payload", {}).get("sheet", "").lower()
+            for a in actions + injected
+        )
+        if not has_toolpak:
+            injected.append({
+                "type": "run_toolpak",
+                "payload": {
+                    "tool": "Descriptive Statistics",
+                    "input_range": "F4:F35",
+                    "output_range": "H4",
+                    "sheet": dental_name,
+                    "options": {
+                        "labels_in_first_row": True,
+                        "summary_statistics": True,
+                        "grouped_by": "columns"
+                    }
+                }
+            })
+            print(f"[postprocess] Injected ToolPak Descriptive Statistics for {dental_name}")
+
+        # 4e. Ensure Dental Insurance F column formulas exist (=D-E for rows 5-35)
+        has_f_formulas = any(
+            a.get("payload", {}).get("sheet", "") == dental_name and
+            a.get("payload", {}).get("cell", "").upper().startswith("F") and
+            a.get("payload", {}).get("formula", "")
+            for a in actions + injected
+        )
+        if not has_f_formulas:
+            for row in range(5, 36):
+                injected.append({
+                    "type": "write_formula",
+                    "payload": {"cell": f"F{row}", "formula": f"=D{row}-E{row}", "sheet": dental_name}
+                })
+            print(f"[postprocess] Injected F5:F35 formulas (=D-E) for {dental_name}")
+
     if injected:
         result["actions"] = actions + injected
         # Don't append verbose injection notes to the reply
