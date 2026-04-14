@@ -37,15 +37,10 @@ _sessions: dict = {}  # session_id -> session state
 # ── Action Classification ──────────────────────────────────────────────────
 # Actions that MUST go through Computer Use (Office.js can't do these)
 COMPUTER_USE_ACTIONS = {
-    "scenario_manager",      # Create/edit scenarios
+    "scenario_manager",      # Create/edit scenarios (no Office.js API)
     "save_solver_scenario",  # Save Solver results as scenario
-    "run_solver",            # Run Solver
-    "goal_seek",             # Goal Seek
-    "create_data_table",     # What-If Data Table (the wizard, not formulas)
+    "run_solver",            # Run Solver (needs VBA macros)
     "scenario_summary",      # Generate scenario summary report
-    "run_toolpak",           # Analysis ToolPak (descriptive stats, etc.)
-    "install_addins",        # Install Excel add-ins (Solver, ToolPak)
-    "uninstall_addins",      # Uninstall Excel add-ins
     "computer_use",          # Generic computer use fallback
 }
 
@@ -58,6 +53,11 @@ ADDIN_ACTIONS = {
     "add_sheet", "clear_range", "freeze_panes",
     "add_chart", "add_data_validation", "add_conditional_format",
     "import_csv", "save_workbook",
+    "goal_seek",             # Iterative solver in JavaScript
+    "create_data_table",     # TABLE array formula via Office.js
+    "run_toolpak",           # Descriptive stats via formulas
+    "install_addins",        # No-op in add-in (auto-handled)
+    "uninstall_addins",      # No-op in add-in (auto-handled)
 }
 
 
