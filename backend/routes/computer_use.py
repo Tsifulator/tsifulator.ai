@@ -117,6 +117,10 @@ async def complete_session(session_id: str, report: CompletionReport):
     session = get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    # Don't overwrite "cancelled" — the user already stopped this session
+    if session["status"] == "cancelled":
+        print(f"[computer_use] Session {session_id} already cancelled, ignoring completion report")
+        return {"status": "cancelled"}
     session["status"] = report.status
     session["result"] = {
         "status": report.status,
