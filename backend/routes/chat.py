@@ -525,7 +525,7 @@ def _postprocess_excel_actions(result: dict, context: dict) -> dict:
             })
             print(f"[postprocess] Injected Solver with 9 constraints + save scenario 'Solver'")
 
-        # 4j. Scenario Summary: result cells D5:D9,E10
+        # 4j. Scenario Summary: result cell is E10 (Total Calories Burned)
         has_summary = any(
             a.get("type") == "scenario_summary"
             for a in actions + injected
@@ -534,7 +534,7 @@ def _postprocess_excel_actions(result: dict, context: dict) -> dict:
             injected.append({
                 "type": "scenario_summary",
                 "payload": {
-                    "result_cells": "D5:D9,E10",
+                    "result_cells": "E10",
                     "sheet": workout_name
                 }
             })
