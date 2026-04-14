@@ -41,6 +41,7 @@ COMPUTER_USE_ACTIONS = {
     "save_solver_scenario",  # Save Solver results as scenario
     "run_solver",            # Run Solver (needs VBA macros)
     "scenario_summary",      # Generate scenario summary report
+    "create_data_table",     # TABLE formula can only be entered via dialog
     "computer_use",          # Generic computer use fallback
 }
 
@@ -54,7 +55,6 @@ ADDIN_ACTIONS = {
     "add_chart", "add_data_validation", "add_conditional_format",
     "import_csv", "save_workbook",
     "goal_seek",             # Iterative solver in JavaScript
-    "create_data_table",     # TABLE array formula via Office.js
     "run_toolpak",           # Descriptive stats via formulas
     "install_addins",        # No-op in add-in (auto-handled)
     "uninstall_addins",      # No-op in add-in (auto-handled)
