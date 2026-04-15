@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v48";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v49";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -772,6 +772,10 @@ async function handleSubmit() {
               cuDone = true;
               hideAccessModal();
               appendMessage("assistant", `Stopped.`);
+            } else if (statusData.status === "partial") {
+              cuDone = true;
+              hideAccessModal();
+              appendMessage("assistant", `Done — some advanced features applied (partial completion).`);
             }
           }
         } catch (pollErr) {
@@ -1036,6 +1040,7 @@ const SHEET_AWARE_TYPES = new Set([
   "remove_duplicates", "conditional_format_heatmap",
   "create_pivot_summary", "auto_chart_best_fit",
   "trim_whitespace", "find_replace_bulk",
+  "goal_seek", "run_toolpak", "create_data_table",
 ]);
 
 async function executeAction(action) {
@@ -2060,6 +2065,183 @@ async function executeAction(action) {
       console.log( `Replaced ${totalReplaced} occurrence(s) across ${replacements.length} pattern(s)`);
     });
   }
+
+  // ── goal_seek — iterative solver in JavaScript ──────────────────────────────
+  else if (type === "goal_seek") {
+    await Excel.run(async (ctx) => {
+      const { sheet: s, addr: setCell } = splitAddr(payload.set_cell, payload.sheet);
+      const sheet = getSheet(ctx, s);
+      const changingCell = sheet.getRange(payload.changing_cell);
+      const targetCell = sheet.getRange(setCell);
+
+      const goalValue = parseFloat(payload.to_value);
+
+      // SAFETY: Save the target cell's formula before we start (in case iterations corrupt it)
+      targetCell.load("formulas");
+      changingCell.load("values");
+      await ctx.sync();
+      const savedFormula = targetCell.formulas[0][0]; // preserve original formula
+      const currentVal = changingCell.values[0][0] || 0;
+
+      // Binary search / secant method
+      let lo = currentVal - 10000, hi = currentVal + 10000;
+      let mid, best = currentVal, bestDiff = Infinity;
+      const maxIter = 100;
+      const tolerance = 0.001;
+
+      for (let i = 0; i < maxIter; i++) {
+        mid = (lo + hi) / 2;
+        changingCell.values = [[mid]];
+        await ctx.sync();
+        targetCell.load("values");
+        await ctx.sync();
+        const result = targetCell.values[0][0];
+        const diff = result - goalValue;
+        if (Math.abs(diff) < Math.abs(bestDiff)) { best = mid; bestDiff = diff; }
+        if (Math.abs(diff) < tolerance) break;
+        // Determine direction: check if increasing input increases result
+        const probe = (i === 0) ? mid + 1 : mid + 0.01;
+        changingCell.values = [[probe]];
+        await ctx.sync();
+        targetCell.load("values");
+        await ctx.sync();
+        const resultPlus = targetCell.values[0][0];
+        const increasing = resultPlus > result;
+        if ((increasing && diff > 0) || (!increasing && diff < 0)) {
+          hi = mid;
+        } else {
+          lo = mid;
+        }
+      }
+      changingCell.values = [[best]];
+      await ctx.sync();
+
+      // SAFETY: Restore the target cell's formula if it was corrupted during iterations
+      targetCell.load("formulas");
+      await ctx.sync();
+      if (savedFormula && savedFormula.startsWith("=") && targetCell.formulas[0][0] !== savedFormula) {
+        targetCell.formulas = [[savedFormula]];
+        await ctx.sync();
+        console.log(`[tsifl] Goal Seek: restored target formula ${savedFormula}`);
+      }
+
+      console.log(`[tsifl] Goal Seek: set ${payload.changing_cell}=${best}, target diff=${bestDiff}`);
+    });
+  }
+
+  // ── run_toolpak — descriptive statistics via formulas ───────────────────────
+  else if (type === "run_toolpak") {
+    await Excel.run(async (ctx) => {
+      const { sheet: s } = splitAddr(payload.input_range, payload.sheet);
+      const sheet = getSheet(ctx, s);
+      const opts = payload.options || {};
+      const rawRange = (payload.input_range || "").replace(/\$/g, "");
+      const hasLabels = opts.labels_in_first_row;
+      let dataRange, header = "Data";
+
+      if (hasLabels && rawRange.includes(":")) {
+        const [startRef, endRef] = rawRange.split(":");
+        const col = startRef.replace(/[0-9]/g, "");
+        const startRow = parseInt(startRef.replace(/[A-Za-z]/g, "")) + 1;
+        const endRow = parseInt(endRef.replace(/[A-Za-z]/g, ""));
+        dataRange = `${col}${startRow}:${col}${endRow}`;
+        const headerCell = sheet.getRange(`${col}${startRow - 1}`);
+        headerCell.load("values");
+        await ctx.sync();
+        header = headerCell.values[0][0] || "Data";
+      } else {
+        dataRange = rawRange;
+      }
+
+      const outRef = (payload.output_range || "H4").replace(/\$/g, "");
+      const outCol = outRef.replace(/[0-9]/g, "");
+      const outRow = parseInt(outRef.replace(/[A-Za-z]/g, ""));
+      const valCol = String.fromCharCode(outCol.charCodeAt(0) + 1);
+
+      // Clear output area
+      const clearRange = sheet.getRange(`${outCol}${outRow}:${valCol}${outRow + 14}`);
+      clearRange.clear();
+      await ctx.sync();
+
+      // Write header
+      sheet.getRange(`${outCol}${outRow}`).values = [[header]];
+
+      const dr = dataRange;
+      const stats = [
+        ["Mean",               `=IFERROR(AVERAGE(${dr}),"")`],
+        ["Standard Error",     `=IFERROR(STDEV(${dr})/SQRT(COUNT(${dr})),"")`],
+        ["Median",             `=IFERROR(MEDIAN(${dr}),"")`],
+        ["Mode",               `=IFERROR(MODE.SNGL(${dr}),"")`],
+        ["Standard Deviation", `=IFERROR(STDEV(${dr}),"")`],
+        ["Sample Variance",    `=IFERROR(VAR(${dr}),"")`],
+        ["Kurtosis",           `=IFERROR(KURT(${dr}),"")`],
+        ["Skewness",           `=IFERROR(SKEW(${dr}),"")`],
+        ["Range",              `=IFERROR(MAX(${dr})-MIN(${dr}),"")`],
+        ["Minimum",            `=IFERROR(MIN(${dr}),"")`],
+        ["Maximum",            `=IFERROR(MAX(${dr}),"")`],
+        ["Sum",                `=IFERROR(SUM(${dr}),"")`],
+        ["Count",              `=IFERROR(COUNT(${dr}),"")`],
+      ];
+
+      if (opts.confidence_level) {
+        const conf = opts.confidence_level;
+        stats.push(["Confidence Level", `=IFERROR(CONFIDENCE.NORM(1-${conf}/100,STDEV(${dr}),COUNT(${dr})),"")`]);
+      }
+
+      for (let i = 0; i < stats.length; i++) {
+        const row = outRow + 1 + i;
+        sheet.getRange(`${outCol}${row}`).values = [[stats[i][0]]];
+        sheet.getRange(`${valCol}${row}`).formulas = [[stats[i][1]]];
+      }
+      await ctx.sync();
+      console.log(`[tsifl] Descriptive Stats: ${stats.length} measures for ${dataRange} → ${outCol}${outRow}`);
+    });
+  }
+
+  // ── create_data_table — TABLE array formula via Office.js ──────────────────
+  else if (type === "create_data_table") {
+    await Excel.run(async (ctx) => {
+      // Backend sends: range, row_input_cell, col_input_cell
+      // Or: table_range, row_input, col_input (legacy)
+      const rawRange = payload.range || payload.table_range || "";
+      const { sheet: s, addr: tableAddr } = splitAddr(rawRange, payload.sheet);
+      const sheet = getSheet(ctx, s);
+
+      if (!tableAddr) {
+        console.warn("[tsifl] create_data_table: no range provided");
+        return;
+      }
+
+      const clean = tableAddr.replace(/\$/g, "");
+      const [startRef, endRef] = clean.split(":");
+      const startCol = startRef.replace(/[0-9]/g, "");
+      const startRow = parseInt(startRef.replace(/[A-Za-z]/g, ""));
+      const endCol = endRef.replace(/[0-9]/g, "");
+      const endRow = parseInt(endRef.replace(/[A-Za-z]/g, ""));
+
+      // Result area: skip first row (headers) and first column (inputs)
+      const resultStartCol = String.fromCharCode(startCol.charCodeAt(0) + 1);
+      const resultStartRow = startRow + 1;
+      const resultRange = `${resultStartCol}${resultStartRow}:${endCol}${endRow}`;
+
+      const rowRef = (payload.row_input_cell || payload.row_input || "").replace(/\$/g, "");
+      const colRef = (payload.col_input_cell || payload.col_input || "").replace(/\$/g, "");
+      const tableFormula = `=TABLE(${rowRef},${colRef})`;
+
+      // Set the TABLE formula as an array formula on the result range
+      const range = sheet.getRange(resultRange);
+      range.formulas = Array(endRow - resultStartRow + 1).fill(
+        Array(endCol.charCodeAt(0) - resultStartCol.charCodeAt(0) + 1).fill(tableFormula)
+      );
+      await ctx.sync();
+      console.log(`[tsifl] Data Table: ${tableFormula} on ${resultRange}`);
+    });
+  }
+
+  // ── install_addins / uninstall_addins — no-op in add-in (handled if needed by agent) ──
+  else if (type === "install_addins" || type === "uninstall_addins") {
+    console.log(`[tsifl] ${type}: skipped (handled automatically when needed)`);
+  }
 }
 
 // ── Format helper (shared by write_cell, write_range, format_range) ──────────
@@ -2383,6 +2565,11 @@ function summarizeAction(action) {
     case "auto_chart_best_fit": return `Auto-chart on ${p.range || "?"} (${p.chart_type || "auto"})`;
     case "trim_whitespace": return `Trimmed whitespace in ${p.range || "?"} on ${p.sheet || "active"}`;
     case "find_replace_bulk": return `Bulk find/replace in ${p.range || "?"} (${(p.replacements || []).length} patterns)`;
+    case "goal_seek": return `Goal Seek: ${p.set_cell || "?"} → ${p.to_value || "?"}`;
+    case "run_toolpak": return `Descriptive Stats for ${p.input_range || "?"} on ${p.sheet || "active"}`;
+    case "create_data_table": return `Data Table ${p.range || p.table_range || "?"} on ${p.sheet || "active"}`;
+    case "install_addins": return "Installed add-ins";
+    case "uninstall_addins": return "Uninstalled add-ins";
     default: return JSON.stringify(p).slice(0, 80);
   }
 }

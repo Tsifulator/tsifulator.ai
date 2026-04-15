@@ -141,24 +141,41 @@ def _postprocess_excel_actions(result: dict, context: dict) -> dict:
             })
             print(f"[postprocess] FORCE-injected E15=I5 and L15=I5 on {name}")
 
-            # FORCE-inject B5:B11 day names (model never writes these correctly)
+            # FORCE-inject B5:B11 day names and B12 "Average" label
             import re as _re
-            # Remove any model writes to A5:A11 or B5:B11 (they're wrong or missing)
+            # Remove any model writes to A5:A12 or B5:B12 (they're wrong or missing)
             # Also catch actions with empty sheet (defaults to active sheet)
-            day_cells = {f"A{r}" for r in range(5, 12)} | {f"B{r}" for r in range(5, 12)}
+            day_cells = {f"A{r}" for r in range(5, 13)} | {f"B{r}" for r in range(5, 13)}
             actions[:] = [a for a in actions if not (
                 a.get("payload", {}).get("cell", "").upper() in day_cells and
                 (a.get("payload", {}).get("sheet", "") == name or
                  a.get("payload", {}).get("sheet", "") == "" or
                  "calorie" in a.get("payload", {}).get("sheet", "").lower())
             )]
+            # Also remove write_range actions that overlap A/B columns rows 5-12
+            actions[:] = [a for a in actions if not (
+                a.get("type") == "write_range" and
+                (a.get("payload", {}).get("sheet", "") == name or
+                 "calorie" in a.get("payload", {}).get("sheet", "").lower()) and
+                _re.match(r"[AB]\d", a.get("payload", {}).get("range", "").upper().split(":")[0] if ":" in a.get("payload", {}).get("range", "") else "")
+            )]
+            # Clear A5:A11 (must be empty — day names go in B column only)
+            injected.append({
+                "type": "clear_range",
+                "payload": {"range": "A5:A11", "sheet": name}
+            })
             day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
             for i, day in enumerate(day_names):
                 injected.append({
                     "type": "write_cell",
                     "payload": {"cell": f"B{5+i}", "value": day, "sheet": name}
                 })
-            print(f"[postprocess] FORCE-injected B5:B11 day names on {name}")
+            # B12 = "Average" label (model never writes this)
+            injected.append({
+                "type": "write_cell",
+                "payload": {"cell": "B12", "value": "Average", "sheet": name}
+            })
+            print(f"[postprocess] FORCE-injected B5:B11 day names, B12 Average, cleared A5:A11 on {name}")
 
             # FORCE-inject H5:H11 dessert values (model keeps overwriting with sum formulas)
             dessert_values = [250, 150, 175, 200, 150, 155, 200]
@@ -187,6 +204,22 @@ def _postprocess_excel_actions(result: dict, context: dict) -> dict:
                         if 5 <= row <= 11 and formula:
                             # Force correct formula regardless of what model wrote
                             p["formula"] = f"=SUM(C{row}:H{row})"
+
+            # FORCE-inject C12:I12 AVERAGE formulas (row 12 = averages)
+            # Remove model's existing row-12 writes first
+            row12_cells = {f"{c}12" for c in "CDEFGHI"}
+            actions[:] = [a for a in actions if not (
+                a.get("payload", {}).get("cell", "").upper() in row12_cells and
+                (a.get("payload", {}).get("sheet", "") == name or
+                 "calorie" in a.get("payload", {}).get("sheet", "").lower())
+            )]
+            for col in "CDEFGHI":
+                injected.append({
+                    "type": "write_formula",
+                    "payload": {"cell": f"{col}12", "formula": f"=AVERAGE({col}5:{col}11)", "sheet": name}
+                })
+            # I12 should be =AVERAGE(I5:I11) which is average total daily calories
+            print(f"[postprocess] FORCE-injected C12:I12 AVERAGE formulas on {name}")
 
             # Remove misplaced B16:B20 data table input writes (these belong in D column only)
             actions[:] = [a for a in actions if not (
@@ -296,31 +329,21 @@ def _postprocess_excel_actions(result: dict, context: dict) -> dict:
     # --- 3. Fix Workout Plan issues ---
     import re
     actions_to_remove = []
+    # Protected cells on Workout Plan — ANY write to these gets removed, then we force-inject correct values
+    wp_protected_cells = {"E5", "E6", "E7", "E8", "E9", "E10", "D5", "D6", "D7", "D8", "D9"}
     for i, a in enumerate(actions):
         p = a.get("payload", {})
         formula = p.get("formula", "")
-        cell = p.get("cell", "")
+        cell = p.get("cell", "").upper()
         sheet = p.get("sheet", "")
-        if "Workout" not in sheet:
+        if "Workout" not in sheet and "workout" not in sheet.lower():
             continue
 
-        # Fix E column: =B*C should be =C*D
-        if formula and cell.startswith("E"):
-            match = re.match(r"=B(\d+)\*C(\d+)", formula)
-            if match:
-                row = match.group(1)
-                actions[i]["payload"]["formula"] = f"=C{row}*D{row}"
-                print(f"[postprocess] Fixed Workout E formula {cell}: =B{row}*C{row} → =C{row}*D{row}")
-
-        # Remove ALL D5-D9 overwrites on Workout Plan — these must stay as static values (1,1,2,1,1)
-        if cell and re.match(r"D[5-9]$", cell):
+        # Remove ALL writes to protected cells (D5:D9, E5:E10) — we force-inject correct values below
+        if cell in wp_protected_cells:
             actions_to_remove.append(i)
-            print(f"[postprocess] Removing Workout D column overwrite: {cell} = {formula or p.get('value','')}")
-
-        # Fix E10: =SUM(D5:D9) should be =SUM(E5:E9)
-        if cell == "E10" and formula == "=SUM(D5:D9)":
-            actions[i]["payload"]["formula"] = "=SUM(E5:E9)"
-            print(f"[postprocess] Fixed E10: =SUM(D5:D9) → =SUM(E5:E9)")
+            print(f"[postprocess] Removing Workout protected cell overwrite: {cell} = {formula or p.get('value','')}")
+            continue
 
         # Fix B10: should be "Total" text, not a formula
         if cell == "B10" and formula:
@@ -334,18 +357,22 @@ def _postprocess_excel_actions(result: dict, context: dict) -> dict:
     for summary in sheet_summaries:
         name = summary.get("name", "")
         if "workout" in name.lower() and "plan" in name.lower():
-            # Check if D7 is already targeted by remaining actions (shouldn't be, we removed them)
-            d7_targeted = any(
-                a.get("payload", {}).get("sheet", "") == name and
-                a.get("payload", {}).get("cell", "").upper() == "D7"
-                for a in actions + injected
-            )
-            if not d7_targeted:
-                injected.append({
-                    "type": "write_cell",
-                    "payload": {"cell": "D7", "value": 2, "sheet": name}
-                })
-                print(f"[postprocess] FORCE-injected D7=2 (Zumba times/week) on {name}")
+            # FORCE-inject Workout Plan core formulas (E5:E10) and D column values
+            # These are blanket-protected — ALL model writes to these cells were already removed above
+            wp_core = [
+                # D column: times per week (static values the model must not touch)
+                {"type": "write_cell", "payload": {"cell": "D7", "value": 2, "sheet": name}},
+                # E column: Calories Burned = Calories/Session * Times/Week
+                {"type": "write_formula", "payload": {"cell": "E5", "formula": "=C5*D5", "sheet": name}},
+                {"type": "write_formula", "payload": {"cell": "E6", "formula": "=C6*D6", "sheet": name}},
+                {"type": "write_formula", "payload": {"cell": "E7", "formula": "=C7*D7", "sheet": name}},
+                {"type": "write_formula", "payload": {"cell": "E8", "formula": "=C8*D8", "sheet": name}},
+                {"type": "write_formula", "payload": {"cell": "E9", "formula": "=C9*D9", "sheet": name}},
+                # E10: Total Calories Burned — MUST be =SUM(E5:E9), never D column
+                {"type": "write_formula", "payload": {"cell": "E10", "formula": "=SUM(E5:E9)", "sheet": name}},
+            ]
+            injected.extend(wp_core)
+            print(f"[postprocess] FORCE-injected Workout Plan D7, E5:E10 formulas on {name}")
 
             # FORCE-inject Workout Plan cross-sheet formulas and labels
             # H5: must be formula referencing Calorie Journal, not a static value
