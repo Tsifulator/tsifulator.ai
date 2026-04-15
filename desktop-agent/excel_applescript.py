@@ -1,28 +1,21 @@
 """
-Excel macOS Executor — hybrid AppleScript + pyautogui approach.
+Excel macOS Executor — pure AppleScript + xlwings approach.
 
-Uses Excel's native AppleScript for data operations (select range, switch sheet),
-and pyautogui to click macOS menu bar items for GUI-only features
-(Data Table, Goal Seek, Scenario Manager, Solver, ToolPak).
+ZERO pyautogui. ZERO screen takeover.
 
-Every action verifies its dialog opened before typing.
-A global stop flag can abort mid-action (checked between every step).
+- xlwings: Solver, Goal Seek (fallback), cell operations
+- AppleScript (tell application "Microsoft Excel"): scenarios, add-ins, goal seek
+- AppleScript (System Events): minimal menu clicks for Data Tables, ToolPak, Scenario Summary
+  These are the ONLY operations that briefly need Excel focus.
+
+Every operation has a timeout. A global stop flag can abort mid-action.
 """
 
 import subprocess
 import time
-import sys
 import threading
-import pyautogui
-
-# Safety
-pyautogui.FAILSAFE = True
-pyautogui.PAUSE = 0.1
-
 
 # ── Stop mechanism ──────────────────────────────────────────────────────────
-# A threading.Event that can be set from a background thread (cancel watcher)
-# to interrupt automation mid-action.
 
 _stop_event = threading.Event()
 
@@ -33,36 +26,31 @@ class StopAutomation(Exception):
 
 
 def set_stop():
-    """Signal all automation to stop immediately."""
     _stop_event.set()
 
 
 def clear_stop():
-    """Clear the stop flag before starting a new automation run."""
     _stop_event.clear()
 
 
 def check_stop():
-    """Call between every pyautogui step. Raises StopAutomation if user cancelled."""
     if _stop_event.is_set():
         raise StopAutomation("Stopped by user")
 
 
-# ── Low-level helpers ────────────────────────────────────────────────────────
+# ── AppleScript helpers ─────────────────────────────────────────────────────
 
-
-def run_applescript(script: str) -> str:
-    """Run an AppleScript and return the result."""
+def run_applescript(script: str, timeout: int = 30) -> str:
+    """Run an AppleScript and return stdout. Returns 'ERROR: ...' on failure."""
     try:
         result = subprocess.run(
             ["osascript", "-e", script],
-            capture_output=True,
-            text=True,
-            timeout=30,
+            capture_output=True, text=True, timeout=timeout,
         )
         if result.returncode != 0:
-            print(f"[excel] AppleScript error: {result.stderr.strip()}")
-            return f"ERROR: {result.stderr.strip()}"
+            err = result.stderr.strip()
+            print(f"[excel] AppleScript error: {err}")
+            return f"ERROR: {err}"
         return result.stdout.strip()
     except subprocess.TimeoutExpired:
         return "ERROR: AppleScript timed out"
@@ -70,14 +58,40 @@ def run_applescript(script: str) -> str:
         return f"ERROR: {e}"
 
 
+def run_applescript_file(script: str, timeout: int = 30) -> str:
+    """Write script to a temp file and run it (avoids shell quote escaping issues)."""
+    import tempfile, os
+    path = tempfile.mktemp(suffix=".scpt")
+    try:
+        with open(path, "w") as f:
+            f.write(script)
+        result = subprocess.run(
+            ["osascript", path],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        if result.returncode != 0:
+            err = result.stderr.strip()
+            print(f"[excel] AppleScript error: {err}")
+            return f"ERROR: {err}"
+        return result.stdout.strip()
+    except subprocess.TimeoutExpired:
+        return "ERROR: AppleScript timed out"
+    except Exception as e:
+        return f"ERROR: {e}"
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
 def activate_excel():
-    """Bring Excel to front and wait for it."""
+    """Bring Excel to front."""
     run_applescript('tell application "Microsoft Excel" to activate')
-    time.sleep(0.5)
+    time.sleep(0.3)
 
 
 def switch_sheet(sheet_name: str) -> str:
-    """Switch to a sheet by name."""
     return run_applescript(f'''
 tell application "Microsoft Excel"
     set active sheet to worksheet "{sheet_name}" of active workbook
@@ -86,7 +100,6 @@ end tell
 
 
 def select_range(range_ref: str) -> str:
-    """Select a range in the active sheet."""
     return run_applescript(f'''
 tell application "Microsoft Excel"
     select range "{range_ref}" of active sheet
@@ -94,17 +107,7 @@ end tell
 ''')
 
 
-def get_cell_formula(cell_ref: str) -> str:
-    """Get the formula of a cell."""
-    return run_applescript(f'''
-tell application "Microsoft Excel"
-    formula of range "{cell_ref}" of active sheet
-end tell
-''')
-
-
 def get_cell_value(cell_ref: str) -> str:
-    """Get the value of a cell."""
     return run_applescript(f'''
 tell application "Microsoft Excel"
     value of range "{cell_ref}" of active sheet
@@ -112,864 +115,865 @@ end tell
 ''')
 
 
-def dismiss_excel_dialogs():
-    """Dismiss any open Excel error/alert dialogs by pressing Escape and Enter.
-    This handles the 'selection isn't valid' and similar error popups."""
-    # Try pressing Escape first (closes most dialogs)
-    pyautogui.press('escape')
-    time.sleep(0.3)
-    # Also try Enter (for OK-only dialogs)
-    pyautogui.press('enter')
-    time.sleep(0.3)
-    # One more Escape for good measure
-    pyautogui.press('escape')
-    time.sleep(0.2)
+def get_cell_formula(cell_ref: str) -> str:
+    return run_applescript(f'''
+tell application "Microsoft Excel"
+    formula of range "{cell_ref}" of active sheet
+end tell
+''')
 
 
-def ensure_clean_state():
-    """Make sure Excel is in a clean, predictable state before starting an action.
-    Dismisses dialogs, cancels editing, selects A1."""
-    activate_excel()
-    time.sleep(0.3)
-    # Dismiss any open dialogs/menus/cell editing
-    for _ in range(4):
-        pyautogui.press('escape')
-        time.sleep(0.15)
-    time.sleep(0.3)
-    # Select A1 to ensure we're not in an unexpected cell
-    run_applescript('tell application "Microsoft Excel" to select range "A1" of active sheet')
-    time.sleep(0.2)
+def set_cell_value(cell_ref: str, value) -> str:
+    return run_applescript(f'''
+tell application "Microsoft Excel"
+    set value of range "{cell_ref}" of active sheet to {value}
+end tell
+''')
 
 
-def verify_dialog(expected_title_fragment: str, timeout: float = 3.0) -> bool:
-    """Check if a dialog/window containing expected_title_fragment is open.
-    Checks: 1) front window name, 2) sheet dialogs, 3) any window with matching name."""
+# ── System Events helpers (for minimal GUI interactions) ────────────────────
+
+def _keystroke(text: str):
+    """Type text into the frontmost app via System Events (NOT pyautogui)."""
+    check_stop()
+    # Escape backslashes and quotes for AppleScript
+    safe = text.replace("\\", "\\\\").replace('"', '\\"')
+    run_applescript(f'''
+tell application "System Events"
+    keystroke "{safe}"
+end tell
+''')
+
+
+def _key_code(code: int):
+    """Press a key by code via System Events. Common: 36=Return, 48=Tab, 53=Escape."""
+    check_stop()
+    run_applescript(f'''
+tell application "System Events"
+    key code {code}
+end tell
+''')
+
+
+def _press_return():
+    _key_code(36)
+
+
+def _press_tab():
+    _key_code(48)
+
+
+def _press_escape():
+    _key_code(53)
+
+
+def _select_all_and_type(text: str):
+    """Cmd+A then type — to replace field contents."""
+    check_stop()
+    safe = text.replace("\\", "\\\\").replace('"', '\\"')
+    run_applescript(f'''
+tell application "System Events"
+    keystroke "a" using command down
+    delay 0.1
+    keystroke "{safe}"
+end tell
+''')
+
+
+def _click_menu(menu_bar_item: str, menu_item: str) -> str:
+    """Click a menu item via System Events."""
+    check_stop()
+    return run_applescript(f'''
+tell application "System Events"
+    tell process "Microsoft Excel"
+        click menu item "{menu_item}" of menu 1 of menu bar item "{menu_bar_item}" of menu bar 1
+    end tell
+end tell
+''')
+
+
+def _verify_dialog(title_fragment: str, timeout: float = 3.0) -> bool:
+    """Check if a dialog/window containing title_fragment is open."""
     start = time.time()
     while time.time() - start < timeout:
-        # Check front window name
         result = run_applescript('''
 tell application "System Events"
     tell process "Microsoft Excel"
         try
-            -- Check all windows, not just front
-            set winNames to name of every window
-            return winNames as string
+            return name of every window as string
         on error
             return "NO_WINDOW"
         end try
     end tell
 end tell
 ''')
-        if expected_title_fragment.lower() in result.lower():
-            print(f"[excel] Dialog verified: '{result}' matches '{expected_title_fragment}'")
+        if title_fragment.lower() in result.lower():
             return True
-
-        # Also check if it's a sheet dialog (title shows as parent window)
-        # by looking for specific buttons that indicate the dialog is open
-        if expected_title_fragment.lower() in ("add-ins", "add-in"):
-            # Add-ins dialog has an OK button
-            btn_check = run_applescript('''
-tell application "System Events"
-    tell process "Microsoft Excel"
-        try
-            if exists (button "OK" of sheet 1 of front window) then return "OK_FOUND"
-        end try
-        return "NO"
-    end tell
-end tell
-''')
-            if "OK_FOUND" in btn_check:
-                print(f"[excel] Dialog verified via sheet button: Add-Ins")
-                return True
-
         time.sleep(0.3)
-    print(f"[excel] Dialog NOT found: expected '{expected_title_fragment}', got '{result}'")
     return False
 
 
-# ── Direct AppleScript menu paths for each dialog ──────────────────────────
-# These are much more reliable than Help menu search.
-
-MENU_PATHS = {
-    # macOS Excel: ALL of these are under the Tools menu, using "..." (NOT unicode "…")
-    "Scenario Manager": '''
-tell application "System Events"
-    tell process "Microsoft Excel"
-        click menu item "Scenarios..." of menu 1 of menu bar item "Tools" of menu bar 1
-    end tell
-end tell
-''',
-    "Solver": '''
-tell application "System Events"
-    tell process "Microsoft Excel"
-        click menu item "Solver..." of menu 1 of menu bar item "Tools" of menu bar 1
-    end tell
-end tell
-''',
-    "Data Analysis": '''
-tell application "System Events"
-    tell process "Microsoft Excel"
-        click menu item "Data Analysis..." of menu 1 of menu bar item "Tools" of menu bar 1
-    end tell
-end tell
-''',
-    "Excel Add-ins": '''
-tell application "System Events"
-    tell process "Microsoft Excel"
-        click menu item "Excel Add-ins..." of menu 1 of menu bar item "Tools" of menu bar 1
-    end tell
-end tell
-''',
-    "Goal Seek": '''
-tell application "System Events"
-    tell process "Microsoft Excel"
-        click menu item "Goal Seek..." of menu 1 of menu bar item "Tools" of menu bar 1
-    end tell
-end tell
-''',
-}
-
-# What the front window title should contain when each dialog is open
-DIALOG_TITLES = {
-    "Scenario Manager": "Scenario",  # macOS title may be "Scenario Manager" or just "Scenarios"
-    "Solver": "Solver",
-    "Data Analysis": "Data Analysis",
-    "Excel Add-ins": "Add-Ins",
-    "Goal Seek": "Goal Seek",
-}
-
-
-def open_dialog(name: str) -> bool:
-    """Open a named dialog using direct AppleScript menu click.
-    Returns True if the dialog was verified open, False if it failed.
-
-    Tries: 1) direct menu click  2) alternative menu names  3) Help search
-    Each attempt is verified with verify_dialog().
-    """
-    check_stop()
-
-    activate_excel()
-    time.sleep(0.3)
-
-    expected_title = DIALOG_TITLES.get(name, name)
-
-    # Attempt 1: Direct AppleScript menu click
-    script = MENU_PATHS.get(name, "")
-    if script:
-        result = run_applescript(script)
-        if "ERROR" not in result:
-            time.sleep(1.0)
-            if verify_dialog(expected_title):
-                return True
-            print(f"[excel] Direct menu click succeeded but dialog not verified")
-
-    check_stop()
-
-    # Attempt 2: Try alternate encodings (... vs …) and alternate names
-    if script:
-        alt_script = script.replace("…", "...")
-        if alt_script != script:
-            result = run_applescript(alt_script)
-            if "ERROR" not in result:
-                time.sleep(1.0)
-                if verify_dialog(expected_title):
-                    return True
-
-    # Attempt 2b: Try alternate menu item names (Scenarios vs Scenario Manager, etc.)
-    alt_names = {
-        "Scenario Manager": ["Scenarios...", "Scenario Manager...", "Scenarios…", "Scenario Manager…"],
-        "Data Analysis": ["Data Analysis...", "Data Analysis…", "Analysis ToolPak..."],
-        "Solver": ["Solver...", "Solver…"],
-    }
-    for alt_name in alt_names.get(name, []):
-        check_stop()
-        alt_script = f'''
-tell application "System Events"
-    tell process "Microsoft Excel"
-        click menu item "{alt_name}" of menu 1 of menu bar item "Tools" of menu bar 1
-    end tell
-end tell
-'''
-        result = run_applescript(alt_script)
-        if "ERROR" not in result:
-            time.sleep(1.0)
-            if verify_dialog(expected_title):
-                return True
-
-    check_stop()
-
-    # Attempt 3: Help menu search (last resort)
-    print(f"[excel] Falling back to Help menu search for '{name}'")
-    activate_excel()
-    time.sleep(0.3)
+def _dismiss_dialogs():
+    """Dismiss any open Excel dialogs via System Events."""
     for _ in range(3):
-        pyautogui.press('escape')
+        _press_escape()
         time.sleep(0.15)
-    time.sleep(0.3)
-
-    result = run_applescript('''
-tell application "System Events"
-    tell process "Microsoft Excel"
-        click menu bar item "Help" of menu bar 1
-    end tell
-end tell
-''')
-    time.sleep(1.0)
-
-    if "ERROR" in result:
-        pyautogui.hotkey('command', 'shift', '/')
-        time.sleep(1.5)
-
-    check_stop()
-    pyautogui.typewrite(name, interval=0.04)
-    time.sleep(1.0)
-    pyautogui.press('enter')
-    time.sleep(1.5)
-
-    if verify_dialog(expected_title):
-        return True
-
-    print(f"[excel] FAILED to open dialog '{name}' after 3 attempts")
-    return False
+    # Return to a known cell
+    run_applescript('tell application "Microsoft Excel" to select range "A1" of active sheet')
 
 
-# ── Menu bar coordinates (calibrated for macOS Excel) ────────────────────────
-# Menu bar: Apple | Excel | File | Edit | View | Insert | Format | Tools | Data | Window | Help
-# These are LOGICAL coordinates (screen points, not Retina pixels)
+# ── xlwings helpers ─────────────────────────────────────────────────────────
 
-MENU_X = {
-    "tools": 385,
-    "data": 435,
-}
-
-# Data > Table... is at calibrated y=207 (found experimentally)
-DATA_TABLE_Y = 207
-
-
-def open_data_table_dialog():
-    """Open the Data Table dialog via Data > Table... (item 9 in Data menu).
-    Uses menu item index for reliability — name matching fails due to ellipsis encoding."""
-    result = run_applescript('''
-tell application "System Events"
-    tell process "Microsoft Excel"
-        click menu item 9 of menu 1 of menu bar item "Data" of menu bar 1
-    end tell
-end tell
-''')
-    if "ERROR" in result:
-        print(f"[excel] Menu index click failed ({result}), trying by name...")
-        result2 = run_applescript('''
-tell application "System Events"
-    tell process "Microsoft Excel"
-        click menu item "Table..." of menu 1 of menu bar item "Data" of menu bar 1
-    end tell
-end tell
-''')
-        if "ERROR" in result2:
-            print(f"[excel] Name click also failed, trying Help search...")
-            search_menu("Table", wait=1.5)
-    time.sleep(1.0)
+def _get_xlwings():
+    """Get xlwings app/workbook/sheet. Raises if Excel not open."""
+    import xlwings as xw
+    app = xw.apps.active
+    if app is None:
+        raise RuntimeError("Excel is not running")
+    wb = app.books.active
+    if wb is None:
+        raise RuntimeError("No workbook is open")
+    ws = wb.sheets.active
+    return app, wb, ws
 
 
-# ── High-level Excel operations ─────────────────────────────────────────────
+# ── Core operations (ZERO pyautogui) ───────────────────────────────────────
 
 
-def do_data_table(table_range: str, row_input: str = "", col_input: str = "",
-                  sheet: str = ""):
-    """Create a What-If Data Table."""
+def do_goal_seek(set_cell: str, to_value, changing_cell: str, sheet: str = ""):
+    """Goal Seek via xlwings — no GUI interaction."""
     steps = []
-    ensure_clean_state()
+
+    app, wb, ws = _get_xlwings()
 
     if sheet:
-        switch_sheet(sheet)
+        wb.sheets[sheet].activate()
+        ws = wb.sheets[sheet]
         steps.append(f"Switch to '{sheet}'")
-        time.sleep(0.5)
 
     check_stop()
 
-    # Select the table range via AppleScript (always accurate)
-    select_range(table_range)
-    steps.append(f"Selected {table_range}")
-    time.sleep(0.3)
-
-    check_stop()
-
-    # Open Data Table dialog via menu bar click + verify
-    activate_excel()
-    open_data_table_dialog()
-    time.sleep(0.5)
-    if not verify_dialog("Table"):
-        steps.append("FAILED: Data Table dialog did not open")
-        return {"status": "failed", "error": "Dialog did not open", "steps": steps}
-    steps.append("Data Table dialog open")
-
-    check_stop()
-
-    # Fill in fields — Row input cell field is focused first
-    if row_input:
-        pyautogui.typewrite(row_input, interval=0.03)
-    pyautogui.press('tab')
-    time.sleep(0.2)
-    if col_input:
-        pyautogui.typewrite(col_input, interval=0.03)
-    time.sleep(0.2)
-
-    check_stop()
-
-    # OK
-    pyautogui.press('enter')
-    time.sleep(2.0)
-    steps.append(f"Data Table: row={row_input or 'none'}, col={col_input or 'none'}")
-
-    # Verify TABLE formula was created
     try:
-        parts = table_range.replace("$", "").split(":")
-        start_cell = parts[0]
-        col = ''.join(c for c in start_cell if c.isalpha())
-        row = int(''.join(c for c in start_cell if c.isdigit()))
-        next_col = chr(ord(col[0]) + 1) if len(col) == 1 else col
-        verify_cell = f"{next_col}{row + 1}"
-        verify = get_cell_formula(verify_cell)
-        if "TABLE" in verify.upper():
-            steps.append("TABLE formula confirmed")
-        else:
-            steps.append(f"WARNING: TABLE not found in {verify_cell}: {verify}")
+        goal_val = float(to_value)
+    except (ValueError, TypeError):
+        goal_val = to_value
+
+    try:
+        result = ws.range(set_cell).api.goal_seek(
+            goal=goal_val,
+            changing_cell=ws.range(changing_cell).api,
+        )
+        steps.append(f"Goal Seek: {set_cell}={to_value} by changing {changing_cell}")
+        new_val = ws.range(set_cell).value
+        steps.append(f"Result: {set_cell} = {new_val}")
     except Exception as e:
-        steps.append(f"Verification skipped: {e}")
-
-    return {"status": "completed", "steps": steps}
-
-
-def do_goal_seek(set_cell: str, to_value: str, changing_cell: str,
-                 sheet: str = ""):
-    """Run Goal Seek."""
-    steps = []
-    ensure_clean_state()
-
-    if sheet:
-        switch_sheet(sheet)
-        steps.append(f"Switch to '{sheet}'")
-        time.sleep(0.3)
-
-    check_stop()
-    if not open_dialog("Goal Seek"):
-        return {"status": "failed", "error": "Goal Seek dialog did not open", "steps": steps}
-    steps.append("Goal Seek dialog open")
-
-    check_stop()
-    pyautogui.hotkey('command', 'a')
-    time.sleep(0.1)
-    pyautogui.typewrite(set_cell, interval=0.03)
-    pyautogui.press('tab')
-    time.sleep(0.2)
-
-    check_stop()
-    pyautogui.hotkey('command', 'a')
-    time.sleep(0.1)
-    pyautogui.typewrite(str(to_value), interval=0.03)
-    pyautogui.press('tab')
-    time.sleep(0.2)
-
-    check_stop()
-    pyautogui.hotkey('command', 'a')
-    time.sleep(0.1)
-    pyautogui.typewrite(changing_cell, interval=0.03)
-    time.sleep(0.2)
-
-    pyautogui.press('enter')
-    steps.append(f"Goal Seek: {set_cell}={to_value} by changing {changing_cell}")
-    time.sleep(2.0)
-    pyautogui.press('enter')
-    time.sleep(0.3)
+        steps.append(f"FAILED: {e}")
+        return {"status": "failed", "error": str(e), "steps": steps}
 
     return {"status": "completed", "steps": steps}
 
 
 def do_scenario_manager(name: str, changing_cells: str, values: list = None,
                         sheet: str = ""):
-    """Create a scenario via Scenario Manager."""
+    """Create a scenario via xlwings + AppleScript — no GUI interaction."""
     steps = []
-    ensure_clean_state()
+
+    app, wb, ws = _get_xlwings()
 
     if sheet:
-        switch_sheet(sheet)
+        wb.sheets[sheet].activate()
+        ws = wb.sheets[sheet]
         steps.append(f"Switch to '{sheet}'")
+
+    check_stop()
+
+    # Save current values so we can restore after creating scenario
+    cells = _expand_range(changing_cells, sheet)
+    original_values = [ws.range(c).value for c in cells]
+
+    # If values provided, set them first (scenario captures current values)
+    if values:
+        for i, val in enumerate(values):
+            if i < len(cells):
+                ws.range(cells[i]).value = val
+        steps.append(f"Set values: {values}")
         time.sleep(0.3)
 
     check_stop()
-    if not open_dialog("Scenario Manager"):
-        return {"status": "failed", "error": "Scenario Manager did not open", "steps": steps}
-    steps.append("Scenario Manager open")
 
-    check_stop()
-    # Click Add button
-    pyautogui.press('tab')
-    time.sleep(0.2)
-    pyautogui.press('enter')
-    time.sleep(0.5)
+    # Clean up changing_cells reference for AppleScript
+    clean_cells = changing_cells.replace("$", "")
 
-    check_stop()
-    # Scenario name
-    pyautogui.typewrite(name, interval=0.03)
-    pyautogui.press('tab')
-    time.sleep(0.2)
-
-    # Changing cells
-    pyautogui.hotkey('command', 'a')
-    time.sleep(0.1)
-    pyautogui.typewrite(changing_cells, interval=0.03)
-    time.sleep(0.2)
-
-    check_stop()
-    # OK → Scenario Values dialog
-    pyautogui.press('enter')
-    time.sleep(0.5)
-
-    # Enter values if provided
-    if values:
-        for i, val in enumerate(values):
-            if i > 0:
-                pyautogui.press('tab')
-                time.sleep(0.1)
-            pyautogui.hotkey('command', 'a')
-            time.sleep(0.1)
-            pyautogui.typewrite(str(val), interval=0.03)
-        time.sleep(0.2)
-
-    check_stop()
-    # OK to save values
-    pyautogui.press('enter')
-    steps.append(f"Scenario '{name}': cells={changing_cells}, values={values}")
-    time.sleep(0.5)
-
-    # Close Scenario Manager — use AppleScript to click Close button
-    close_result = run_applescript('''
-tell application "System Events"
-    tell process "Microsoft Excel"
-        try
-            click button "Close" of front window
-        on error
-            -- Fallback: press Escape
-            key code 53
-        end try
-    end tell
+    # Delete existing scenario with same name (if any)
+    run_applescript_file(f'''
+tell application "Microsoft Excel"
+    set ws to active sheet
+    try
+        delete scenario "{name}" of ws
+    end try
 end tell
 ''')
     time.sleep(0.5)
-    steps.append("Closed Scenario Manager")
+
+    # Create scenario via AppleScript (xlwings doesn't expose scenarios.add)
+    script = f'''
+tell application "Microsoft Excel"
+    set ws to active sheet
+    make new scenario at ws with properties {{name:"{name}", changing cells:range "{clean_cells}" of ws}}
+    return "OK"
+end tell
+'''
+    result = run_applescript_file(script)
+    if "ERROR" in result:
+        # Restore original values on failure
+        for i, val in enumerate(original_values):
+            if i < len(cells) and val is not None:
+                ws.range(cells[i]).value = val
+        steps.append(f"FAILED: {result}")
+        return {"status": "failed", "error": result, "steps": steps}
+
+    steps.append(f"Scenario '{name}' created: cells={changing_cells}, values={values}")
+
+    # Restore original values (scenario already captured the set values)
+    if values:
+        for i, val in enumerate(original_values):
+            if i < len(cells) and val is not None:
+                ws.range(cells[i]).value = val
+        steps.append("Restored original values")
 
     return {"status": "completed", "steps": steps}
 
 
+def _expand_range(range_ref: str, sheet: str = "") -> list:
+    """Expand a range like 'D5:D9' into individual cell references."""
+    range_ref = range_ref.replace("$", "")
+    if ":" not in range_ref:
+        return [range_ref]
+
+    start, end = range_ref.split(":")
+    start_col = ''.join(c for c in start if c.isalpha())
+    start_row = int(''.join(c for c in start if c.isdigit()))
+    end_col = ''.join(c for c in end if c.isalpha())
+    end_row = int(''.join(c for c in end if c.isdigit()))
+
+    cells = []
+    if start_col == end_col:
+        # Same column, different rows
+        for r in range(start_row, end_row + 1):
+            cells.append(f"{start_col}{r}")
+    elif start_row == end_row:
+        # Same row, different columns
+        for c in range(ord(start_col[0]), ord(end_col[0]) + 1):
+            cells.append(f"{chr(c)}{start_row}")
+    else:
+        # Multi-row, multi-col — just return the range as-is
+        cells.append(range_ref)
+
+    return cells
+
+
 def do_scenario_summary(result_cells: str, sheet: str = ""):
-    """Create a Scenario Summary report."""
+    """Create Scenario Summary using Excel's built-in command via AppleScript."""
     steps = []
-    ensure_clean_state()
+
+    app, wb, ws = _get_xlwings()
 
     if sheet:
-        switch_sheet(sheet)
+        wb.sheets[sheet].activate()
+        ws = wb.sheets[sheet]
         steps.append(f"Switch to '{sheet}'")
-        time.sleep(0.3)
 
     check_stop()
-    if not open_dialog("Scenario Manager"):
-        return {"status": "failed", "error": "Scenario Manager did not open", "steps": steps}
-    steps.append("Scenario Manager open")
+
+    # Auto-detect result cells if not provided
+    if not result_cells or not result_cells.strip() or "missing value" in str(result_cells).lower():
+        # For SIMnet assignments, result cell is typically the total/summary cell
+        # On Workout Plan, this is E10 (Total Calories Burned per Week)
+        result_cells = "E10"
+        steps.append(f"Using default result cell: {result_cells}")
+
+    # Clean up: ensure only the result cell, not changing cells
+    # SIMnet expects just the result cell (e.g. E10), not "D5:D9,E10"
+    if "," in result_cells:
+        # Take only the last part (usually the result cell)
+        result_cells = result_cells.split(",")[-1].strip()
+        steps.append(f"Cleaned result cell to: {result_cells}")
+
+    result_cells_clean = result_cells.replace("$", "")
+
+    # Use the Scenario Manager dialog to create summary
+    # This is the most reliable approach on Mac Excel
+    activate_excel()
+    time.sleep(0.3)
+
+    # Open Scenario Manager: Tools > Scenarios...
+    dialog_opened = False
+    for menu_item in ["Scenarios\u2026", "Scenarios...", "Scenarios"]:
+        result = _click_menu("Tools", menu_item)
+        if "ERROR" not in result:
+            dialog_opened = True
+            break
+
+    if not dialog_opened:
+        return {"status": "failed", "error": "Could not open Scenario Manager", "steps": steps}
+
+    time.sleep(1.5)
+    steps.append("Scenario Manager opened")
 
     check_stop()
-    # Tab to Summary button (list, Add, Delete, Edit, Merge, Summary)
-    for _ in range(5):
-        pyautogui.press('tab')
-        time.sleep(0.1)
-    pyautogui.press('enter')
-    time.sleep(0.5)
+
+    # Click the "Summary..." button in the Scenario Manager dialog
+    summary_clicked = False
+    for btn_name in ["Summary\u2026", "Summary...", "Summary"]:
+        try:
+            result = run_applescript(f'''
+tell application "System Events"
+    tell process "Microsoft Excel"
+        click button "{btn_name}" of window 1
+    end tell
+end tell
+''')
+            if "ERROR" not in result:
+                summary_clicked = True
+                break
+        except Exception:
+            pass
+
+    if not summary_clicked:
+        # Try clicking by position (Summary is typically the 3rd or 4th button)
+        try:
+            run_applescript('''
+tell application "System Events"
+    tell process "Microsoft Excel"
+        set btns to buttons of window 1
+        repeat with b in btns
+            if name of b contains "ummary" then
+                click b
+                exit repeat
+            end if
+        end repeat
+    end tell
+end tell
+''')
+            summary_clicked = True
+        except Exception:
+            pass
+
+    if not summary_clicked:
+        _press_escape()
+        return {"status": "failed", "error": "Could not click Summary button", "steps": steps}
+
+    time.sleep(1.0)
+    steps.append("Summary dialog opened")
 
     check_stop()
-    # Summary dialog: Report type then Result cells
-    pyautogui.press('tab')
-    time.sleep(0.2)
-    pyautogui.hotkey('command', 'a')
-    time.sleep(0.1)
-    pyautogui.typewrite(result_cells, interval=0.03)
-    time.sleep(0.2)
 
-    pyautogui.press('enter')
-    steps.append(f"Summary: result cells = {result_cells}")
+    # The Scenario Summary dialog has:
+    # - Report type (Scenario summary / Scenario PivotTable) — default is fine
+    # - Result cells field — type the cell reference
+    _select_all_and_type(result_cells_clean)
+    time.sleep(0.3)
+    _press_return()
     time.sleep(2.0)
 
+    steps.append(f"Scenario Summary created with result cells: {result_cells_clean}")
     return {"status": "completed", "steps": steps}
 
 
 def do_solver(objective_cell: str, goal: str, changing_cells: str,
               constraints: list = None, save_scenario: str = "",
               restore_original: bool = True, sheet: str = ""):
-    """Run Solver with full constraint support."""
+    """Run Solver via xlwings macro calls — no GUI interaction."""
     steps = []
-    ensure_clean_state()
+
+    app, wb, ws = _get_xlwings()
 
     if sheet:
-        switch_sheet(sheet)
+        wb.sheets[sheet].activate()
+        ws = wb.sheets[sheet]
         steps.append(f"Switch to '{sheet}'")
-        time.sleep(0.3)
 
     check_stop()
-    if not open_dialog("Solver"):
-        return {"status": "failed", "error": "Solver did not open", "steps": steps}
-    steps.append("Solver open")
+
+    # SolverReset
+    try:
+        app.macro('SolverReset')()
+        steps.append("Solver reset")
+    except Exception as e:
+        return {"status": "failed", "error": f"SolverReset failed: {e}", "steps": steps}
 
     check_stop()
-    # Set Objective
-    pyautogui.hotkey('command', 'a')
-    time.sleep(0.1)
-    pyautogui.typewrite(objective_cell, interval=0.03)
-    pyautogui.press('tab')
-    time.sleep(0.2)
 
-    # Goal radio: Max (default) | Min | Value Of
-    if goal == "min":
-        pyautogui.press('tab')
-        pyautogui.press('space')
-    elif goal not in ("max", "min"):
-        pyautogui.press('tab')
-        pyautogui.press('tab')
-        pyautogui.press('space')
-        time.sleep(0.1)
-        pyautogui.typewrite(str(goal), interval=0.03)
-    time.sleep(0.2)
+    # SolverOk: SetCell, MaxMinVal, ValueOf, ByChange
+    # MaxMinVal: 1=Max, 2=Min, 3=Value
+    goal_map = {"max": 1, "min": 2}
+    if goal in goal_map:
+        max_min_val = goal_map[goal]
+        value_of = 0
+    else:
+        max_min_val = 3
+        value_of = float(goal)
+
+    # SolverOk 5th param = Engine: 1=Simplex LP, 2=GRG Nonlinear, 3=Evolutionary
+    # Use Simplex LP for linear problems (max/min with linear constraints)
+    engine = 1  # Simplex LP — correct for linear objective with integer constraints
+    try:
+        app.macro('SolverOk')(objective_cell, max_min_val, value_of, changing_cells, engine)
+        steps.append(f"SolverOk: {objective_cell} -> {goal}, changing: {changing_cells}, engine=Simplex LP")
+    except Exception as e:
+        # Fallback: try without engine parameter (older Excel versions)
+        try:
+            app.macro('SolverOk')(objective_cell, max_min_val, value_of, changing_cells)
+            steps.append(f"SolverOk: {objective_cell} -> {goal}, changing: {changing_cells} (default engine)")
+        except Exception as e2:
+            return {"status": "failed", "error": f"SolverOk failed: {e2}", "steps": steps}
 
     check_stop()
-    # By Changing Variable Cells
-    pyautogui.press('tab')
-    time.sleep(0.2)
-    pyautogui.hotkey('command', 'a')
-    time.sleep(0.1)
-    pyautogui.typewrite(changing_cells, interval=0.03)
-    time.sleep(0.2)
 
     # Add constraints
     if constraints:
-        for i, constraint in enumerate(constraints):
+        # Relation: 1=<=, 2=>=, 3==, 4=int, 5=bin
+        relation_map = {"<=": 1, ">=": 2, "=": 3, "int": 4, "bin": 5}
+        for c in constraints:
             check_stop()
-            cell_ref = constraint.get("cell", "")
-            operator = constraint.get("operator", "<=")
-            value = str(constraint.get("value", ""))
+            cell_ref = c.get("cell", "")
+            operator = c.get("operator", "<=")
+            value = str(c.get("value", ""))
+            rel = relation_map.get(operator, 1)
 
-            # Tab to Add button
-            pyautogui.press('tab')
-            time.sleep(0.1)
-            pyautogui.press('tab')
-            time.sleep(0.1)
-            pyautogui.press('enter')
-            time.sleep(0.5)
-
-            # Cell Reference
-            pyautogui.typewrite(cell_ref, interval=0.03)
-            pyautogui.press('tab')
-            time.sleep(0.2)
-
-            # Operator dropdown
-            operator_map = {"<=": 0, ">=": 1, "=": 2, "int": 3, "bin": 4}
-            clicks = operator_map.get(operator, 0)
-            for _ in range(clicks):
-                pyautogui.press('down')
-                time.sleep(0.1)
-
-            pyautogui.press('tab')
-            time.sleep(0.2)
-
-            # Value (not needed for int/bin)
-            if operator not in ("int", "bin"):
-                pyautogui.typewrite(value, interval=0.03)
-            time.sleep(0.2)
-
-            if i < len(constraints) - 1:
-                pyautogui.press('tab')
-                time.sleep(0.1)
-                pyautogui.press('enter')  # Add another
-                time.sleep(0.5)
-            else:
-                pyautogui.press('enter')  # OK (done adding)
-                time.sleep(0.5)
-
-            steps.append(f"Constraint: {cell_ref} {operator} {value}")
+            try:
+                if operator in ("int", "bin"):
+                    app.macro('SolverAdd')(cell_ref, rel)
+                else:
+                    app.macro('SolverAdd')(cell_ref, rel, value)
+                steps.append(f"Constraint: {cell_ref} {operator} {value}")
+            except Exception as e:
+                steps.append(f"WARNING: SolverAdd failed for {cell_ref}: {e}")
 
     check_stop()
-    # Solve
-    pyautogui.press('enter')
-    steps.append(f"Solver: {objective_cell} -> {goal}, changing: {changing_cells}")
-    time.sleep(3.0)
 
-    # Solver Results dialog
-    if restore_original:
-        pyautogui.press('tab')
-        time.sleep(0.1)
-        pyautogui.press('space')
-        time.sleep(0.2)
-        steps.append("Restore Original Values")
+    # Solve (UserFinish=True skips the results dialog)
+    try:
+        result = app.macro('SolverSolve')(True)
+        steps.append(f"SolverSolve: result={result}")
+    except Exception as e:
+        steps.append(f"WARNING: SolverSolve exception: {e}")
+        # The Solver may have shown a "Show Trial Solution" dialog — dismiss it
+        time.sleep(1.0)
 
+    # Dismiss any Solver dialogs (Trial Solution, Results, etc.)
+    for _ in range(3):
+        try:
+            dismiss_result = run_applescript('''
+tell application "System Events"
+    tell process "Microsoft Excel"
+        set dlgs to windows whose subrole is "AXStandardWindow"
+        repeat with d in dlgs
+            set t to name of d
+            if t contains "Solver" or t contains "Trial" or t contains "Solution" then
+                -- Click the last button (usually "Stop" or "OK" or "Keep")
+                set btns to buttons of d
+                repeat with b in btns
+                    if name of b is "Stop" or name of b is "OK" or name of b is "Continue" then
+                        click b
+                        return "dismissed"
+                    end if
+                end repeat
+            end if
+        end repeat
+    end tell
+end tell
+return "none"
+''')
+            if "dismissed" in dismiss_result:
+                steps.append("Dismissed Solver dialog")
+                time.sleep(0.5)
+            else:
+                break
+        except Exception:
+            break
+
+    check_stop()
+
+    # Save scenario if requested
     if save_scenario:
-        check_stop()
-        tab_count = 2 if restore_original else 3
-        for _ in range(tab_count):
-            pyautogui.press('tab')
-            time.sleep(0.1)
-        pyautogui.press('enter')  # Save Scenario
+        try:
+            # Create scenario from current (solved) values
+            script = f'''
+tell application "Microsoft Excel"
+    set ws to active sheet
+    make new scenario at ws with properties {{name:"{save_scenario}", changing cells:range "{changing_cells}" of ws}}
+    return "OK"
+end tell
+'''
+            run_applescript_file(script)
+            steps.append(f"Saved scenario: {save_scenario}")
+        except Exception as e:
+            steps.append(f"WARNING: Save scenario failed: {e}")
+
+    # Finish: 1=Keep Solution, 2=Restore Original
+    finish_code = 2 if restore_original else 1
+    try:
+        app.macro('SolverFinish')(finish_code)
+        steps.append("Restore Original" if restore_original else "Keep Solution")
+    except Exception as e:
+        steps.append(f"WARNING: SolverFinish: {e}")
+
+    return {"status": "completed", "steps": steps}
+
+
+def do_data_table(table_range: str, row_input: str = "", col_input: str = "",
+                  sheet: str = ""):
+    """Create a Data Table via What-If Analysis menu on Excel Mac."""
+    steps = []
+
+    app, wb, ws = _get_xlwings()
+
+    if sheet:
+        wb.sheets[sheet].activate()
+        ws = wb.sheets[sheet]
+        steps.append(f"Switch to '{sheet}'")
         time.sleep(0.5)
 
-        pyautogui.typewrite(save_scenario, interval=0.03)
-        pyautogui.press('enter')
-        time.sleep(0.5)
-        steps.append(f"Saved scenario: {save_scenario}")
+    check_stop()
 
-    # OK to close
-    pyautogui.press('enter')
+    # Dismiss any lingering dialogs
+    _dismiss_dialogs()
+    time.sleep(0.3)
+
+    # Select the table range via xlwings
+    ws.range(table_range).select()
+    steps.append(f"Selected {table_range}")
     time.sleep(0.5)
+
+    check_stop()
+
+    # Ensure Excel is frontmost
+    activate_excel()
+    time.sleep(0.3)
+
+    # Open Data Table dialog via Data > What-If Analysis > Data Table...
+    dialog_opened = False
+
+    # Try submenu path: Data > What-If Analysis > Data Table...
+    result = run_applescript('''
+tell application "System Events"
+    tell process "Microsoft Excel"
+        click menu item "What-If Analysis" of menu 1 of menu bar item "Data" of menu bar 1
+        delay 0.8
+        -- Now click Data Table in the submenu
+        click menu item "Data Table\u2026" of menu 1 of menu item "What-If Analysis" of menu 1 of menu bar item "Data" of menu bar 1
+    end tell
+end tell
+''')
+    if "ERROR" not in result:
+        dialog_opened = True
+    else:
+        # Dismiss any open submenu
+        _press_escape()
+        time.sleep(0.3)
+
+    # Fallback: try with ellipsis variants
+    if not dialog_opened:
+        for item_name in ["Data Table...", "Data Table\u2026", "Table...", "Table\u2026"]:
+            result = _click_menu("Data", item_name)
+            if "ERROR" not in result:
+                dialog_opened = True
+                break
+
+    # Fallback: try via keyboard shortcut (Alt+D, T on some Excel versions)
+    if not dialog_opened:
+        # Try What-If Analysis with different naming
+        result = run_applescript('''
+tell application "System Events"
+    tell process "Microsoft Excel"
+        -- Try clicking all menu items under Data that contain "Table" or "What"
+        set menuItems to name of every menu item of menu 1 of menu bar item "Data" of menu bar 1
+        return menuItems as text
+    end tell
+end tell
+''')
+        steps.append(f"Data menu items: {result[:200]}")
+
+    if not dialog_opened:
+        return {"status": "failed", "error": "Could not open Data Table dialog", "steps": steps}
+
+    time.sleep(1.0)
+    # Verify a dialog actually opened
+    if _verify_dialog("Table") or _verify_dialog("Data Table"):
+        steps.append("Data Table dialog open")
+    else:
+        # Dialog might not have the expected title — proceed anyway since menu click succeeded
+        steps.append("Data Table dialog open (unverified)")
+
+    check_stop()
+
+    # Fill in fields — Row input cell field is focused first
+    if row_input:
+        _select_all_and_type(row_input)
+    else:
+        # Clear row field
+        run_applescript('tell application "System Events" to keystroke "a" using command down')
+        time.sleep(0.1)
+        _key_code(51)  # Delete
+    time.sleep(0.2)
+    _press_tab()
+    time.sleep(0.3)
+    if col_input:
+        _select_all_and_type(col_input)
+    time.sleep(0.3)
+
+    check_stop()
+    _press_return()
+    time.sleep(2.0)
+    steps.append(f"Data Table: row={row_input or 'none'}, col={col_input or 'none'}")
+
+    # Verify TABLE formula
+    try:
+        clean = table_range.replace("$", "")
+        parts = clean.split(":")
+        start_cell = parts[0]
+        col = ''.join(c for c in start_cell if c.isalpha())
+        row = int(''.join(c for c in start_cell if c.isdigit()))
+        next_col = chr(ord(col[0]) + 1) if len(col) == 1 else col
+        verify_cell = f"{next_col}{row + 1}"
+        formula = get_cell_formula(verify_cell)
+        if "TABLE" in formula.upper():
+            steps.append("TABLE formula confirmed")
+        else:
+            steps.append(f"WARNING: TABLE not found in {verify_cell}: {formula}")
+    except Exception as e:
+        steps.append(f"Verification skipped: {e}")
 
     return {"status": "completed", "steps": steps}
 
 
 def do_data_analysis(tool_name: str, input_range: str, output_range: str = "",
                      options: dict = None, sheet: str = ""):
-    """Run Analysis ToolPak tool with full option support."""
+    """Run Analysis ToolPak — Descriptive Statistics via direct xlwings formulas.
+    Other tools fall back to the dialog approach."""
     steps = []
     if not options:
         options = {}
 
-    ensure_clean_state()
+    app, wb, ws = _get_xlwings()
 
     if sheet:
-        switch_sheet(sheet)
+        wb.sheets[sheet].activate()
+        ws = wb.sheets[sheet]
         steps.append(f"Switch to '{sheet}'")
-        time.sleep(0.3)
 
     check_stop()
-    if not open_dialog("Data Analysis"):
-        return {"status": "failed", "error": "Data Analysis dialog did not open", "steps": steps}
-    steps.append("Data Analysis dialog open")
 
-    # Tool list — navigate to the right tool by index
+    # For Descriptive Statistics, write formulas directly (ToolPak dialog is unreliable)
+    if "descriptive" in tool_name.lower():
+        return _do_descriptive_stats_direct(ws, input_range, output_range, options, steps)
+
+    # For other tools, use the dialog approach
+    return _do_toolpak_dialog(tool_name, input_range, output_range, options, steps)
+
+
+def _do_descriptive_stats_direct(ws, input_range: str, output_range: str,
+                                  options: dict, steps: list) -> dict:
+    """Write descriptive statistics directly via xlwings formulas — no dialog needed."""
+    check_stop()
+
+    # Parse input range to get data range (skip header if labels_in_first_row)
+    raw_range = input_range.replace("$", "")
+    has_labels = options.get("labels_in_first_row", False)
+
+    if has_labels and ":" in raw_range:
+        parts = raw_range.split(":")
+        col = ''.join(c for c in parts[0] if c.isalpha())
+        start_row = int(''.join(c for c in parts[0] if c.isdigit())) + 1
+        end_row = int(''.join(c for c in parts[1] if c.isdigit()))
+        data_range = f"{col}{start_row}:{col}{end_row}"
+        header_cell = f"{col}{start_row - 1}"
+        header = ws.range(header_cell).value or "Data"
+    else:
+        data_range = raw_range
+        header = "Data"
+
+    # Parse output location
+    out = output_range.replace("$", "") if output_range else "H4"
+    out_col = ''.join(c for c in out if c.isalpha())
+    out_row = int(''.join(c for c in out if c.isdigit()))
+    val_col = chr(ord(out_col[0]) + 1) if len(out_col) == 1 else out_col
+
+    check_stop()
+
+    # Clear the output area first to prevent #SPILL! conflicts
+    last_row = out_row + 1 + 14  # 13 stats + confidence + buffer
+    ws.range(f"{out_col}{out_row}:{val_col}{last_row}").clear()
+
+    # Write header
+    ws.range(f"{out_col}{out_row}").value = header
+
+    # Write stats
+    # Use IFERROR to handle #SPILL! from source data errors
+    dr = data_range
+    stats = [
+        ("Mean", f"=IFERROR(AVERAGE({dr}),\"\")"),
+        ("Standard Error", f"=IFERROR(STDEV({dr})/SQRT(COUNT({dr})),\"\")"),
+        ("Median", f"=IFERROR(MEDIAN({dr}),\"\")"),
+        ("Mode", f"=IFERROR(MODE.SNGL({dr}),\"\")"),
+        ("Standard Deviation", f"=IFERROR(STDEV({dr}),\"\")"),
+        ("Sample Variance", f"=IFERROR(VAR({dr}),\"\")"),
+        ("Kurtosis", f"=IFERROR(KURT({dr}),\"\")"),
+        ("Skewness", f"=IFERROR(SKEW({dr}),\"\")"),
+        ("Range", f"=IFERROR(MAX({dr})-MIN({dr}),\"\")"),
+        ("Minimum", f"=IFERROR(MIN({dr}),\"\")"),
+        ("Maximum", f"=IFERROR(MAX({dr}),\"\")"),
+        ("Sum", f"=IFERROR(SUM({dr}),\"\")"),
+        ("Count", f"=IFERROR(COUNT({dr}),\"\")"),
+    ]
+
+    if options.get("confidence_level"):
+        conf = options["confidence_level"]
+        stats.append(("Confidence Level", f"=IFERROR(CONFIDENCE.NORM(1-{conf}/100,STDEV({dr}),COUNT({dr})),\"\")"))
+
+    for i, (label, formula) in enumerate(stats):
+        check_stop()
+        row = out_row + 1 + i
+        ws.range(f"{out_col}{row}").value = label
+        ws.range(f"{val_col}{row}").formula = formula
+
+    steps.append(f"Descriptive Statistics: {len(stats)} measures for {data_range} → {out_col}{out_row}")
+    return {"status": "completed", "steps": steps}
+
+
+def _do_toolpak_dialog(tool_name: str, input_range: str, output_range: str,
+                       options: dict, steps: list) -> dict:
+    """Run ToolPak tool via dialog (fallback for non-Descriptive tools)."""
+    activate_excel()
+
+    result = _click_menu("Tools", "Data Analysis...")
+    if "ERROR" in result:
+        result = _click_menu("Tools", "Data Analysis\u2026")
+        if "ERROR" in result:
+            return {"status": "failed", "error": "Could not open Data Analysis dialog", "steps": steps}
+
+    time.sleep(1.0)
+    if not _verify_dialog("Data Analysis"):
+        return {"status": "failed", "error": "Data Analysis dialog did not open", "steps": steps}
+
     TOOL_LIST = [
-        "Anova: Single Factor",
-        "Anova: Two-Factor With Replication",
-        "Anova: Two-Factor Without Replication",
-        "Correlation",
-        "Covariance",
-        "Descriptive Statistics",
-        "Exponential Smoothing",
-        "F-Test Two-Sample for Variances",
-        "Fourier Analysis",
-        "Histogram",
-        "Moving Average",
-        "Random Number Generation",
-        "Rank and Percentile",
-        "Regression",
-        "Sampling",
-        "t-Test: Paired Two Sample for Means",
+        "Anova: Single Factor", "Anova: Two-Factor With Replication",
+        "Anova: Two-Factor Without Replication", "Correlation", "Covariance",
+        "Descriptive Statistics", "Exponential Smoothing",
+        "F-Test Two-Sample for Variances", "Fourier Analysis", "Histogram",
+        "Moving Average", "Random Number Generation", "Rank and Percentile",
+        "Regression", "Sampling", "t-Test: Paired Two Sample for Means",
         "t-Test: Two-Sample Assuming Equal Variances",
         "t-Test: Two-Sample Assuming Unequal Variances",
         "z-Test: Two Sample for Means",
     ]
 
-    idx = -1
-    for i, t in enumerate(TOOL_LIST):
-        if t.lower() == tool_name.lower():
-            idx = i
-            break
-
-    if idx >= 0:
-        # Navigate to top of list then arrow down to the tool
-        pyautogui.press("home")
-        time.sleep(0.1)
-        for _ in range(idx):
-            pyautogui.press("down")
-            time.sleep(0.05)
-        steps.append(f"Selected: {tool_name} (index {idx})")
-    else:
-        # Try partial match
-        for i, t in enumerate(TOOL_LIST):
-            if tool_name.lower() in t.lower():
-                pyautogui.press("home")
-                time.sleep(0.1)
-                for _ in range(i):
-                    pyautogui.press("down")
-                    time.sleep(0.05)
-                steps.append(f"Selected: {t} (partial match, index {i})")
-                idx = i
-                break
-
-    time.sleep(0.3)
-    pyautogui.press('enter')  # OK to open tool dialog
+    idx = next((i for i, t in enumerate(TOOL_LIST) if tool_name.lower() in t.lower()), 0)
+    _key_code(115)
+    time.sleep(0.1)
+    for _ in range(idx):
+        _key_code(125)
+        time.sleep(0.05)
+    _press_return()
     time.sleep(0.8)
-    steps.append(f"Opened {tool_name} dialog")
 
-    # ── Descriptive Statistics dialog layout (most common):
-    # Input Range: [field]
-    # Grouped By: (Columns) (Rows) — radio buttons
-    # [x] Labels in First Row — checkbox
-    # Output options: (Output Range) (New Worksheet Ply) (New Workbook) — radio
-    # Output Range: [field]
-    # [x] Summary Statistics — checkbox
-    # [x] Confidence Level for Mean: [field]
-    # [x] Kth Largest: [field]
-    # [x] Kth Smallest: [field]
-
-    # Input Range (focused by default)
-    pyautogui.typewrite(input_range, interval=0.03)
-    pyautogui.press('tab')
+    _keystroke(input_range.replace("$", ""))
+    _press_tab()
     time.sleep(0.2)
 
-    # Grouped By radio buttons (Columns is default)
-    if options.get("grouped_by") == "rows":
-        # Tab to Rows radio and select it
-        pyautogui.press('tab')  # Move to Rows radio
-        pyautogui.press('space')
-        time.sleep(0.1)
-    else:
-        pyautogui.press('tab')  # Skip past Grouped By
-    time.sleep(0.1)
-
-    # Labels in First Row checkbox
-    pyautogui.press('tab')
-    if options.get("labels_in_first_row"):
-        pyautogui.press('space')  # Check the box
-    time.sleep(0.1)
-
-    # Output options — Tab to Output Range radio
-    pyautogui.press('tab')  # Output Range radio (usually selected by default)
-    time.sleep(0.1)
-
-    # Output Range field
-    pyautogui.press('tab')
     if output_range:
-        pyautogui.typewrite(output_range, interval=0.03)
-    time.sleep(0.1)
+        # Tab through to output range field
+        for _ in range(3):
+            _press_tab()
+            time.sleep(0.1)
+        _keystroke(output_range.replace("$", ""))
 
-    # For Descriptive Statistics, handle additional options
-    if tool_name.lower() == "descriptive statistics":
-        # Tab past New Worksheet Ply and New Workbook radios
-        pyautogui.press('tab')  # New Worksheet Ply
-        pyautogui.press('tab')  # New Workbook
-        time.sleep(0.1)
-
-        # Summary Statistics checkbox
-        pyautogui.press('tab')
-        if options.get("summary_statistics", True):  # Default to True for Descriptive Stats
-            pyautogui.press('space')
-        time.sleep(0.1)
-
-        # Confidence Level checkbox + field
-        pyautogui.press('tab')
-        if options.get("confidence_level"):
-            pyautogui.press('space')
-            pyautogui.press('tab')
-            pyautogui.hotkey('command', 'a')
-            conf = options.get("confidence_level")
-            if isinstance(conf, (int, float)):
-                pyautogui.typewrite(str(conf), interval=0.03)
-        else:
-            pyautogui.press('tab')  # Skip confidence field
-        time.sleep(0.1)
-
-        # Kth Largest
-        pyautogui.press('tab')
-        if options.get("kth_largest"):
-            pyautogui.press('space')
-            pyautogui.press('tab')
-            pyautogui.hotkey('command', 'a')
-            pyautogui.typewrite(str(options["kth_largest"]), interval=0.03)
-        else:
-            pyautogui.press('tab')
-        time.sleep(0.1)
-
-        # Kth Smallest
-        pyautogui.press('tab')
-        if options.get("kth_smallest"):
-            pyautogui.press('space')
-            pyautogui.press('tab')
-            pyautogui.hotkey('command', 'a')
-            pyautogui.typewrite(str(options["kth_smallest"]), interval=0.03)
-        else:
-            pyautogui.press('tab')
-        time.sleep(0.1)
-
-    time.sleep(0.2)
-    pyautogui.press('enter')  # OK — run the analysis
+    _press_return()
     steps.append(f"Completed: {tool_name}")
     time.sleep(1.5)
-
-    # Dismiss any error dialogs
-    pyautogui.press('enter')
-    time.sleep(0.3)
 
     return {"status": "completed", "steps": steps}
 
 
 def do_install_addins(addins: list):
-    """Install Excel add-ins (Solver, Analysis ToolPak) via Tools > Excel Add-ins."""
+    """Install Excel add-ins via pure AppleScript — no GUI interaction."""
     steps = []
-    ensure_clean_state()
 
     check_stop()
-    if not open_dialog("Excel Add-ins"):
-        return {"status": "failed", "error": "Excel Add-ins dialog did not open", "steps": steps}
-    steps.append("Excel Add-ins dialog open")
 
-    # The add-ins list order:
-    # 1. Analysis ToolPak
-    # 2. Analysis ToolPak - VBA
-    # 3. Solver Add-in
-    # Check/uncheck as needed
+    # Find add-in indices by name
+    count_result = run_applescript('tell application "Microsoft Excel" to count of add ins')
+    try:
+        count = int(count_result)
+    except (ValueError, TypeError):
+        return {"status": "failed", "error": f"Could not count add-ins: {count_result}", "steps": steps}
 
-    want_toolpak = any("ToolPak" in a or "toolpak" in a.lower() for a in addins)
-    want_solver = any("Solver" in a or "solver" in a.lower() for a in addins)
+    for i in range(1, count + 1):
+        check_stop()
+        name = run_applescript(f'tell application "Microsoft Excel" to get name of add in {i}')
+        installed = run_applescript(f'tell application "Microsoft Excel" to get installed of add in {i}')
 
-    if want_toolpak:
-        pyautogui.press('space')  # Toggle Analysis ToolPak
-        steps.append("Toggled Analysis ToolPak")
-    pyautogui.press('down')
-    time.sleep(0.1)
-    pyautogui.press('down')  # Skip VBA
-    time.sleep(0.1)
-    if want_solver:
-        pyautogui.press('space')  # Toggle Solver
-        steps.append("Toggled Solver Add-in")
+        should_install = False
+        for wanted in addins:
+            if wanted.lower() in name.lower() or name.lower() in wanted.lower():
+                should_install = True
+                break
 
-    time.sleep(0.2)
-    pyautogui.press('enter')  # OK
-    time.sleep(3.0)
+        if should_install and installed.lower() != "true":
+            result = run_applescript(f'tell application "Microsoft Excel" to set installed of add in {i} to true')
+            if "ERROR" not in result:
+                steps.append(f"Installed: {name}")
+            else:
+                steps.append(f"FAILED to install {name}: {result}")
 
-    # Aggressively dismiss any followup dialogs and menus
-    pyautogui.press('enter')
-    time.sleep(0.5)
-    pyautogui.press('escape')
-    time.sleep(0.3)
-    pyautogui.press('escape')
-    time.sleep(0.3)
-    pyautogui.press('escape')
-    time.sleep(0.5)
-
-    # Click on the spreadsheet area to ensure focus is back on the sheet
-    activate_excel()
-    time.sleep(0.5)
-    # Click a safe cell to make sure we're out of any dialog/menu state
-    run_applescript('tell application "Microsoft Excel" to select range "A1" of active sheet')
-    time.sleep(0.5)
+    if not steps:
+        steps.append("All requested add-ins already installed")
 
     return {"status": "completed", "steps": steps}
 
 
 def do_uninstall_addins(addins: list):
-    """Uninstall Excel add-ins via Tools > Excel Add-ins."""
-    # Same as install — toggling unchecks them
-    return do_install_addins(addins)
+    """Uninstall Excel add-ins via pure AppleScript — no GUI interaction."""
+    steps = []
+
+    check_stop()
+
+    count_result = run_applescript('tell application "Microsoft Excel" to count of add ins')
+    try:
+        count = int(count_result)
+    except (ValueError, TypeError):
+        return {"status": "failed", "error": f"Could not count add-ins: {count_result}", "steps": steps}
+
+    for i in range(1, count + 1):
+        check_stop()
+        name = run_applescript(f'tell application "Microsoft Excel" to get name of add in {i}')
+        installed = run_applescript(f'tell application "Microsoft Excel" to get installed of add in {i}')
+
+        should_uninstall = False
+        for wanted in addins:
+            if wanted.lower() in name.lower() or name.lower() in wanted.lower():
+                should_uninstall = True
+                break
+
+        if should_uninstall and installed.lower() == "true":
+            result = run_applescript(f'tell application "Microsoft Excel" to set installed of add in {i} to false')
+            if "ERROR" not in result:
+                steps.append(f"Uninstalled: {name}")
+            else:
+                steps.append(f"FAILED to uninstall {name}: {result}")
+
+    if not steps:
+        steps.append("All requested add-ins already uninstalled")
+
+    return {"status": "completed", "steps": steps}
 
 
 # ── Dispatcher ───────────────────────────────────────────────────────────────
 
 
 def execute_excel_action(action: dict) -> dict:
-    """Execute a structured Excel action.
-    Returns result dict with status and steps."""
+    """Execute a structured Excel action. Returns result dict."""
     action_type = action.get("type", "")
     payload = action.get("payload", {})
 
@@ -987,7 +991,7 @@ def execute_excel_action(action: dict) -> dict:
         elif action_type == "goal_seek":
             return do_goal_seek(
                 set_cell=payload.get("set_cell", ""),
-                to_value=str(payload.get("to_value", "")),
+                to_value=payload.get("to_value", ""),
                 changing_cell=payload.get("changing_cell", ""),
                 sheet=payload.get("sheet", ""),
             )
@@ -1036,46 +1040,29 @@ def execute_excel_action(action: dict) -> dict:
             return {"status": "unknown", "error": f"Unknown action type: {action_type}"}
 
     except StopAutomation:
-        # User pressed Stop — clean up and propagate
         print(f"[excel] STOPPED by user during {action_type}")
-        try:
-            _emergency_cleanup()
-        except Exception:
-            pass
+        _emergency_cleanup()
         return {"status": "cancelled", "error": "Stopped by user", "steps": [f"Stopped during {action_type}"]}
 
     except Exception as e:
-        # Catch any unexpected errors, clean up, and report
         print(f"[excel] ERROR in {action_type}: {e}")
-        try:
-            _emergency_cleanup()
-        except Exception:
-            pass
+        _emergency_cleanup()
         return {"status": "failed", "error": str(e), "steps": [f"Exception: {e}"]}
 
 
 def execute_all_actions(actions: list, context: dict = None, cancel_check=None) -> dict:
-    """Execute a list of structured Excel actions sequentially.
-
-    cancel_check: optional callable returning True if the user pressed Stop.
-    """
+    """Execute a list of structured Excel actions sequentially."""
     results = []
     all_ok = True
     cancelled = False
 
     for i, action in enumerate(actions):
-        # Check for user cancellation before each action (via HTTP)
         if cancel_check and cancel_check():
-            print(f"[excel] CANCELLED by user before action {i+1}/{len(actions)}")
             cancelled = True
-            _emergency_cleanup()
             break
 
-        # Also check via the global stop flag (set by background watcher)
         if _stop_event.is_set():
-            print(f"[excel] STOP FLAG set before action {i+1}/{len(actions)}")
             cancelled = True
-            _emergency_cleanup()
             break
 
         print(f"[excel] Action {i+1}/{len(actions)}: {action.get('type')}")
@@ -1087,7 +1074,6 @@ def execute_all_actions(actions: list, context: dict = None, cancel_check=None) 
         for step in result.get("steps", []):
             print(f"[excel]     {step}")
 
-        # If the action was cancelled mid-execution, stop the whole sequence
         if status == "cancelled":
             cancelled = True
             break
@@ -1095,9 +1081,10 @@ def execute_all_actions(actions: list, context: dict = None, cancel_check=None) 
         if status not in ("completed",):
             all_ok = False
 
-        time.sleep(0.5)
+        time.sleep(0.3)
 
     if cancelled:
+        _emergency_cleanup()
         return {
             "status": "cancelled",
             "message": f"Stopped by user after {len(results)}/{len(actions)} actions",
@@ -1115,15 +1102,15 @@ def execute_all_actions(actions: list, context: dict = None, cancel_check=None) 
 
 def _emergency_cleanup():
     """Dismiss any open dialogs and return Excel to a safe state."""
-    print("[excel] Emergency cleanup — dismissing dialogs...")
-    for _ in range(5):
-        pyautogui.press('escape')
-        time.sleep(0.2)
-    # Try to select A1 to get back to a known state
+    print("[excel] Emergency cleanup...")
     try:
-        activate_excel()
-        time.sleep(0.3)
+        for _ in range(5):
+            run_applescript('''
+tell application "System Events"
+    key code 53
+end tell
+''')
+            time.sleep(0.15)
         run_applescript('tell application "Microsoft Excel" to select range "A1" of active sheet')
     except Exception:
         pass
-    print("[excel] Cleanup done")

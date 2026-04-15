@@ -424,19 +424,25 @@ def _postprocess_excel_actions(result: dict, context: dict) -> dict:
         )]
         print(f"[postprocess] Removed Claude's manual stats from {dental_name} — ToolPak will generate")
 
-        # Remove Claude's individual F column formulas — we'll use a single array formula
+        # Remove Claude's individual F column formulas — we'll inject our own
         actions[:] = [a for a in actions if not (
             a.get("payload", {}).get("sheet", "") == dental_name and
             a.get("payload", {}).get("cell", "").upper().startswith("F") and
-            a.get("type") == "write_formula"
+            a.get("type") in ("write_formula", "write_cell")
         )]
 
-        # 4a. Dental Insurance: F5 array formula =D5:D35-E5:E35 (dynamic array spills to F35)
+        # 4a. Dental Insurance: Clear F5:F35 first, then write individual =D-E formulas
+        # Using individual formulas instead of array formula to avoid #SPILL! errors
         injected.append({
-            "type": "write_formula",
-            "payload": {"cell": "F5", "formula": "=D5:D35-E5:E35", "sheet": dental_name}
+            "type": "clear_range",
+            "payload": {"range": "F5:F35", "sheet": dental_name}
         })
-        print(f"[postprocess] Injected F5 array formula =D5:D35-E5:E35 for {dental_name}")
+        for row in range(5, 36):
+            injected.append({
+                "type": "write_formula",
+                "payload": {"cell": f"F{row}", "formula": f"=D{row}-E{row}", "sheet": dental_name}
+            })
+        print(f"[postprocess] Injected F5:F35 individual variance formulas for {dental_name}")
 
         # 4b. Dental Insurance: Format F6:F35 as Currency with 2 decimal places
         injected.append({
