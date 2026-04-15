@@ -623,7 +623,25 @@ def _postprocess_excel_actions(result: dict, context: dict) -> dict:
             })
             print(f"[postprocess] Injected ToolPak Descriptive Statistics")
 
-        # 4n. Uninstall Solver + ToolPak (last step)
+        # 4n. FINAL FORMAT PASS — must be last add-in actions to avoid being overridden
+        # These run after all write/formula actions to ensure formats stick
+        # F6:F35 on Dental Insurance: Currency with 2 decimal places
+        injected.append({
+            "type": "set_number_format",
+            "payload": {"range": "F5:F35", "format": "$#,##0.00", "sheet": dental_name}
+        })
+        # Calorie Journal data table: Comma Style no decimals
+        injected.append({
+            "type": "set_number_format",
+            "payload": {"range": "D15:E23", "format": "#,##0", "sheet": calorie_name}
+        })
+        injected.append({
+            "type": "set_number_format",
+            "payload": {"range": "L15:T23", "format": "#,##0", "sheet": calorie_name}
+        })
+        print(f"[postprocess] FINAL FORMAT PASS: F5:F35 currency, data table comma style")
+
+        # 4o. Uninstall Solver + ToolPak (last step)
         has_uninstall = any(
             a.get("type") == "uninstall_addins"
             for a in actions + injected

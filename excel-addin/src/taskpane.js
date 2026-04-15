@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v50";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v51";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -2181,12 +2181,12 @@ async function executeAction(action) {
       const outRow = parseInt(outRef.replace(/[A-Za-z]/g, ""));
       const valCol = String.fromCharCode(outCol.charCodeAt(0) + 1);
 
-      // Clear output area
-      const clearRange = sheet.getRange(`${outCol}${outRow}:${valCol}${outRow + 14}`);
+      // Clear output area (header + blank row + 13 stats + confidence = 16 rows)
+      const clearRange = sheet.getRange(`${outCol}${outRow}:${valCol}${outRow + 16}`);
       clearRange.clear();
       await ctx.sync();
 
-      // Write header
+      // Write header — matches ToolPak layout: header in row N, blank row N+1, stats from N+2
       sheet.getRange(`${outCol}${outRow}`).values = [[header]];
 
       const dr = dataRange;
@@ -2211,8 +2211,9 @@ async function executeAction(action) {
         stats.push(["Confidence Level", `=IFERROR(CONFIDENCE.NORM(1-${conf}/100,STDEV(${dr}),COUNT(${dr})),"")`]);
       }
 
+      // Start stats at outRow+2 (skip blank row after header) to match ToolPak layout
       for (let i = 0; i < stats.length; i++) {
-        const row = outRow + 1 + i;
+        const row = outRow + 2 + i;
         sheet.getRange(`${outCol}${row}`).values = [[stats[i][0]]];
         sheet.getRange(`${valCol}${row}`).formulas = [[stats[i][1]]];
       }
