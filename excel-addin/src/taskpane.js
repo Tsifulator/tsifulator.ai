@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v49";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v50";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -564,6 +564,29 @@ async function handleSubmit() {
             }
           });
         } catch (e) { /* autofit is best-effort */ }
+      }
+
+      // Re-apply explicit column widths AFTER global autofit (autofit overrides them)
+      const widthActions = allActions.filter(a =>
+        a.type === "autofit_columns" && a.payload && a.payload.width
+      );
+      for (const wa of widthActions) {
+        try {
+          await Excel.run(async (ctx) => {
+            const sheet = getSheet(ctx, wa.payload.sheet);
+            let cols = wa.payload.columns || (wa.payload.column ? [wa.payload.column] : null);
+            if (!cols && wa.payload.range) {
+              const m = wa.payload.range.match(/^([A-Z]+):/i);
+              if (m) cols = [m[1].toUpperCase()];
+            }
+            if (cols) {
+              for (const col of cols) {
+                sheet.getRange(`${col}:${col}`).format.columnWidth = wa.payload.width * 7.5;
+              }
+            }
+            await ctx.sync();
+          });
+        } catch (e) { /* width re-apply is best-effort */ }
       }
 
       // Post-action sweep: clear any #DIV/0!, #NAME?, #REF!, #VALUE! error cells
