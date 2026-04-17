@@ -30,9 +30,61 @@ client = anthropic.Anthropic(
 
 import re
 
-MODEL_FAST     = "claude-haiku-4-5-20251001"   # $1/$5 per M tokens — greetings, simple lookups
+MODEL_FAST     = "claude-haiku-4-5-20251001"   # $1/$5 per M tokens — greetings, simple lookups, discuss mode
 MODEL_STANDARD = "claude-sonnet-4-20250514"    # $3/$15 per M tokens
 MODEL_HEAVY    = "claude-opus-4-20250514"      # $15/$75 per M tokens — complex analysis, debugging
+
+# Patterns that indicate the user wants ideas/opinions/discussion, NOT immediate action.
+# These messages route to Haiku with NO tools — the model just talks and suggests.
+# If the user likes a suggestion, their follow-up ("yes do #2") routes to action mode.
+_DISCUSS_PATTERNS = re.compile(
+    r"(what do you think|what'?s your (take|opinion|view))|"
+    r"(any (recommendation|suggestion|idea|advice|thought))|"
+    r"(do you have .{0,20}(recommendation|suggestion|idea|advice))|"
+    r"(give me .{0,20}(idea|suggestion|recommendation))|"
+    r"(how (could|would|might) (i|we|you) (improve|make .{0,15}better|organize))|"
+    r"(is (this|it|there) .{0,15}(good|better|ok|fine|decent|bad|wrong))|"
+    r"(should i .{0,30}\?)|"
+    r"(what (should|would|could) (i|we) do)|"
+    r"(brainstorm|ideas for|suggestions for)|"
+    r"(less chaotic|cleaner|clearer|more organized|less messy)|"
+    r"(advice|feedback|opinion|thoughts)",
+    re.IGNORECASE
+)
+
+def _is_discuss_mode(message: str) -> bool:
+    """Detect open-ended questions that want a conversation, not action execution."""
+    msg = message.strip()
+    # Explicit action verbs override discuss mode — "change X" always acts
+    _ACTION_VERBS = re.compile(
+        r"^(add|write|create|make|insert|delete|remove|clear|change|update|set|"
+        r"format|highlight|apply|fill|sort|filter|build|generate|compute|calculate)\b",
+        re.IGNORECASE
+    )
+    if _ACTION_VERBS.match(msg):
+        return False
+    return bool(_DISCUSS_PATTERNS.search(msg))
+
+
+# Addendum injected when discuss mode is active.
+# The model has NO tools in this mode, so it physically can't execute actions —
+# this prompt tells it to present numbered suggestions and invite a pick.
+DISCUSS_MODE_ADDENDUM = """
+
+## DISCUSS MODE — ACTIVE
+The user asked an open-ended question (recommendations, ideas, feedback, opinions).
+They are NOT asking you to make changes yet — they want to TALK first.
+
+Rules for this reply:
+1. DO NOT write, edit, or modify anything. You have no tools available right now.
+2. Read their workbook context and offer 2-4 concrete, numbered suggestions.
+3. Each suggestion should be short (one line + a brief "why" if helpful).
+4. End with an invitation like: "Want me to do any of these? Just say the number."
+5. If the user's next message says "yes do 2" or "let's try #1", THAT message will
+   switch back to action mode and you'll execute it.
+
+Keep it conversational, friendly, and concise. This is a chat, not a spec sheet.
+"""
 
 # Patterns that indicate a simple/fast query
 _FAST_PATTERNS = re.compile(
@@ -1985,10 +2037,24 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
     # For all other apps, include tools with tool_choice=auto so Claude decides.
     # This ensures VS Code "fix errors" and Excel "how do I format?" still get actions.
     is_r_interpretation = message.startswith("[R OUTPUT INTERPRETATION]")
-    skip_tools = is_browser_summary or is_notes or is_r_interpretation or (is_greeting and not is_question)
 
-    # Hybrid model selection
-    selected_model = _select_model(message, context, has_attachments=bool(images))
+    # DISCUSS MODE: open-ended "what do you recommend" / "any ideas" messages
+    # get routed to Haiku with NO tools — pure conversation. The model offers
+    # suggestions and invites the user to pick one, which triggers action mode.
+    is_discuss = _is_discuss_mode(message) and not bool(images)
+
+    skip_tools = (
+        is_browser_summary or is_notes or is_r_interpretation or
+        (is_greeting and not is_question) or is_discuss
+    )
+
+    # Hybrid model selection — discuss mode always uses the cheap Haiku tier
+    if is_discuss:
+        selected_model = MODEL_FAST
+        system_prompt = system_prompt + DISCUSS_MODE_ADDENDUM
+        print(f"[routing] DISCUSS MODE → Haiku, no tools. msg={message[:60]!r}", flush=True)
+    else:
+        selected_model = _select_model(message, context, has_attachments=bool(images))
 
     # Force tool use for action-heavy apps when the user is asking for content/changes.
     # With "auto", models sometimes reply with text only and skip the tools.
@@ -2415,10 +2481,22 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
     is_greeting = any(_word_boundary_match(msg_lower, g) for g in _greet)
     is_conversational = is_question or is_greeting
     is_r_interpretation = message.startswith("[R OUTPUT INTERPRETATION]")
-    skip_tools = is_browser_summary or is_notes or is_r_interpretation or (is_greeting and not is_question)
 
-    # Hybrid model selection
-    selected_model = _select_model(message, context, has_attachments=bool(images))
+    # DISCUSS MODE — open-ended recommendation/idea questions → Haiku, no tools
+    is_discuss = _is_discuss_mode(message) and not bool(images)
+
+    skip_tools = (
+        is_browser_summary or is_notes or is_r_interpretation or
+        (is_greeting and not is_question) or is_discuss
+    )
+
+    # Hybrid model selection — discuss mode uses the cheap Haiku tier
+    if is_discuss:
+        selected_model = MODEL_FAST
+        system_prompt = system_prompt + DISCUSS_MODE_ADDENDUM
+        print(f"[routing/stream] DISCUSS MODE → Haiku, no tools. msg={message[:60]!r}", flush=True)
+    else:
+        selected_model = _select_model(message, context, has_attachments=bool(images))
 
     # Only stream text-only responses (no tool use)
     if skip_tools:
