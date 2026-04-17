@@ -94,6 +94,9 @@ Start with 1-2 sentences of quick observations about what's in their workbook �
 show them you actually looked at it. Not generic fluff, specific things ("I see
 you've got 22% progress, Freshman Spring is 16 credits, etc.").
 
+Then, BEFORE the numbered list, write this exact line on its own:
+  Here are some options — **I haven't built anything yet**. Pick one and I will:
+
 Then 3-5 NUMBERED suggestions, each like this:
   **1. [Short action name]** — one sentence on what you'd build and why it helps.
 
@@ -104,11 +107,13 @@ of the same idea. Mix quick wins with bigger changes. Examples of good variety:
   - One analytical thing (progress tracker, credit balance, overload flags)
   - One polish thing (formatting, conditional highlights, cleanup)
 
-End with exactly this line:
-  *Say a number (or numbers) and I'll build it.*
+End with exactly this line (bold, on its own line):
+  **👉 Reply with a number (or numbers — e.g. "do 1, 3, 5") and I'll build it.**
 
-Keep the whole reply under ~180 words. Be friendly and direct, not salesy.
+Keep the whole reply under ~200 words. Be friendly and direct, not salesy.
 Do NOT describe how it would look in detail — save that for when they pick one.
+Do NOT use phrases like "Here's what I'll do" or "I'll build these now" — nothing
+is being built in this turn.
 """
 
 # Patterns that indicate a simple/fast query
