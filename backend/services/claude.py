@@ -1204,40 +1204,75 @@ cat("Adjusted R-squared:", summary(model)$adj.r.squared, "\n")
 - If the R output is empty or minimal, say "Output capture failed — please check the R console for results."
 - NEVER fabricate p-values, coefficients, R-squared, or test statistics. This is the #1 rule.
 
+### CODE GOES IN TOOLS, NEVER IN TEXT — HARD RULE
+If you have R code to run, it MUST go inside a `run_r_code` tool call. NEVER
+write R code inside the chat reply as a markdown fenced code block (```r ...```
+or ```{r} ...```). Code in the reply text does NOT execute — it just sits
+there as text and the user has to manually copy-paste it. That is ALWAYS a
+broken response.
+
+The ONLY acceptable uses of R code in your reply text are:
+ - A single inline one-liner example in a short explanation (e.g. "use
+   `mean(x, na.rm = TRUE)` to skip NAs")
+ - A snippet the user MUST run themselves (e.g. they need to set an API key
+   or interactively debug) — and this is rare.
+For anything the user asked you to compute or analyze, emit run_r_code.
+
 ### DATA AVAILABILITY — NEVER HALLUCINATE DATASETS
-BEFORE writing code that references a dataset, check the context. The R
-environment snapshot (`env_objects`) shows EXACTLY what data frames are
-currently loaded in the user's `.GlobalEnv`. Use only those names.
 
-If the user asks you to analyze data but NONE is loaded, or the dataset they
-reference isn't in env_objects, DO NOT make up a dataset name or fabricate
-rows/columns. Instead:
-1. Reply with a short question: "I don't see any dataset loaded. Where is
-   the file and what's the path? (e.g., `data <- read_csv('~/Downloads/x.csv')`)"
-2. Emit NO run_r_code action for this turn — wait for the user to clarify.
+**Rule 1 — The user gave you a file path or filename:**
+If the user says things like "in my Downloads folder I have X", "load the
+file Y.csv", "use the dataset at ~/path/file.csv", or names a file —
+EMIT a run_r_code action that reads the file. Do NOT ask them to load it
+manually. Use these search strategies in priority order:
+  a) If they gave an explicit path, use it directly.
+  b) If they gave just a filename (e.g. "fifa21_raw"), read it from the
+     Downloads folder first: `read_csv("~/Downloads/fifa21_raw.csv")`.
+  c) If the extension isn't specified, try .csv first, then .xlsx, .tsv, .txt.
+  d) If the file exists but has typed columns like height "5'8\"" or weight
+     "70kg", inspect the raw format with `str()` or `head()` before filtering.
+Loading a named file is NOT a hallucination — it's exactly what was asked.
 
-If the user attaches an IMAGE (screenshot), that image is NOT a dataset. It
-is pixels. You cannot `read_csv()` it or filter it with `dplyr::filter()`.
-You can only:
- - Read the QUESTION/INSTRUCTIONS from the image, and
- - Apply code to data that is ACTUALLY loaded in `env_objects`.
-If the image appears to show tabular data but the user hasn't loaded it into
-R, ask for the source file path instead of inventing columns.
+**Rule 2 — The user references a dataset WITHOUT any location hint:**
+If they say "analyze the data" or "show me the players" with no file path
+AND no matching object in env_objects, THEN (and only then) ask where to
+find it.
 
-Examples of hallucinations to avoid:
- - "I'll filter the dataset for players where nationality == 'Greek'" when
-   no dataset is loaded
- - Writing `players %>% filter(country == "GR")` with no `players` object
-   in env
- - "I'll count how many play for PAOK" without a data frame to count over
+**Rule 3 — Only hallucination is inventing data that doesn't exist:**
+Don't write `players %>% filter(country == "Greece")` if there is no
+`players` object AND the user didn't give you a file path to load one.
+Don't reference undefined variables like `tt` or `ci` as if prior analysis
+produced them.
+
+**Rule 4 — Images are pixels, not datasets:**
+If the user attaches an IMAGE (.png, .jpg, screenshot), that image is not
+structured data. You can READ the question from it, but you cannot
+`read_csv()` it. If the attached file has a .csv/.xlsx/.tsv extension,
+it IS data and you CAN load it — check the file_name on the attachment.
+
+Examples of CORRECT behavior:
+ - User: "in my Downloads I have fifa21_raw, find avg weight of 5'8" players"
+   → EMIT run_r_code that reads ~/Downloads/fifa21_raw.csv and computes it.
+ - User: "analyze the Greek players" with no file, no env object
+   → ASK for the file path, emit no code.
+ - User: "show me the first 5 rows of FIFA21" with FIFA21 in env
+   → EMIT run_r_code: `head(FIFA21, 5)`
+
+Examples of WRONG behavior (never do these):
+ - Writing R code as a markdown code block in the reply when the user wants
+   it executed
+ - Inventing variable names that aren't in env AND weren't created by your
+   own loading code
+ - Asking the user to load a file when they literally just told you the path
 
 ### Homework / Assignment Questions
 When the user shares a screenshot of homework/assignment questions:
 1. Read EVERY question carefully — don't skip any
 2. Check env_objects FIRST — is the dataset already loaded? If yes, use it.
-   If no, ask where to find it before writing code.
+   If the question mentions a specific file (e.g. "using hsb2.csv"), load it.
+   Only if there's no loaded dataset AND no file clue, ask where to find it.
 3. Write R code that answers ALL parts (a, b, c, d, etc.) — you MUST emit
-   a run_r_code action (ONLY once data is confirmed available)
+   a run_r_code action (never paste code into the reply text)
 4. Print output for each part with clear labels: cat("--- Part a ---\n")
 5. Your Phase 1 reply should be 1-2 sentences max: "Running the analysis now — I'll have your answers shortly."
 6. Phase 2 will provide the actual answers with specific values
@@ -2343,6 +2378,41 @@ def _parse_tool_response(response) -> dict:
 
     # Filter out any malformed actions (strings instead of dicts)
     actions = [a for a in actions if isinstance(a, dict)]
+
+    # ── Rescue R code that leaked into reply text ────────────────────────────
+    # When the R prompt tightly constrains the model (e.g. "don't operate on
+    # a dataset that isn't loaded"), it occasionally hedges by writing R code
+    # as a markdown fenced block in the reply instead of calling run_r_code.
+    # The user sees code but nothing executes. Rescue: if the reply contains
+    # a ```r or ```{r} block AND no run_r_code action exists, extract the
+    # code into a run_r_code action and strip the fenced block from the reply.
+    has_r_action = any(
+        a.get("type") == "run_r_code" for a in actions
+    )
+    if reply and not has_r_action:
+        r_block_re = re.compile(
+            r"```\{?\s*r\s*\}?\s*\n([\s\S]*?)\n```",
+            re.IGNORECASE
+        )
+        matches = r_block_re.findall(reply)
+        if matches:
+            # Join all rescued blocks into a single run_r_code action
+            rescued_code = "\n\n".join(m.strip() for m in matches if m.strip())
+            if rescued_code:
+                actions.append({
+                    "type": "run_r_code",
+                    "payload": {"code": rescued_code, "target": "active"},
+                })
+                # Strip the code blocks from the reply so the user sees clean text
+                reply = r_block_re.sub("", reply).strip()
+                # Collapse any double blank lines left behind
+                reply = re.sub(r"\n{3,}", "\n\n", reply)
+                if not reply:
+                    reply = "Running the code now — results will appear in the console."
+                logger.info(
+                    "[rescue] Extracted %d chars of R code from reply into run_r_code",
+                    len(rescued_code),
+                )
 
     # ── Homework action post-processing ──────────────────────────────────────
     # Log all actions for debugging
