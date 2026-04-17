@@ -1,2 +1,5 @@
 export(tsifulator_addin)
 export(run_tsifl)
+export(setup)
+export(teardown)
+export(status)
