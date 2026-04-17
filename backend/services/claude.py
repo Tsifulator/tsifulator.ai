@@ -39,31 +39,42 @@ MODEL_HEAVY    = "claude-opus-4-20250514"      # $15/$75 per M tokens — comple
 # If the user likes a suggestion, their follow-up ("yes do #2") routes to action mode.
 _DISCUSS_PATTERNS = re.compile(
     r"(what do you think|what'?s your (take|opinion|view))|"
-    r"(any (recommendation|suggestion|idea|advice|thought))|"
-    r"(do you have .{0,20}(recommendation|suggestion|idea|advice))|"
-    r"(give me .{0,20}(idea|suggestion|recommendation))|"
-    r"(how (could|would|might) (i|we|you) (improve|make .{0,15}better|organize))|"
+    # "any recommendations/suggestions/..." — allow typos like "reccomendation"
+    r"(any (rec+om+endation|suggestion|idea|advice|thought|tip|pointer))|"
+    # "you got any X", "got any X", "have any X"
+    r"((you )?(got|have) any (rec+om+endation|suggestion|idea|advice|thought|tip))|"
+    r"(do you have .{0,20}(rec+om+endation|suggestion|idea|advice))|"
+    r"(give me .{0,20}(idea|suggestion|rec+om+endation))|"
+    r"(how (could|would|might|can) (i|we|you) (improve|make .{0,15}better|organize|clean))|"
     r"(is (this|it|there) .{0,15}(good|better|ok|fine|decent|bad|wrong))|"
     r"(should i .{0,30}\?)|"
     r"(what (should|would|could) (i|we) do)|"
     r"(brainstorm|ideas for|suggestions for)|"
-    r"(less chaotic|cleaner|clearer|more organized|less messy)|"
-    r"(advice|feedback|opinion|thoughts)",
+    # Descriptive goals that read as "make this [adjective]" — user wants advice, not a command
+    r"(make (the |this |it |that |my ).{0,30}(better|cleaner|clearer|more organized|less messy|"
+    r"less chaotic|easier|easier to (scan|read|understand|navigate)|more (readable|useful|"
+    r"professional|presentable|understandable)))|"
+    r"(less chaotic|more organized|less messy|more presentable)|"
+    r"(any (way|ways) to (improve|make|clean|organize))|"
+    r"(\b(advice|feedback|opinion|thoughts?)\b)",
     re.IGNORECASE
 )
 
 def _is_discuss_mode(message: str) -> bool:
     """Detect open-ended questions that want a conversation, not action execution."""
     msg = message.strip()
-    # Explicit action verbs override discuss mode — "change X" always acts
+    # Discuss patterns win if they match — "make this better" is a discussion, not a command
+    if _DISCUSS_PATTERNS.search(msg):
+        return True
+    # Otherwise, explicit action verbs at start mean the user is commanding
     _ACTION_VERBS = re.compile(
-        r"^(add|write|create|make|insert|delete|remove|clear|change|update|set|"
+        r"^(add|write|create|insert|delete|remove|clear|change|update|set|"
         r"format|highlight|apply|fill|sort|filter|build|generate|compute|calculate)\b",
         re.IGNORECASE
     )
     if _ACTION_VERBS.match(msg):
         return False
-    return bool(_DISCUSS_PATTERNS.search(msg))
+    return False
 
 
 # Addendum injected when discuss mode is active.
@@ -2227,6 +2238,25 @@ def _parse_tool_response(response) -> dict:
             # Guaranteed structured output — no parsing needed
             tool_actions = block.input.get("actions", [])
             actions.extend(tool_actions)
+
+    # Sanitize reply: strip any leaked tool-call pseudo-code that Claude sometimes
+    # emits as text when the prompt confuses it. We never want `execute_actions([...])`
+    # or raw JSON action payloads showing up in the user-visible reply.
+    if reply:
+        # Drop fenced code blocks that contain execute_actions or action-like JSON
+        reply = re.sub(
+            r"```\w*\s*\n?[\s\S]*?execute_actions\s*\([\s\S]*?\)[\s\S]*?```",
+            "", reply, flags=re.IGNORECASE
+        )
+        # Drop inline execute_actions([...]) calls (possibly spanning multiple lines)
+        reply = re.sub(
+            r"execute_actions\s*\(\s*\[[\s\S]*?\]\s*\)",
+            "", reply, flags=re.IGNORECASE
+        )
+        # Drop a "Copy" button artifact that code-block renderers sometimes leave behind
+        reply = re.sub(r"^\s*Copy\s*$", "", reply, flags=re.MULTILINE)
+        # Collapse runs of blank lines left behind
+        reply = re.sub(r"\n{3,}", "\n\n", reply).strip()
 
     # Filter out any malformed actions (strings instead of dicts)
     actions = [a for a in actions if isinstance(a, dict)]
