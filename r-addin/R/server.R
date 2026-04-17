@@ -1156,6 +1156,9 @@ run_tsifl_server <- function(port = 7444) {
           }
 
           # Phase 2: interpret R output
+          # Threshold lowered from 50 → 5 chars: even tiny outputs like a single
+          # coefficient ("0.7611") deserve a chat-side summary so the user isn't
+          # forced to read the R console to find the answer.
           if (r_code_executed) {
             tryCatch({
               Sys.sleep(5)
@@ -1166,12 +1169,12 @@ run_tsifl_server <- function(port = 7444) {
                     paste(readLines("/tmp/.tsifl_last_output.txt", warn = FALSE), collapse = "\n"),
                     error = function(e) ""
                   )
-                  if (nchar(trimws(r_output)) > 50) break
+                  if (nchar(trimws(r_output)) > 5) break
                 }
                 Sys.sleep(2)
               }
 
-              if (nchar(trimws(r_output)) > 50) {
+              if (nchar(trimws(r_output)) > 5) {
                 r_codes <- sapply(all_actions, function(a) {
                   if (identical(a$type, "run_r_code")) a$payload$code else NULL
                 })
