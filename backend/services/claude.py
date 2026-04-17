@@ -205,6 +205,14 @@ Example BAD replies (never do this):
 - Be thorough and use markdown formatting (headers, bullets, code blocks).
 - Offer follow-up suggestions when relevant ("Want me to also..." or "You might also want to check...").
 
+**When the message mixes a COMMAND and a QUESTION in one turn (hybrid):**
+e.g. "fix the errors and explain what the dashboard shows"
+or "add a SUM in B10, why did the old formula break?"
+— Do BOTH. Execute the command via execute_actions AND write a real answer to the question in your text reply. Never answer with only "Done." or "All set." when the user asked you something. Address every question they raised, in the order they raised it. If you can't fix something they mentioned, explain why and what you need from them.
+
+**When the user mentions errors in their sheet ("fix the errors", "there's a problem", "why is X broken"):**
+Read the sheet context carefully for cells containing #VALUE!, #REF!, #DIV/0!, #N/A, #NAME?, #NULL!, or #SPILL!. In your reply, list what you found, what you fixed (or why you couldn't), and cite the specific cell addresses. If the user didn't pinpoint the error, ask before guessing.
+
 **Tone:** Confident, direct, friendly. Like a senior analyst helping a colleague — not a customer service bot. Use "I'll" not "I will proceed to". Be concise but never cold.
 
 **MANDATORY: Your text reply MUST ALWAYS contain at least 1-2 sentences explaining what you're doing.** Even when you emit actions via execute_actions, you MUST include explanatory text. A tool call with no reply text is a broken response.
@@ -2088,7 +2096,24 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
     # With "auto", models sometimes reply with text only and skip the tools.
     is_rstudio_with_images = app_name == "rstudio" and bool(images)
     is_action_app = app_name in ("excel", "rstudio", "powerpoint", "word", "google_sheets")
-    force_tools = (is_rstudio_with_images or (is_action_app and not is_greeting)) and not skip_tools
+
+    # HYBRID MESSAGE DETECTION — when the user asks a question AND requests an
+    # action in the same message (e.g. "fix the errors and explain what this
+    # means"), forcing a tool call causes the model to emit actions but skip
+    # the text answer entirely. Relax to "auto" so the model can do both.
+    _HAS_EXPLAIN_REQUEST = re.compile(
+        r"(explain|clarify|tell me (what|why|how)|why is|why does|why are|"
+        r"what does.{0,30}(mean|say|do|show|indicate)|"
+        r"what (is|are) (this|that|these|those|the))",
+        re.IGNORECASE
+    )
+    has_question_mark = "?" in message
+    wants_explanation = bool(_HAS_EXPLAIN_REQUEST.search(message))
+    is_hybrid = (has_question_mark or wants_explanation) and is_action_app and not is_greeting
+    if is_hybrid:
+        print(f"[routing] HYBRID (explain+act) → tool_choice=auto. msg={message[:80]!r}", flush=True)
+
+    force_tools = (is_rstudio_with_images or (is_action_app and not is_greeting)) and not skip_tools and not is_hybrid
     tool_choice = {"type": "any"} if force_tools else {"type": "auto"}
 
     try:
