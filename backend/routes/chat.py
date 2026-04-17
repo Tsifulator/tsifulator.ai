@@ -893,6 +893,18 @@ async def chat(request: ChatRequest):
     else:
         history = _get_session_history(effective_session_id)
 
+    # Verbose diagnostic log for discuss-mode flow — helps diagnose picks that
+    # don't execute the prior menu options.
+    if is_numbered_pick or is_confirmation:
+        last_assist = next((h.get("content", "")[:120] for h in reversed(history) if h.get("role") == "assistant"), "(none)")
+        print(
+            f"[chat/pick] msg={request.message[:80]!r} "
+            f"is_numbered={is_numbered_pick} is_confirm={is_confirmation} "
+            f"sid={effective_session_id!r} history_len={len(history)} "
+            f"last_assist={last_assist!r}",
+            flush=True,
+        )
+
     # 4. Save the user's message (skip for auto follow-ups)
     if not is_followup:
         _add_to_history(effective_session_id, "user", request.message)
@@ -982,6 +994,19 @@ async def chat(request: ChatRequest):
     # 5.5. Post-process: inject missing actions the model consistently forgets
     if app == "excel":
         result = _postprocess_excel_actions(result, request.context)
+
+    # Diagnostic log for numbered picks / confirmations so we can debug
+    # discuss-mode flows that say "All set" but don't actually change anything.
+    if is_numbered_pick or is_confirmation:
+        _acts = result.get("actions", [])
+        _action_types = [a.get("type", "?") for a in _acts[:20]]
+        _reply_preview = (result.get("reply", "") or "")[:200]
+        print(
+            f"[chat/pick/result] msg={request.message[:80]!r} "
+            f"action_count={len(_acts)} reply={_reply_preview!r} "
+            f"types={_action_types}",
+            flush=True,
+        )
 
     # 5.6. Server-side plot generation: convert create_plot → import_image
     #       Generates charts with matplotlib on the server (no R needed),
