@@ -1295,99 +1295,82 @@ run_tsifl_server <- function(port = 7444) {
         }, error = function(e) {})
         Sys.sleep(0.8)
 
-        # 2. Send to the MAIN R console with output capture.
-        #    Uses sink(split=TRUE) to capture output to file WHILE still
-        #    displaying it in the console. No need to re-run code.
+        # 2. FILE-BASED BRIDGE to the MAIN R session.
+        #    We used to rely on rstudioapi::sendToConsole, but that IPC path is
+        #    unreliable from background jobs — many users see "RStudio did not
+        #    respond to rstudioapi IPC request" even when the architecture is
+        #    correct. Instead, the main R session has a listener (installed by
+        #    tsifulator_addin()) that polls /tmp/.tsifl_pending_code.R every
+        #    0.5s via later::later(). We write code there and wait for a done
+        #    marker at /tmp/.tsifl_done.marker.
+        #
+        #    The listener handles sink(), output capture, and plot snapshot —
+        #    so no preamble commands needed.
 
-        # Start output capture (split=TRUE shows in console AND saves to file)
-        tryCatch({
-          rstudioapi::sendToConsole(
-            'tryCatch(sink("/tmp/.tsifl_last_output.txt", split = TRUE), error = function(e) {})',
-            execute = TRUE, echo = FALSE, focus = FALSE
-          )
-        }, error = function(e) {})
-        Sys.sleep(0.3)
+        pending_file <- "/tmp/.tsifl_pending_code.R"
+        done_file    <- "/tmp/.tsifl_done.marker"
 
-        # Detect if code will produce a plot
+        # Detect if code will produce a plot (used for wait timing below)
         plot_keywords <- c("plot(", "ggplot(", "boxplot(", "hist(", "barplot(",
                           "geom_", "abline(", "curve(", "pie(", "heatmap(",
                           "pairs(", "qqnorm(", "acf(", "pacf(", "stripchart(",
                           "par(mfrow")
         code_has_plot <- any(sapply(plot_keywords, function(kw) grepl(kw, code, fixed = TRUE)))
 
-        # If code produces a plot, OPEN a png device BEFORE running so any plot
-        # call (base R or ggplot) is captured automatically. Then close after.
         code_to_run <- code
-        plot_path <- "/tmp/.tsifl_last_plot.png"
-        if (code_has_plot) {
-          try(unlink(plot_path), silent = TRUE)
-          # Run code normally so plot renders in RStudio Plots pane, then
-          # copy the current device to png (and ggsave as fallback for ggplot).
-          save_snippet <- sprintf(
-            '\ninvisible(try({ if (exists(".Last.value") && inherits(.Last.value, "ggplot")) print(.Last.value) }, silent=TRUE))\ninvisible(try(grDevices::dev.copy(grDevices::png, filename="%s", width=1000, height=700, res=150), silent=TRUE))\ninvisible(try(grDevices::dev.off(), silent=TRUE))\ninvisible(try({ if (!file.exists("%s") || file.info("%s")$size < 200) { ggplot2::ggsave("%s", width=8, height=6, dpi=150) } }, silent=TRUE))',
-            plot_path, plot_path, plot_path, plot_path
-          )
-          code_to_run <- paste0(code, save_snippet)
-        }
 
-        # Try primary sendToConsole with retry/backoff (4 attempts)
+        # Clean previous done marker so we don't race with stale signals
+        try(unlink(done_file), silent = TRUE)
+
         send_err <- ""
-        sent <- FALSE
-        for (.attempt in 1:4) {
-          ok <- tryCatch({
-            rstudioapi::sendToConsole(
-              code_to_run, execute = TRUE, echo = TRUE, focus = FALSE
-            )
-            TRUE
-          }, error = function(e) { send_err <<- conditionMessage(e); FALSE })
-          if (ok) { sent <- TRUE; break }
-          Sys.sleep(0.3 * .attempt)  # 0.3, 0.6, 0.9, 1.2s
-        }
-
-        # Fallback: write code to a temp file and source() it via sendToConsole
-        if (!sent) {
-          for (.attempt in 1:3) {
-            ok <- tryCatch({
-              tmp_script <- tempfile(fileext = ".R")
-              writeLines(code_to_run, tmp_script)
-              rstudioapi::sendToConsole(
-                sprintf('source("%s", echo = TRUE)', tmp_script),
-                execute = TRUE, echo = TRUE, focus = FALSE
-              )
-              TRUE
-            }, error = function(e) {
-              send_err <<- paste(send_err, "| fallback:", conditionMessage(e))
-              FALSE
-            })
-            if (ok) { sent <- TRUE; break }
-            Sys.sleep(0.4 * .attempt)
-          }
-        }
-
-        # If still failing, produce a user-friendly message with the remedy
-        if (!sent) {
-          send_err <- paste0(
-            send_err,
-            "\n\nThis usually means the R session's IPC link to RStudio hasn't ",
-            "fully initialized. Try: Session menu → Restart R, then reopen tsifl."
-          )
-        }
+        sent <- tryCatch({
+          writeLines(code_to_run, pending_file)
+          TRUE
+        }, error = function(e) {
+          send_err <<- paste("Could not write bridge file:", conditionMessage(e))
+          FALSE
+        })
 
         if (sent) {
           add_message("action", "Running in console")
 
-          # Wait for code to finish
-          wait_time <- if (code_has_plot) 6 else 3
-          Sys.sleep(wait_time)
+          # Wait for the listener to pick it up and signal done. Poll up to
+          # ~60s (long code like models on large data can take a while). The
+          # listener drops a timestamp into done_file when eval() returns.
+          max_wait <- if (code_has_plot) 90 else 60
+          done_ok <- FALSE
+          for (.waited in seq_len(max_wait * 4)) {
+            Sys.sleep(0.25)
+            if (file.exists(done_file)) { done_ok <- TRUE; break }
+          }
 
-          # Stop sink
-          tryCatch({
-            rstudioapi::sendToConsole(
-              'tryCatch(sink(), error = function(e) {})',
-              execute = TRUE, echo = FALSE, focus = FALSE
+          if (!done_ok) {
+            # The listener never fired — likely because it wasn't installed
+            # (old tsifl version still running, or user never called
+            # tsifulator_addin() in the main session). Fall back to the
+            # legacy rstudioapi::sendToConsole path with retry.
+            send_err <- paste0(
+              "Listener did not respond within ", max_wait, "s — ",
+              "the main R session may not have the tsifl bridge installed. ",
+              "Fix: in the main R console run `tsifulator:::.install_tsifl_listener()` ",
+              "or restart via Session → Restart R, then relaunch tsifl."
             )
-          }, error = function(e) {})
-          Sys.sleep(0.5)
+            # Try the legacy path as a courtesy
+            legacy_ok <- tryCatch({
+              rstudioapi::sendToConsole(
+                code_to_run, execute = TRUE, echo = TRUE, focus = FALSE
+              )
+              TRUE
+            }, error = function(e) FALSE)
+            if (legacy_ok) {
+              Sys.sleep(if (code_has_plot) 6 else 3)
+              done_ok <- TRUE
+              send_err <- ""
+            }
+          }
+
+          # Small settle delay after done marker for sink to flush etc.
+          Sys.sleep(0.3)
 
           # ── Cross-app memory: snapshot data frames ──────────────────────
           tryCatch({

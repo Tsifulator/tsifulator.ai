@@ -1,3 +1,108 @@
+#' Install a file-based code listener in the current (main) R session.
+#'
+#' rstudioapi::sendToConsole() from a background job to the main RStudio
+#' console is fragile — in many environments it silently times out with
+#' "RStudio did not respond to rstudioapi IPC request". Rather than fight
+#' that IPC channel, we use a file-based bridge:
+#'   - Shiny background job writes code to /tmp/.tsifl_pending_code.R
+#'   - Main R session polls that file every 0.5s via later::later()
+#'   - When found: read it, eval it in .GlobalEnv with sink() capture,
+#'     then write a done marker so the background job knows it's finished.
+#'
+#' This function MUST be called from the MAIN R session (the one the user
+#' is typing in), not from the background job. tsifulator_addin() takes
+#' care of that since it runs in the main session when invoked from the
+#' console.
+#'
+#' Safe to call multiple times — subsequent calls are no-ops.
+#'
+#' @keywords internal
+.install_tsifl_listener <- function() {
+  # Idempotent: mark installed in a global and bail if already done
+  if (isTRUE(getOption("tsifulator.listener_installed"))) {
+    return(invisible(FALSE))
+  }
+
+  pending_file <- "/tmp/.tsifl_pending_code.R"
+  output_file  <- "/tmp/.tsifl_last_output.txt"
+  done_file    <- "/tmp/.tsifl_done.marker"
+  plot_file    <- "/tmp/.tsifl_last_plot.png"
+
+  # Clean up any stale files from previous sessions
+  for (f in c(pending_file, output_file, done_file, plot_file)) {
+    try(unlink(f), silent = TRUE)
+  }
+
+  poll_fn <- function() {
+    tryCatch({
+      if (file.exists(pending_file)) {
+        # Read + remove the pending file atomically
+        code <- tryCatch(
+          paste(readLines(pending_file, warn = FALSE), collapse = "\n"),
+          error = function(e) ""
+        )
+        try(unlink(pending_file), silent = TRUE)
+
+        if (nchar(code) > 0) {
+          # Start fresh output capture
+          try(unlink(output_file), silent = TRUE)
+          try(unlink(done_file), silent = TRUE)
+
+          # sink(split=TRUE) echoes to console AND captures to file
+          sink_ok <- tryCatch({
+            sink(output_file, split = TRUE)
+            TRUE
+          }, error = function(e) FALSE)
+
+          # Detect plot-producing code and open a png device around execution
+          plot_keywords <- c("plot(", "ggplot(", "boxplot(", "hist(",
+                             "barplot(", "geom_", "abline(", "curve(",
+                             "pie(", "heatmap(", "pairs(", "qqnorm(",
+                             "acf(", "pacf(", "stripchart(", "par(mfrow")
+          has_plot <- any(sapply(plot_keywords, function(k) grepl(k, code, fixed = TRUE)))
+          if (has_plot) try(unlink(plot_file), silent = TRUE)
+
+          tryCatch(
+            eval(parse(text = code), envir = .GlobalEnv),
+            error = function(e) cat("Error:", conditionMessage(e), "\n")
+          )
+
+          # Best-effort plot capture
+          if (has_plot) {
+            tryCatch({
+              grDevices::dev.copy(
+                grDevices::png, filename = plot_file,
+                width = 1000, height = 700, res = 150
+              )
+              grDevices::dev.off()
+              if (!file.exists(plot_file) ||
+                  file.info(plot_file)$size < 200) {
+                try(ggplot2::ggsave(plot_file, width = 8, height = 6, dpi = 150),
+                    silent = TRUE)
+              }
+            }, error = function(e) {})
+          }
+
+          if (sink_ok) tryCatch(sink(), error = function(e) {})
+
+          # Signal completion — background job polls for this marker
+          writeLines(as.character(Sys.time()), done_file)
+        }
+      }
+    }, error = function(e) {})
+
+    # Reschedule ourselves (later will not fire if R is blocked, which is fine —
+    # any code we've scheduled has finished by the time later can fire again).
+    later::later(poll_fn, delay = 0.5)
+  }
+
+  # Kick off the polling loop
+  later::later(poll_fn, delay = 0.5)
+
+  options(tsifulator.listener_installed = TRUE)
+  invisible(TRUE)
+}
+
 #' tsifl RStudio Addin
 #'
 #' Launches the tsifl chat panel inside RStudio as a background job,
@@ -5,6 +110,14 @@
 #'
 #' @export
 tsifulator_addin <- function() {
+
+  # Install the file-based code bridge in THIS (main) session. This must
+  # happen before the background job starts so the listener is ready to
+  # receive code as soon as the user chats.
+  tryCatch(.install_tsifl_listener(), error = function(e) {
+    message("tsifl: warning — could not install console listener: ",
+            conditionMessage(e))
+  })
 
   PORT <- 7444
 
