@@ -1208,18 +1208,45 @@ cat("Adjusted R-squared:", summary(model)$adj.r.squared, "\n")
 - NEVER fabricate p-values, coefficients, R-squared, or test statistics. This is the #1 rule.
 
 ### CODE GOES IN TOOLS, NEVER IN TEXT — HARD RULE
-If you have R code to run, it MUST go inside a `run_r_code` tool call. NEVER
-write R code inside the chat reply as a markdown fenced code block (```r ...```
-or ```{r} ...```). Code in the reply text does NOT execute — it just sits
-there as text and the user has to manually copy-paste it. That is ALWAYS a
-broken response.
+If you have R code to run, it MUST go inside an actual `run_r_code` tool
+call. NEVER write R code or tool-call JSON as a markdown fenced block of
+ANY form inside the reply text:
+ - ```r ... ```                  → forbidden
+ - ```{r} ... ```                → forbidden
+ - ```{r execute_actions} ... ``` → forbidden (this is you trying to emit
+   a tool call as text; that doesn't work — just call the tool for real)
+ - ```json [{"type":"run_r_code",...}] ``` → forbidden (same reason)
+ - ANY fenced block containing R code or a tool-call payload → forbidden
+
+Code in the reply text does NOT execute. The user sees text and nothing
+runs. That is ALWAYS a broken response.
 
 The ONLY acceptable uses of R code in your reply text are:
- - A single inline one-liner example in a short explanation (e.g. "use
-   `mean(x, na.rm = TRUE)` to skip NAs")
- - A snippet the user MUST run themselves (e.g. they need to set an API key
-   or interactively debug) — and this is rare.
-For anything the user asked you to compute or analyze, emit run_r_code.
+ - A single inline one-liner example (e.g. "use `mean(x, na.rm = TRUE)`")
+ - A snippet the user MUST run themselves interactively (rare).
+For anything the user asked you to compute, analyze, or plot, emit an
+actual run_r_code tool call. Nothing else.
+
+### NEVER NARRATE RESULTS YOU HAVEN'T COMPUTED — HARD RULE
+If you did NOT emit a run_r_code action this turn, you MUST NOT describe:
+ - What a plot "shows" or "displays" (e.g. "the bar chart shows UAE at 81.2 kg")
+ - Specific numeric values as if computed (e.g. "the mean is 172.4")
+ - Rankings, comparisons, or conclusions drawn from hypothetical output
+ - Summaries like "I've created a comprehensive visualization..."
+
+A plot you did not run does not exist. A number you did not compute is
+fabricated. The user WILL catch this when they check the R session and
+see nothing ran. This destroys trust.
+
+If you want to describe what a plot WILL show, first emit the run_r_code
+action that produces it. Phase 2 (after real output is captured) is the
+ONLY place where you may describe specific values, plots, or results.
+
+Forbidden examples (never write these without an actual run_r_code):
+ - "The visualization includes three plots: 1. Height Distribution..."
+ - "UAE shown at 81.2 kg vs Congo at 68.2 kg"
+ - "The red dashed lines clearly show the average..."
+ - "Perfect! I've created a comprehensive visualization..."
 
 ### DATA AVAILABILITY — NEVER HALLUCINATE DATASETS
 
@@ -2383,39 +2410,87 @@ def _parse_tool_response(response) -> dict:
     actions = [a for a in actions if isinstance(a, dict)]
 
     # ── Rescue R code that leaked into reply text ────────────────────────────
-    # When the R prompt tightly constrains the model (e.g. "don't operate on
-    # a dataset that isn't loaded"), it occasionally hedges by writing R code
-    # as a markdown fenced block in the reply instead of calling run_r_code.
-    # The user sees code but nothing executes. Rescue: if the reply contains
-    # a ```r or ```{r} block AND no run_r_code action exists, extract the
-    # code into a run_r_code action and strip the fenced block from the reply.
+    # When the model is constrained or uncertain, it sometimes writes code as
+    # markdown fenced blocks in the reply instead of calling run_r_code. The
+    # user sees code but nothing executes. Rescue: if the reply contains a
+    # fenced block with R code AND no run_r_code action exists, extract it.
     has_r_action = any(
         a.get("type") == "run_r_code" for a in actions
     )
     if reply and not has_r_action:
+        rescued_actions = []
+        rescued_code_parts = []
+
+        # Form 1: ```{r execute_actions} [{"type":"run_r_code", ...}] ```
+        # The model tried to emit a tool call as text — parse the JSON array
+        # and pull out run_r_code entries.
+        tool_call_re = re.compile(
+            r"```\s*\{?\s*r?\s*execute_actions\s*\}?\s*\n?([\s\S]*?)\n?```",
+            re.IGNORECASE
+        )
+        for m in tool_call_re.findall(reply):
+            try:
+                import json as _json
+                parsed = _json.loads(m.strip())
+                if isinstance(parsed, list):
+                    for a in parsed:
+                        if isinstance(a, dict) and a.get("type") == "run_r_code":
+                            rescued_actions.append(a)
+            except Exception:
+                pass
+        if tool_call_re.search(reply):
+            reply = tool_call_re.sub("", reply)
+
+        # Form 2: ```r ... ``` or ```{r} ... ``` — plain R code fences
         r_block_re = re.compile(
             r"```\{?\s*r\s*\}?\s*\n([\s\S]*?)\n```",
             re.IGNORECASE
         )
-        matches = r_block_re.findall(reply)
-        if matches:
-            # Join all rescued blocks into a single run_r_code action
-            rescued_code = "\n\n".join(m.strip() for m in matches if m.strip())
-            if rescued_code:
-                actions.append({
-                    "type": "run_r_code",
-                    "payload": {"code": rescued_code, "target": "active"},
-                })
-                # Strip the code blocks from the reply so the user sees clean text
-                reply = r_block_re.sub("", reply).strip()
-                # Collapse any double blank lines left behind
-                reply = re.sub(r"\n{3,}", "\n\n", reply)
-                if not reply:
-                    reply = "Running the code now — results will appear in the console."
-                logger.info(
-                    "[rescue] Extracted %d chars of R code from reply into run_r_code",
-                    len(rescued_code),
-                )
+        for m in r_block_re.findall(reply):
+            if m.strip():
+                rescued_code_parts.append(m.strip())
+        if r_block_re.search(reply):
+            reply = r_block_re.sub("", reply)
+
+        # Form 3: ```json [{"type":"run_r_code", ...}] ```
+        json_block_re = re.compile(
+            r"```\s*json\s*\n([\s\S]*?)\n```",
+            re.IGNORECASE
+        )
+        for m in json_block_re.findall(reply):
+            try:
+                import json as _json
+                parsed = _json.loads(m.strip())
+                if isinstance(parsed, list):
+                    for a in parsed:
+                        if isinstance(a, dict) and a.get("type") == "run_r_code":
+                            rescued_actions.append(a)
+            except Exception:
+                pass
+        if json_block_re.search(reply):
+            reply = json_block_re.sub("", reply)
+
+        # Consolidate rescued pieces into actions
+        if rescued_actions:
+            actions.extend(rescued_actions)
+        if rescued_code_parts:
+            actions.append({
+                "type": "run_r_code",
+                "payload": {
+                    "code": "\n\n".join(rescued_code_parts),
+                    "target": "active",
+                },
+            })
+
+        if rescued_actions or rescued_code_parts:
+            # Collapse any double blank lines left behind
+            reply = re.sub(r"\n{3,}", "\n\n", reply).strip()
+            if not reply:
+                reply = "Running the code now — results will appear in the console."
+            logger.info(
+                "[rescue] Extracted %d run_r_code actions + %d code fences from reply",
+                len(rescued_actions), len(rescued_code_parts),
+            )
 
     # ── Homework action post-processing ──────────────────────────────────────
     # Log all actions for debugging
