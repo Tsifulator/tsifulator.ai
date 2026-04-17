@@ -8,6 +8,7 @@ import hashlib
 import time
 import base64
 import os
+import re
 import logging
 from collections import OrderedDict
 from fastapi import APIRouter, HTTPException
@@ -843,10 +844,15 @@ async def chat(request: ChatRequest):
     #         detail="Monthly task limit reached. Upgrade to Pro for unlimited tasks."
     #     )
 
-    # 2. Check cache for identical recent query (skip for follow-ups)
+    # 2. Check cache for identical recent query (skip for follow-ups and short picks)
     app = request.context.get("app", "excel")
     cache_k = _cache_key(request.user_id, request.message, app)
-    if not request.images and not is_followup:
+    # Short messages that look like numbered picks are context-dependent — never cache
+    _is_short_contextual = len(request.message.strip()) < 120 and re.search(
+        r"^(yes|yeah|sure|ok|okay|do|build|try|execute|run|make|go|please|lets|let's|can you|could you)\b.*?(\d|\bthem\b|\ball\b|\bboth\b)",
+        request.message.strip(), re.IGNORECASE
+    )
+    if not request.images and not is_followup and not _is_short_contextual:
         cached = _get_cached_response(cache_k)
         if cached:
             return ChatResponse(
@@ -858,18 +864,38 @@ async def chat(request: ChatRequest):
             )
 
     # 3. Get session-scoped history (last 10 messages for this session)
-    # For heavy action apps (excel, rstudio, powerpoint), skip history
+    # For heavy action apps (excel, rstudio, powerpoint), we normally skip history
     # to avoid teaching Claude to return abbreviated actions.
-    # For follow-ups, skip history — the message already contains full context.
+    # EXCEPTION: if the user's message looks like a pick from a prior numbered
+    # suggestion list ("do 2", "yes do 1 and 3", "let's try #4"), we NEED the
+    # history so Claude knows what "2" refers to.
     heavy_action_apps = {"excel", "rstudio", "powerpoint", "google_sheets"}
-    if app in heavy_action_apps or is_followup:
+    _NUMBERED_PICK_RE = re.compile(
+        r"^(yes |yeah |sure |ok |okay |please |can you |could you |lets |let'?s |go |do |try |build )?"
+        r"(do |build |try |execute |run |make )?"
+        r"(me |them |that |these |those )?"
+        r"(#?\d+\b.*)",
+        re.IGNORECASE
+    )
+    is_numbered_pick = bool(_NUMBERED_PICK_RE.match(request.message.strip())) and len(request.message.strip()) < 120
+    # Also catch generic confirmations that should replay prior context
+    _CONFIRM_RE = re.compile(r"^(yes|yeah|sure|ok|okay|go ahead|please do|all of them|both)\b", re.IGNORECASE)
+    is_confirmation = bool(_CONFIRM_RE.match(request.message.strip())) and len(request.message.strip()) < 60
+
+    # Fallback: when the add-in doesn't send a session_id, derive one from user_id+app
+    # so we still get a stable conversation thread for discuss-mode follow-ups.
+    effective_session_id = request.session_id or f"{request.user_id}:{app}"
+
+    if is_followup:
+        history = []
+    elif app in heavy_action_apps and not (is_numbered_pick or is_confirmation):
         history = []
     else:
-        history = _get_session_history(request.session_id)
+        history = _get_session_history(effective_session_id)
 
     # 4. Save the user's message (skip for auto follow-ups)
     if not is_followup:
-        _add_to_history(request.session_id, "user", request.message)
+        _add_to_history(effective_session_id, "user", request.message)
         await save_message(
             user_id=request.user_id,
             role="user",
@@ -1009,7 +1035,7 @@ async def chat(request: ChatRequest):
 
     # 6. Save Claude's reply to history and persistent memory (skip for follow-ups)
     if not is_followup:
-        _add_to_history(request.session_id, "assistant", result["reply"])
+        _add_to_history(effective_session_id, "assistant", result["reply"])
         await save_message(
             user_id=request.user_id,
             role="assistant",
