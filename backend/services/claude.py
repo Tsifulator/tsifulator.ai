@@ -1145,10 +1145,13 @@ When the user has an .Rmd file open (visible in open_editor.active_file) that co
 - fill_rmd_chunks: user has Rmd template open, wants exercises filled in. ALWAYS prefer this when Rmd is open.
 - run_r_code: user wants to run analysis, create a plot, answer a single question, or work outside an Rmd template
 
-- Action type: run_r_code with payload {code: "...", target: "active"|"new"}.
-- **target field** — decides where code appears in the editor:
-  - "active": insert at cursor in the currently open file
-  - "new": create a new script tab (use for standalone analysis, "create a script", "new analysis", or when no file is open)
+- Action type: run_r_code with payload {code: "...", target: "console"|"active"|"new"}.
+- **target field** — decides where code VISIBLY lands in the editor (code always executes regardless):
+  - "console": run only, don't touch the editor — pure REPL. Use when the user says "just run it", "in the console", "run this", or for quick one-liners/exploratory commands.
+  - "active": append to the currently-open file. Use when the user says "add to this file", "append to what I'm working on", "add to the current script".
+  - "new": open a fresh .R script tab with the code. Default when user says "create a script", "new analysis", "save this as a script", or when no file is open.
+  - If unsure, pick "new" for multi-step analyses and "console" for short single-operation commands.
+  - IMPORTANT: If the user's message includes any of the phrases "in the console", "to the console", "just run", "only run", pick "console" so we don't clutter the editor with a new tab.
 - NEVER include library() calls for packages already listed in "Loaded packages" in the context — they are already loaded. Only add library() for packages NOT in that list.
 - Always use <- for assignment, not =.
 - Combine all code into ONE run_r_code action. Never split across multiple actions.
@@ -1834,7 +1837,7 @@ TOOLS = [
                                     "insert_table_of_contents: {}.\n"
                                     "add_comment: {range_description, comment_text}.\n"
                                     "set_page_margins: {top?, bottom?, left?, right?}.\n"
-                                    "run_r_code: {code, target?}. Runs R code in the console and places it in the editor. target: 'active' (insert at cursor), 'new' (new tab). Combine all code into ONE action.\n"
+                                    "run_r_code: {code, target?}. Runs R code in the main R session. target controls where the code VISIBLY lands in the editor (it always executes either way): 'console' (run only, no editor tab — best for quick commands or when user says 'just run it'), 'new' (open a fresh .R script tab — default, best for multi-step analyses), 'active' (append to the currently-open editor tab — use when user says 'add to this file'). Combine all code into ONE action.\n"
                                     "fill_rmd_chunks: {chunks, answers?}. Fills empty code chunks in the active Rmd file. chunks is a map of exercise name to R code: {\"Exercise 1\": \"library(tidyverse)\\n...\", \"Exercise 2\": \"dim(AdsManager)\"}. answers is an optional map of exercise name to text answer (inserted above the code chunk): {\"Exercise 8\": \"Research question: Is there a difference...\"}. Use this INSTEAD of run_r_code when the user has an Rmd homework template open with empty ```{r} chunks and asks to fill in answers. NEVER generate code that uses readLines/writeLines/gsub to edit an Rmd file — use fill_rmd_chunks instead.\n"
                                     "install_package: {package}. Installs an R package.\n"
                                     "create_r_script: {code, title?}. Creates a new R script file in the editor without executing.\n"

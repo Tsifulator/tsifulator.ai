@@ -62,10 +62,24 @@
           has_plot <- any(sapply(plot_keywords, function(k) grepl(k, code, fixed = TRUE)))
           if (has_plot) try(unlink(plot_file), silent = TRUE)
 
-          tryCatch(
-            eval(parse(text = code), envir = .GlobalEnv),
-            error = function(e) cat("Error:", conditionMessage(e), "\n")
-          )
+          # Use source() with print.eval=TRUE instead of bare eval(parse(...))
+          # so top-level expressions get auto-printed the same way they do at
+          # the R prompt. Without this, `ggplot(...)` creates the object but
+          # never draws — the plot code appears to "run" with no visible plot.
+          tryCatch({
+            # source() requires a file or connection — write code to a temp
+            # file so we can source it. Also gives nicer error messages.
+            tmp_src <- tempfile(pattern = "tsifl_", fileext = ".R")
+            writeLines(code, tmp_src)
+            on.exit(try(unlink(tmp_src), silent = TRUE), add = TRUE)
+            source(
+              tmp_src,
+              local = .GlobalEnv,
+              echo = FALSE,
+              print.eval = TRUE,  # auto-print top-level values (renders plots)
+              max.deparse.length = 500
+            )
+          }, error = function(e) cat("Error:", conditionMessage(e), "\n"))
 
           # Best-effort plot capture
           if (has_plot) {

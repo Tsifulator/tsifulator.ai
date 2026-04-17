@@ -1302,37 +1302,64 @@ run_tsifl_server <- function(port = 7444) {
       if (type == "run_r_code") {
         code <- payload$code
 
-        # 1. Place code in the editor.
-        #    The addin runs as a background job so rstudioapi editor functions
-        #    don't work directly. Solution: write a small insert script to disk
-        #    and source() it via sendToConsole in the MAIN session.
-        target <- payload$target  # "active", "new", or NULL
+        # target controls where the code VISIBLY lands in the editor.
+        # Values:
+        #   "console" — run only, don't touch the editor (pure REPL)
+        #   "new"     — open a fresh .R script tab with the code (default)
+        #   "active"  — append the code to the currently-open editor tab
+        target <- if (is.null(payload$target)) "new" else payload$target
 
-        # Always create a new script tab for run_r_code.
-        # (Rmd insertion is handled by fill_rmd_chunks, not run_r_code)
-        code_file <- "/tmp/.tsifl_insert_code.R"
-        tryCatch(writeLines(code, code_file), error = function(e) {})
+        if (target != "console") {
+          code_file <- "/tmp/.tsifl_insert_code.R"
+          tryCatch(writeLines(code, code_file), error = function(e) {})
 
-        insert_script <- paste0(
-          'local({\n',
-          '  code <- paste(readLines("', code_file, '"), collapse = "\\n")\n',
-          '  rstudioapi::documentNew(\n',
-          '    text = paste0("# tsifl — Generated Code\\n\\n", code, "\\n"),\n',
-          '    type = "r"\n',
-          '  )\n',
-          '})\n'
-        )
+          if (target == "active") {
+            # Append to the currently active document
+            insert_script <- paste0(
+              'local({\n',
+              '  code <- paste(readLines("', code_file, '"), collapse = "\\n")\n',
+              '  tryCatch({\n',
+              '    ctx <- rstudioapi::getActiveDocumentContext()\n',
+              '    last_line <- length(ctx$contents)\n',
+              '    last_col  <- nchar(ctx$contents[last_line])\n',
+              '    rstudioapi::insertText(\n',
+              '      location = c(last_line, last_col + 1),\n',
+              '      text = paste0("\\n\\n# tsifl — Generated Code\\n", code, "\\n"),\n',
+              '      id = ctx$id\n',
+              '    )\n',
+              '  }, error = function(e) {\n',
+              '    # Fallback: new tab if no active document\n',
+              '    rstudioapi::documentNew(\n',
+              '      text = paste0("# tsifl — Generated Code\\n\\n", code, "\\n"),\n',
+              '      type = "r"\n',
+              '    )\n',
+              '  })\n',
+              '})\n'
+            )
+          } else {
+            # Default "new": open a fresh script tab
+            insert_script <- paste0(
+              'local({\n',
+              '  code <- paste(readLines("', code_file, '"), collapse = "\\n")\n',
+              '  rstudioapi::documentNew(\n',
+              '    text = paste0("# tsifl — Generated Code\\n\\n", code, "\\n"),\n',
+              '    type = "r"\n',
+              '  )\n',
+              '})\n'
+            )
+          }
 
-        script_file <- "/tmp/.tsifl_insert_script.R"
-        tryCatch(writeLines(insert_script, script_file), error = function(e) {})
+          script_file <- "/tmp/.tsifl_insert_script.R"
+          tryCatch(writeLines(insert_script, script_file), error = function(e) {})
 
-        tryCatch({
-          rstudioapi::sendToConsole(
-            paste0('invisible(source("', script_file, '", local = TRUE))'),
-            execute = TRUE, echo = FALSE, focus = FALSE
-          )
-        }, error = function(e) {})
-        Sys.sleep(0.8)
+          tryCatch({
+            rstudioapi::sendToConsole(
+              paste0('invisible(source("', script_file, '", local = TRUE))'),
+              execute = TRUE, echo = FALSE, focus = FALSE
+            )
+          }, error = function(e) {})
+          Sys.sleep(0.8)
+        }
 
         # 2. FILE-BASED BRIDGE to the MAIN R session.
         #    We used to rely on rstudioapi::sendToConsole, but that IPC path is
