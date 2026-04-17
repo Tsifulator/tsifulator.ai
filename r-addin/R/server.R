@@ -745,12 +745,21 @@ run_tsifl_server <- function(port = 7444) {
         if (_statusInterval) { clearInterval(_statusInterval); _statusInterval = null; }
       }
 
+      function resetSendButton() {
+        // Send button's onclick sets textContent to 'Sending...' but doesn't
+        // reset it on completion — do it here so the user knows they can
+        // send another message.
+        var btn = document.getElementById('send_btn');
+        if (btn) btn.textContent = 'Send';
+      }
+
       function setStatusDone(msg) {
         _activePhase = null;
         stopStatusRotation();
         removeBubble();
         var bar = document.getElementById('status_bar');
         if (bar) bar.className = 'idle';
+        resetSendButton();
       }
 
       function setStatusError(msg) {
@@ -763,6 +772,7 @@ run_tsifl_server <- function(port = 7444) {
         var text = document.getElementById('status_text');
         if (dot) dot.className = 'status-dot error';
         if (text) { text.style.opacity = '1'; text.textContent = msg || 'Disconnected'; }
+        resetSendButton();
       }
 
       // Listen for status phase changes from Shiny server
