@@ -99,6 +99,64 @@
   # Kick off the polling loop
   later::later(poll_fn, delay = 0.5)
 
+  # ── Environment capture watcher ──────────────────────────────────────────
+  # The background Shiny job needs to know what data frames / packages the
+  # user has loaded in their main R session's .GlobalEnv (so the model
+  # doesn't hallucinate code against nonexistent objects). Prior to 0.3.0
+  # this watcher was installed via rstudioapi::sendToConsole — but we moved
+  # away from that API because it's unreliable. Install it here in the main
+  # session directly, so env snapshots always flow regardless of IPC state.
+  env_snapshot_file <- "/tmp/.tsifl_env_snapshot.rds"
+
+  capture_env <- function() {
+    tryCatch({
+      nms <- setdiff(
+        ls(.GlobalEnv),
+        c(".tsifl_watcher", ".tsifl_capture",
+          ".tsifl_listener_capture", ".tsifl_listener_poll")
+      )
+      info <- lapply(nms, function(nm) {
+        obj <- tryCatch(get(nm, envir = .GlobalEnv), error = function(e) NULL)
+        if (is.null(obj)) return(list(name = nm, class = "unknown"))
+        r <- list(name = nm, class = paste(class(obj), collapse = ", "))
+        if (!is.null(dim(obj))) r$dim <- paste(dim(obj), collapse = "x")
+        if (!is.null(names(obj))) {
+          r$col_names <- paste(head(names(obj), 20), collapse = ", ")
+        }
+        tryCatch({
+          r$preview <- paste(
+            utils::capture.output(
+              utils::str(obj, max.level = 0, give.attr = FALSE)
+            )[1],
+            collapse = ""
+          )
+        }, error = function(e) {})
+        r
+      })
+      pkgs <- gsub("^package:", "", grep("^package:", search(), value = TRUE))
+      saveRDS(
+        list(env = info, pkgs = pkgs, ts = Sys.time()),
+        env_snapshot_file
+      )
+    }, error = function(e) {
+      tryCatch(
+        saveRDS(
+          list(
+            env = list(), pkgs = character(0),
+            ts = Sys.time(), err = conditionMessage(e)
+          ),
+          env_snapshot_file
+        ),
+        error = function(e2) {}
+      )
+    })
+    # Reschedule every 3 seconds
+    later::later(capture_env, delay = 3)
+  }
+
+  # Fire an immediate capture and start the recurring loop
+  capture_env()
+
   options(tsifulator.listener_installed = TRUE)
   invisible(TRUE)
 }

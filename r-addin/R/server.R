@@ -849,10 +849,24 @@ run_tsifl_server <- function(port = 7444) {
         } else {
           list(shiny::span(m$text))
         }
-        # Show compact badge for attached images (not full renders)
+        # Show compact badge for attached images/files — infer type from
+        # filename extension so CSVs etc. don't get mislabeled as "images".
         if (!is.null(m$images) && length(m$images) > 0) {
           n_imgs <- length(m$images)
-          badge_text <- if (n_imgs == 1) "1 image attached" else paste0(n_imgs, " images attached")
+          # Inspect filenames to decide the label
+          exts <- tolower(vapply(m$images, function(x) {
+            nm <- if (is.list(x)) x$file_name else ""
+            if (is.null(nm) || !nzchar(nm)) "" else tools::file_ext(nm)
+          }, character(1)))
+          is_image_ext <- exts %in% c("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "")
+          label <- if (all(is_image_ext)) {
+            if (n_imgs == 1) "image" else "images"
+          } else if (!any(is_image_ext)) {
+            if (n_imgs == 1) "file" else "files"
+          } else {
+            if (n_imgs == 1) "attachment" else "attachments"
+          }
+          badge_text <- paste(n_imgs, label, "attached")
           children <- c(children, list(
             shiny::span(
               badge_text,
