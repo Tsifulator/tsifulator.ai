@@ -557,9 +557,19 @@ run_tsifl_server <- function(port = 7444) {
         var msg = ta.value.trim();
         if (!msg) return;
 
-        // DEBUG: change button text to prove onclick fires
+        // Button text indicates in-flight state; reset when response arrives.
         var btn = document.getElementById('send_btn');
         if (btn) btn.textContent = 'Sending...';
+
+        // Safety net: if set_status('done') or set_status('error') never
+        // reaches us (network drop, server-side exception swallowed, etc.),
+        // force the button back to 'Send' after a generous timeout so the
+        // UI doesn't look permanently stuck.
+        if (window._tsiflSafetyTimer) clearTimeout(window._tsiflSafetyTimer);
+        window._tsiflSafetyTimer = setTimeout(function() {
+          var b = document.getElementById('send_btn');
+          if (b && b.textContent === 'Sending...') b.textContent = 'Send';
+        }, 120000);  // 2 minutes — longer than any normal R job
 
         // Pack images directly into send_message payload to avoid race
         var imgPayload = JSON.stringify(window._tsiflImages || []);
@@ -751,6 +761,11 @@ run_tsifl_server <- function(port = 7444) {
         // send another message.
         var btn = document.getElementById('send_btn');
         if (btn) btn.textContent = 'Send';
+        // Cancel the safety-net timer if present
+        if (window._tsiflSafetyTimer) {
+          clearTimeout(window._tsiflSafetyTimer);
+          window._tsiflSafetyTimer = null;
+        }
       }
 
       function setStatusDone(msg) {
