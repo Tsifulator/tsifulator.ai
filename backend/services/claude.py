@@ -2161,7 +2161,6 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
     )
 
     if is_rmd_with_exercises:
-        import re
         actions = result.get("actions", [])
         has_fill = any(a.get("type") == "fill_rmd_chunks" for a in actions)
 
