@@ -6,6 +6,23 @@
 #' @keywords internal
 run_tsifl_server <- function(port = 7444) {
 
+  # ── IPC Warmup ─────────────────────────────────────────────────────────────
+  # When this background job starts, its rstudioapi IPC pipe to the main
+  # RStudio IDE isn't registered until the first sendToConsole call. That
+  # first call often silently times out ("RStudio did not respond"). Fire a
+  # harmless warmup with retries so the pipe is live by the time a user chats.
+  for (.warmup_attempt in 1:5) {
+    ok <- tryCatch({
+      rstudioapi::sendToConsole(
+        "invisible(TRUE)",
+        execute = TRUE, echo = FALSE, focus = FALSE
+      )
+      TRUE
+    }, error = function(e) FALSE)
+    if (ok) break
+    Sys.sleep(0.5 * .warmup_attempt)  # 0.5, 1, 1.5, 2, 2.5s
+  }
+
   BACKEND_URL <- if (nchar(Sys.getenv("TSIFULATOR_BACKEND_URL")) > 0) {
     Sys.getenv("TSIFULATOR_BACKEND_URL")
   } else {
@@ -1313,25 +1330,47 @@ run_tsifl_server <- function(port = 7444) {
           code_to_run <- paste0(code, save_snippet)
         }
 
+        # Try primary sendToConsole with retry/backoff (4 attempts)
         send_err <- ""
-        sent <- tryCatch({
-          rstudioapi::sendToConsole(
-            code_to_run, execute = TRUE, echo = TRUE, focus = FALSE
-          )
-          TRUE
-        }, error = function(e) { send_err <<- conditionMessage(e); FALSE })
+        sent <- FALSE
+        for (.attempt in 1:4) {
+          ok <- tryCatch({
+            rstudioapi::sendToConsole(
+              code_to_run, execute = TRUE, echo = TRUE, focus = FALSE
+            )
+            TRUE
+          }, error = function(e) { send_err <<- conditionMessage(e); FALSE })
+          if (ok) { sent <- TRUE; break }
+          Sys.sleep(0.3 * .attempt)  # 0.3, 0.6, 0.9, 1.2s
+        }
 
         # Fallback: write code to a temp file and source() it via sendToConsole
         if (!sent) {
-          tryCatch({
-            tmp_script <- tempfile(fileext = ".R")
-            writeLines(code_to_run, tmp_script)
-            rstudioapi::sendToConsole(
-              sprintf('source("%s", echo = TRUE)', tmp_script),
-              execute = TRUE, echo = TRUE, focus = FALSE
-            )
-            sent <- TRUE
-          }, error = function(e) { send_err <<- paste(send_err, "| fallback:", conditionMessage(e)) })
+          for (.attempt in 1:3) {
+            ok <- tryCatch({
+              tmp_script <- tempfile(fileext = ".R")
+              writeLines(code_to_run, tmp_script)
+              rstudioapi::sendToConsole(
+                sprintf('source("%s", echo = TRUE)', tmp_script),
+                execute = TRUE, echo = TRUE, focus = FALSE
+              )
+              TRUE
+            }, error = function(e) {
+              send_err <<- paste(send_err, "| fallback:", conditionMessage(e))
+              FALSE
+            })
+            if (ok) { sent <- TRUE; break }
+            Sys.sleep(0.4 * .attempt)
+          }
+        }
+
+        # If still failing, produce a user-friendly message with the remedy
+        if (!sent) {
+          send_err <- paste0(
+            send_err,
+            "\n\nThis usually means the R session's IPC link to RStudio hasn't ",
+            "fully initialized. Try: Session menu → Restart R, then reopen tsifl."
+          )
         }
 
         if (sent) {
