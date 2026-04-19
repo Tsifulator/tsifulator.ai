@@ -2698,13 +2698,16 @@ def _parse_tool_response(response) -> dict:
         if json_block_re.search(reply):
             reply = json_block_re.sub("", reply)
 
-        # Form 4: BARE JSON ARRAYS sitting in reply text with no fence at all.
-        # The model sometimes prints [{"type": "run_r_code", ...}] as raw text
-        # thinking it will become a tool call. It doesn't. Walk the reply
-        # looking for `[{"type":` anchors and try to balanced-parse from there.
+        # Form 4: BARE JSON ARRAYS or OBJECTS sitting in reply text with no
+        # fence at all. The model sometimes prints `[{"type": "run_r_code"...}]`
+        # (array form) or `{"type": "run_r_code", ...}` (single object form)
+        # as raw text thinking it will become a tool call. It doesn't. Walk
+        # the reply looking for `[{"type":` OR `{"type":` anchors and try to
+        # balanced-parse from there.
         import json as _json
+        # Regex matches BOTH `[{"type"...` and `{"type"...` starts
         start_pattern = re.compile(
-            r'\[\s*\{\s*"type"\s*:\s*"run_r_code"',
+            r'\[?\s*\{\s*"type"\s*:\s*"run_r_code"',
             re.IGNORECASE
         )
         strip_spans = []  # (start, end) slices to remove from reply
@@ -2714,11 +2717,15 @@ def _parse_tool_response(response) -> dict:
             if not sm:
                 break
             start = sm.start()
-            # Balanced bracket scan to find the matching ]
+            # Detect whether we opened with `[` (array) or `{` (single object)
+            opened_as_array = reply[start] == "["
+            # Balanced scan respecting JSON string escapes
             depth = 0
             in_str = False
             escape = False
             end = None
+            target_close = "]" if opened_as_array else "}"
+            target_open  = "[" if opened_as_array else "{"
             for i in range(start, len(reply)):
                 ch = reply[i]
                 if escape:
@@ -2732,20 +2739,24 @@ def _parse_tool_response(response) -> dict:
                     continue
                 if in_str:
                     continue
-                if ch == "[":
+                if ch == target_open:
                     depth += 1
-                elif ch == "]":
+                elif ch == target_close:
                     depth -= 1
                     if depth == 0:
                         end = i + 1
                         break
             if end is None:
-                break  # unterminated, stop trying
+                search_from = start + 1
+                continue  # unterminated, skip this anchor and keep scanning
             candidate = reply[start:end]
             try:
                 parsed = _json.loads(candidate)
+                found_any = False
+                # Normalize to a list so the rest of the logic is one path
+                if isinstance(parsed, dict):
+                    parsed = [parsed]
                 if isinstance(parsed, list):
-                    found_any = False
                     for a in parsed:
                         if isinstance(a, dict) and a.get("type") == "run_r_code":
                             rescued_actions.append(a)
