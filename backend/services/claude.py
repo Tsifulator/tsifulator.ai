@@ -2284,6 +2284,42 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
     result = _parse_tool_response(response)
     result["model_used"] = selected_model
 
+    # ── R action validator + retry loop ──────────────────────────────────
+    # Only applies to RStudio context. Checks whether the run_r_code action
+    # matches the user's intent. If the user asked for a plot/model/analysis
+    # but the model emitted only import/exploratory code, retry up to 2x
+    # with a targeted correction prompt. Prevents the "it said it would do
+    # X, then only did step 1" failure class.
+    if app_name == "rstudio" and not skip_tools:
+        MAX_RETRIES = 2
+        for attempt in range(MAX_RETRIES):
+            ok, reason = _validate_r_actions(result, message)
+            if ok:
+                break
+            logger.info(
+                "[retry] R action invalid (attempt %d/%d): %s",
+                attempt + 1, MAX_RETRIES, reason[:120],
+            )
+            retry_result = await _retry_r_action(
+                client, selected_model, system_prompt, messages,
+                result, reason,
+            )
+            # Only accept the retry if it produced a run_r_code action
+            # AND it's not also exploratory-only. If retry failed, keep
+            # what we had.
+            retry_actions = retry_result.get("actions") or []
+            has_r = any(a.get("type") == "run_r_code" for a in retry_actions)
+            if has_r:
+                # Preserve the original reply text if the retry's is empty
+                if not (retry_result.get("reply") or "").strip():
+                    retry_result["reply"] = result.get("reply", "")
+                retry_result["model_used"] = selected_model
+                result = retry_result
+            else:
+                # Retry failed to produce a tool call; stop trying
+                logger.info("[retry] retry produced no run_r_code; keeping original")
+                break
+
     # ── Rmd post-processor: convert run_r_code to fill_rmd_chunks ────────
     # If user has an Rmd with exercise chunks open and Claude used run_r_code,
     # convert it to fill_rmd_chunks so code goes into the right chunks
@@ -2384,6 +2420,180 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
                 selected_model, total_actions, response.stop_reason)
 
     return result
+
+# ── R action validator + retry loop ─────────────────────────────────────────
+# Pure-prompt constraints weren't enough to stop the model from emitting
+# import-only / exploratory-only code. This layer inspects run_r_code actions
+# AFTER the model responds, and if the user asked for real analysis but only
+# got `read.csv` / `str` / `head`, makes a targeted second API call to force
+# the real analysis. Kicks in only when we're confident the result is broken.
+
+# Verbs in the user's message that indicate they want actual analysis,
+# not just data inspection. If none of these appear, we don't force a retry.
+_R_ANALYSIS_INTENT_RE = re.compile(
+    r"\b(plot|chart|graph|visuali[sz]e|visuali[sz]ation|histogram|scatter|"
+    r"boxplot|barplot|density|bar chart|pie chart|"
+    r"regression|model|lm|glm|fit|predict|forecast|"
+    r"anova|t[- ]test|chi[- ]square|correlation|cor|"
+    r"mean|median|sd|variance|std\.? ?dev|summary|describe|"
+    r"average|avg|compute|calculate|find|tell me|show me|"
+    r"top |bottom |highest|lowest|heaviest|lightest|tallest|shortest|"
+    r"compare|comparison|distribution|trend|"
+    r"analy[sz]e|analysis|test |hypothesis|confidence interval|ci)\b",
+    re.IGNORECASE,
+)
+
+# Functions that are PURELY exploratory — if code contains ONLY these, it's
+# worthless. Whitelist of "inspection only" R function names.
+_R_EXPLORATORY_FNS = {
+    "str", "head", "tail", "dim", "colnames", "names", "ncol", "nrow",
+    "length", "class", "typeof", "attributes", "glimpse", "view", "View",
+    "print", "cat", "message",  # alone these print but don't compute
+    # loading/importing alone
+    "read.csv", "read_csv", "read.table", "read_tsv", "read_delim",
+    "read.xlsx", "read_xlsx", "read_excel", "readRDS", "load", "data",
+    "file.exists", "paste0", "paste", "c",  # pure helpers
+}
+
+# Functions that indicate REAL analysis/visualization — if any of these
+# appears in the code, we consider the action non-exploratory.
+_R_SUBSTANTIVE_FNS = {
+    "lm", "glm", "aov", "anova", "t.test", "wilcox.test", "chisq.test",
+    "cor", "cor.test", "prop.test", "fisher.test", "ks.test",
+    "plot", "ggplot", "boxplot", "hist", "barplot", "geom_point",
+    "geom_line", "geom_bar", "geom_col", "geom_hist", "geom_boxplot",
+    "geom_smooth", "geom_density", "geom_violin", "geom_tile",
+    "scatterplot3d", "pairs", "qqnorm", "qqplot", "heatmap",
+    "mean", "median", "sd", "var", "quantile", "range", "IQR", "sum",
+    "min", "max", "summary",  # summary alone is still useful
+    "aggregate", "tapply", "sapply", "lapply", "apply",
+    "group_by", "summarise", "summarize", "mutate", "filter", "arrange",
+    "select", "pivot_longer", "pivot_wider", "count", "top_n", "slice_max",
+    "predict", "fitted", "residuals", "coef", "confint",
+    "table", "prop.table", "xtabs",
+    "knn", "svm", "randomForest", "rpart", "tree",
+    "kmeans", "hclust", "dist",
+    "ts", "arima", "forecast", "decompose",
+}
+
+def _is_exploratory_only_code(code: str) -> bool:
+    """True if the code only inspects/loads data without doing analysis.
+    Heuristic: extract function call names, check if ANY substantive function
+    is present. If none, and the code isn't trivially short, it's a candidate
+    for retry."""
+    if not code or len(code.strip()) < 10:
+        return False  # too short to judge, leave alone
+    # Strip comments and strings to avoid false positives from docstrings
+    cleaned = re.sub(r'#[^\n]*', '', code)
+    cleaned = re.sub(r'"(?:\\.|[^"\\])*"', '""', cleaned)
+    cleaned = re.sub(r"'(?:\\.|[^'\\])*'", "''", cleaned)
+    # Extract function-like tokens: word followed by "("
+    calls = set(re.findall(r'\b([a-zA-Z_][a-zA-Z_0-9.]*)\s*\(', cleaned))
+    if not calls:
+        return False
+    # If ANY substantive function is present, not exploratory-only
+    substantive_hits = calls & _R_SUBSTANTIVE_FNS
+    if substantive_hits:
+        return False
+    # If the code contains only exploratory functions (or pure control flow),
+    # it's exploratory-only. Allow some forgiveness: if >70% of calls are
+    # recognized as exploratory, treat as exploratory-only.
+    known = calls & (_R_EXPLORATORY_FNS | _R_SUBSTANTIVE_FNS)
+    if not known:
+        return False  # unknown functions — don't flag, might be user-defined
+    exploratory_hits = calls & _R_EXPLORATORY_FNS
+    return len(exploratory_hits) >= max(1, int(0.7 * len(known)))
+
+
+def _user_wants_analysis(message: str) -> bool:
+    """True if the user's message contains verbs indicating real analysis."""
+    if not message:
+        return False
+    return bool(_R_ANALYSIS_INTENT_RE.search(message))
+
+
+def _validate_r_actions(result: dict, message: str) -> tuple[bool, str]:
+    """Check if the actions satisfy the user's intent.
+
+    Returns (ok, reason). If ok is False, `reason` is a short string the
+    retry prompt can reference to explain what went wrong."""
+    actions = result.get("actions") or []
+    r_actions = [a for a in actions if a.get("type") == "run_r_code"]
+
+    # If user wanted analysis but no run_r_code at all → definitely broken
+    if _user_wants_analysis(message) and not r_actions:
+        return False, "You didn't emit a run_r_code action even though the user asked for real analysis (plot/model/computation). Emit one now that does the full analysis."
+
+    # If user wanted analysis but code is exploratory-only → retry
+    for a in r_actions:
+        code = (a.get("payload") or {}).get("code", "")
+        if _user_wants_analysis(message) and _is_exploratory_only_code(code):
+            return False, (
+                "Your run_r_code contains only exploratory/import functions "
+                "(str, head, colnames, read.csv, etc.) but the user asked for "
+                "actual analysis. Emit ONE run_r_code action that does the "
+                "full task in a single block: load the data if needed, then "
+                "perform the plot/model/calculation the user asked for."
+            )
+
+    return True, ""
+
+
+async def _retry_r_action(
+    client,
+    model: str,
+    system_prompt: str,
+    messages: list,
+    previous_result: dict,
+    validation_reason: str,
+) -> dict:
+    """Make a second API call asking the model to fix its broken action.
+
+    Returns a new result dict (same shape as _parse_tool_response). The caller
+    decides whether to use it or fall back to the original."""
+    # Append the model's prior response + our correction as assistant/user turns
+    correction_messages = list(messages)
+
+    # Represent the prior assistant response minimally
+    prior_reply = previous_result.get("reply", "") or ""
+    prior_actions = previous_result.get("actions") or []
+    prior_summary_parts = [prior_reply.strip()] if prior_reply.strip() else []
+    for a in prior_actions:
+        if a.get("type") == "run_r_code":
+            code_preview = (a.get("payload") or {}).get("code", "")[:400]
+            prior_summary_parts.append(f"[previous run_r_code code]\n{code_preview}")
+    prior_summary = "\n\n".join(prior_summary_parts) or "(empty response)"
+
+    correction_messages.append({
+        "role": "assistant",
+        "content": prior_summary,
+    })
+    correction_messages.append({
+        "role": "user",
+        "content": (
+            "Your previous response was incomplete. " + validation_reason +
+            " Respond NOW with ONE proper run_r_code tool call that fully "
+            "answers the original request. Do not narrate; do not describe "
+            "what you'll do; just emit the tool call with complete code. "
+            "No code fences in the reply text."
+        ),
+    })
+
+    try:
+        with client.messages.stream(
+            model       = model,
+            max_tokens  = 16384,
+            system      = system_prompt,
+            tools       = TOOLS,
+            tool_choice = {"type": "any"},
+            messages    = correction_messages,
+        ) as stream:
+            retry_response = stream.get_final_message()
+        return _parse_tool_response(retry_response)
+    except Exception as e:
+        logger.warning("[retry] second API call failed: %s", e)
+        return {"reply": "", "actions": [], "action": {}}
+
 
 # ── Response Parser ───────────────────────────────────────────────────────────
 
