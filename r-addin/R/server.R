@@ -874,6 +874,47 @@ run_tsifl_server <- function(port = 7444) {
             )
           ))
         }
+        # Render inline plot thumbnail + "Open interactive" button if the
+        # assistant attached one. Clicking the thumbnail (or button) opens
+        # the HTML version in the user's default browser. If there's no
+        # HTML (e.g. it's a static ggplot), only show the thumbnail.
+        if (!is.null(m$plot) && is.list(m$plot) && !is.null(m$plot$png_data_uri)) {
+          plot_children <- list(
+            shiny::tags$img(
+              src = m$plot$png_data_uri,
+              style = paste(
+                "display:block; width:100%; max-width:560px; height:auto;",
+                "border-radius:8px; border:1px solid #E2E8F0;",
+                "margin-top:8px; margin-bottom:4px;",
+                if (isTRUE(m$plot$interactive)) "cursor:pointer;" else ""
+              ),
+              onclick = if (isTRUE(m$plot$interactive) &&
+                            !is.null(m$plot$html_path)) {
+                # Use Shiny input to trigger server-side browseURL()
+                sprintf("Shiny.setInputValue('open_plot_html', '%s', {priority: 'event'});",
+                        gsub("'", "\\\\'", m$plot$html_path, fixed = TRUE))
+              } else NULL
+            )
+          )
+          if (isTRUE(m$plot$interactive) && !is.null(m$plot$html_path)) {
+            plot_children <- c(plot_children, list(
+              shiny::tags$button(
+                shiny::HTML("&#128269; Open interactive version"),
+                onclick = sprintf(
+                  "Shiny.setInputValue('open_plot_html', '%s', {priority: 'event'});",
+                  gsub("'", "\\\\'", m$plot$html_path, fixed = TRUE)
+                ),
+                style = paste(
+                  "display:inline-block; margin-top:4px; font-size:11px;",
+                  "color:#0B5CFF; background:#EEF4FF; border:1px solid #C7D8FF;",
+                  "padding:4px 10px; border-radius:6px; cursor:pointer;",
+                  "font-family:-apple-system,BlinkMacSystemFont,sans-serif;"
+                )
+              )
+            ))
+          }
+          children <- c(children, plot_children)
+        }
         shiny::div(class = paste0("msg-", m$role), children)
       })
       ui_list
@@ -889,7 +930,7 @@ run_tsifl_server <- function(port = 7444) {
 
     img_counter <- shiny::reactiveVal(0)
 
-    add_message <- function(role, text, images = NULL) {
+    add_message <- function(role, text, images = NULL, plot = NULL) {
       current <- shiny::isolate(messages())
       entry <- list(role = role, text = text)
       if (!is.null(images) && length(images) > 0) {
@@ -900,6 +941,13 @@ run_tsifl_server <- function(port = 7444) {
         img_counter(shiny::isolate(img_counter()) + length(images))
         entry$images <- images
         entry$img_ids <- img_ids
+      }
+      # plot attachment: list(png = "/path.png", html = "/path.html" | NULL,
+      #                      interactive = TRUE/FALSE)
+      # Rendered as an inline thumbnail with a "Open interactive" button
+      # when html is provided.
+      if (!is.null(plot) && is.list(plot) && !is.null(plot$png)) {
+        entry$plot <- plot
       }
       messages(c(current, list(entry)))
     }
@@ -1043,6 +1091,18 @@ run_tsifl_server <- function(port = 7444) {
         open_editor = open_tabs
       )
     }
+
+    # Open a plot HTML file in the user's default browser when they click
+    # the thumbnail or "Open interactive version" button in a chat message.
+    shiny::observeEvent(input$open_plot_html, {
+      path <- input$open_plot_html
+      if (is.null(path) || !nzchar(path)) return()
+      # Only allow files inside our plots dir — prevents any funny business
+      # from a tampered input value.
+      if (!startsWith(path, "/tmp/.tsifl_plots/")) return()
+      if (!file.exists(path)) return()
+      tryCatch(utils::browseURL(path), error = function(e) {})
+    })
 
     # Quick action handler (Improvements 60, 62, 63, 68)
     shiny::observeEvent(input$quick_action, {
@@ -1291,7 +1351,36 @@ run_tsifl_server <- function(port = 7444) {
 
                 followup_data <- httr2::resp_body_json(followup_resp, simplifyVector = FALSE)
                 if (!is.null(followup_data$reply) && nchar(followup_data$reply) > 5) {
-                  add_message("assistant", followup_data$reply)
+                  # Attach plot preview if the listener saved one
+                  plot_attachment <- NULL
+                  tryCatch({
+                    if (file.exists("/tmp/.tsifl_last_plot.json")) {
+                      raw <- paste(readLines("/tmp/.tsifl_last_plot.json",
+                                             warn = FALSE),
+                                   collapse = "")
+                      meta <- jsonlite::fromJSON(raw, simplifyVector = TRUE)
+                      if (!is.null(meta$png) && file.exists(meta$png)) {
+                        # Convert PNG to data URI so it embeds directly
+                        png_bytes <- readBin(meta$png, "raw",
+                                             n = file.info(meta$png)$size)
+                        png_b64 <- base64enc::base64encode(png_bytes)
+                        plot_attachment <- list(
+                          png_data_uri = paste0("data:image/png;base64,", png_b64),
+                          html_path = if (isTRUE(meta$interactive) &&
+                                          !is.null(meta$html) &&
+                                          file.exists(meta$html)) {
+                            meta$html
+                          } else NULL,
+                          interactive = isTRUE(meta$interactive)
+                        )
+                        # Consume the metadata file so we don't re-attach
+                        # the same plot to the next turn by accident.
+                        try(unlink("/tmp/.tsifl_last_plot.json"), silent = TRUE)
+                      }
+                    }
+                  }, error = function(e) {})
+                  add_message("assistant", followup_data$reply,
+                              plot = plot_attachment)
                 }
               }
             }, error = function(e) {

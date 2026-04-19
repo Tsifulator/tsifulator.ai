@@ -27,10 +27,28 @@
   output_file  <- "/tmp/.tsifl_last_output.txt"
   done_file    <- "/tmp/.tsifl_done.marker"
   plot_file    <- "/tmp/.tsifl_last_plot.png"
+  # Plots directory keeps timestamped copies so the chat UI can reference
+  # historical plots, and we can have both PNG (inline preview) and HTML
+  # (interactive, clickable) versions side by side.
+  plots_dir    <- "/tmp/.tsifl_plots"
+  plot_meta    <- "/tmp/.tsifl_last_plot.json"
+  try(dir.create(plots_dir, showWarnings = FALSE, recursive = TRUE), silent = TRUE)
 
-  # Clean up any stale files from previous sessions
-  for (f in c(pending_file, output_file, done_file, plot_file)) {
+  # Clean up any stale single-shot files from previous sessions
+  for (f in c(pending_file, output_file, done_file, plot_file, plot_meta)) {
     try(unlink(f), silent = TRUE)
+  }
+
+  # Helper: prune plots dir to most recent N files
+  .prune_plots <- function(keep = 20) {
+    tryCatch({
+      all_files <- list.files(plots_dir, full.names = TRUE)
+      if (length(all_files) <= keep) return(invisible())
+      info <- file.info(all_files)
+      info <- info[order(info$mtime, decreasing = TRUE), , drop = FALSE]
+      old <- rownames(info)[(keep + 1):nrow(info)]
+      try(unlink(old), silent = TRUE)
+    }, error = function(e) {})
   }
 
   poll_fn <- function() {
@@ -60,6 +78,13 @@
                              "pie(", "heatmap(", "pairs(", "qqnorm(",
                              "acf(", "pacf(", "stripchart(", "par(mfrow")
           has_plot <- any(sapply(plot_keywords, function(k) grepl(k, code, fixed = TRUE)))
+          # htmlwidget detection (plotly, leaflet, DT, etc.) — these need
+          # both PNG thumbnail AND HTML save for interactive viewing.
+          htmlwidget_keywords <- c("plot_ly(", "plotly::", "leaflet(",
+                                   "datatable(", "DT::", "dygraph(",
+                                   "highchart(", "visNetwork(")
+          has_htmlwidget <- any(sapply(htmlwidget_keywords,
+                                       function(k) grepl(k, code, fixed = TRUE)))
           if (has_plot) try(unlink(plot_file), silent = TRUE)
 
           # Use source() with print.eval=TRUE instead of bare eval(parse(...))
@@ -82,6 +107,7 @@
           }, error = function(e) cat("Error:", conditionMessage(e), "\n"))
 
           # Best-effort plot capture
+          plot_meta_data <- NULL
           if (has_plot) {
             tryCatch({
               grDevices::dev.copy(
@@ -94,6 +120,64 @@
                 try(ggplot2::ggsave(plot_file, width = 8, height = 6, dpi = 150),
                     silent = TRUE)
               }
+            }, error = function(e) {})
+          }
+
+          # Timestamped copy of the plot for the chat UI to reference.
+          # This lets multiple plots exist in history without overwriting
+          # each other. PNG is always saved (static preview); HTML is saved
+          # separately if the code produced a plotly/htmlwidget.
+          if (file.exists(plot_file) && file.info(plot_file)$size > 200) {
+            tryCatch({
+              ts_tag <- format(Sys.time(), "%Y%m%d_%H%M%S")
+              png_path  <- file.path(plots_dir, paste0("plot_", ts_tag, ".png"))
+              html_path <- NULL
+              file.copy(plot_file, png_path, overwrite = TRUE)
+
+              # If the code used plotly/etc., save the last top-level widget
+              # to HTML for interactive viewing. Look for the most recent
+              # htmlwidget object in .GlobalEnv (fig, p, etc. — common names).
+              if (has_htmlwidget &&
+                  requireNamespace("htmlwidgets", quietly = TRUE)) {
+                widget_candidates <- c("fig", "p", "plt", "chart",
+                                       "viz", "widget", ".Last.value")
+                widget_obj <- NULL
+                for (nm in widget_candidates) {
+                  obj <- tryCatch(get(nm, envir = .GlobalEnv),
+                                  error = function(e) NULL)
+                  if (!is.null(obj) &&
+                      (inherits(obj, "htmlwidget") ||
+                       inherits(obj, "plotly") ||
+                       inherits(obj, "datatables"))) {
+                    widget_obj <- obj
+                    break
+                  }
+                }
+                if (!is.null(widget_obj)) {
+                  html_path <- file.path(plots_dir, paste0("plot_", ts_tag, ".html"))
+                  tryCatch(
+                    htmlwidgets::saveWidget(widget_obj, html_path,
+                                            selfcontained = TRUE),
+                    error = function(e) {
+                      html_path <<- NULL
+                    }
+                  )
+                }
+              }
+
+              # Drop metadata where the Shiny server can find it on this turn
+              meta <- list(
+                png  = png_path,
+                html = html_path,  # NULL if no interactive version
+                ts   = as.numeric(Sys.time()),
+                interactive = !is.null(html_path)
+              )
+              writeLines(
+                jsonlite::toJSON(meta, auto_unbox = TRUE, null = "null"),
+                plot_meta
+              )
+              plot_meta_data <- meta
+              .prune_plots(keep = 20)
             }, error = function(e) {})
           }
 
