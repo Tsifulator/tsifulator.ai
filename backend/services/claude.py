@@ -1209,6 +1209,16 @@ When the user asks questions that need computed answers (statistics, p-values, c
 - Make sure ALL requested values are printed — the follow-up can only answer based on what was printed
 
 **ABSOLUTE RULES — NEVER VIOLATE:**
+0. NEVER guess column names. The `env_objects` section of the context
+   includes a `col_names` field for every loaded data frame that lists
+   the FIRST 20 COLUMNS EXACTLY AS THEY APPEAR in the user's data. Use
+   those names verbatim. Case matters. Common trap: FIFA data has
+   `Height` (capitalized), `Weight` (capitalized), `X.OVA` (with dot
+   prefix from make.names() on "OVA"). Writing `height` lowercase or
+   `Overall` causes `object 'x' not found` errors that waste a whole
+   turn. ALWAYS read the actual col_names before writing filter/select
+   /plot_ly/ggplot code that references columns by name.
+
 1. NEVER hardcode computed values (p-values, R-squared, coefficients, means, SDs) into cat() or comments. If the user shows you a previous output with "R² = 0.7611", DO NOT just echo `cat("R² = 0.7611")`. RE-RUN the model and let summary() produce the number. The whole point of tsifl is verifying, not parroting.
 2. NEVER produce code that is mostly comments with a single cat() hardcoded value. Every analytical question requires a real R function call (lm, t.test, cor, chisq.test, etc.).
 3. EVERY question from the user must have a corresponding print()/summary()/cat() of the ACTUAL COMPUTED RESULT, not a pre-written answer.
@@ -1242,6 +1252,36 @@ cat("Adjusted R-squared:", summary(model)$adj.r.squared, "\n")
 - Match answers to the SPECIFIC questions asked, section by section.
 - If the R output is empty or minimal, say "Output capture failed — please check the R console for results."
 - NEVER fabricate p-values, coefficients, R-squared, or test statistics. This is the #1 rule.
+
+**IF THE R OUTPUT CONTAINS AN ERROR — RETRY, DON'T JUST DESCRIBE:**
+Common errors you will see in Phase 2 output:
+  - `Error: object 'xxx' not found` → column/variable name wrong
+  - `Error in xxx : could not find function` → missing library()
+  - `Error: $ operator is invalid for atomic vectors` → wrong access syntax
+  - `Error in dim(X) : ...` → NULL or wrong-shaped input
+
+When you see `Error:` anywhere in the R output, the user's task was NOT
+completed. DO NOT write "I'll inspect the data" or "Let me check" —
+those are promises that will trigger another broken turn. Instead:
+
+  **EMIT A NEW run_r_code TOOL CALL** that fixes the specific error:
+  - "object 'height' not found" → use the ACTUAL column names from
+    env_objects.col_names (e.g., `Height` capitalized, or `X.OVA`
+    with the dot prefix). Never guess — the col_names field is
+    authoritative.
+  - "could not find function" → add the missing `library()` call at
+    the top of the code
+  - Other errors → read the error message literally and fix that
+    specific thing
+
+Your Phase 2 reply when retrying should be one sentence: "Column name
+mismatch — retrying with `Height` instead of `height`." Then emit the
+tool call. The retry runs in the same chat turn, the user sees one
+seamless response.
+
+NEVER end a Phase 2 reply with "Let me..." or "I'll..." when there was
+an error unless you also emit the run_r_code that fixes it in the same
+response.
 
 ### CODE GOES IN TOOLS, NEVER IN TEXT — HARD RULE
 If you have R code to run, it MUST go inside an actual `run_r_code` tool
@@ -2678,6 +2718,22 @@ def _reply_promises_action(reply: str) -> bool:
     return bool(_FUTURE_TENSE_PROMISE_RE.search(reply))
 
 
+_R_ERROR_PATTERN_RE = re.compile(
+    r"(Error(?:\s+in\s+[^:]*)?:\s*[^\n]+|"
+    r"object\s+'[^']+'\s+not\s+found|"
+    r"could\s+not\s+find\s+function\s+['\"][^'\"]+['\"])",
+    re.IGNORECASE,
+)
+
+def _extract_r_error(message: str) -> str:
+    """Extract the first R error line from a Phase 2 interpretation payload.
+    Returns empty string if no error detected."""
+    if not message:
+        return ""
+    m = _R_ERROR_PATTERN_RE.search(message)
+    return m.group(0) if m else ""
+
+
 def _validate_r_actions(result: dict, message: str) -> tuple[bool, str]:
     """Check if the actions satisfy the user's intent.
 
@@ -2686,6 +2742,21 @@ def _validate_r_actions(result: dict, message: str) -> tuple[bool, str]:
     actions = result.get("actions") or []
     r_actions = [a for a in actions if a.get("type") == "run_r_code"]
     reply = (result.get("reply") or "").strip()
+
+    # Case D (checked FIRST — most specific): Phase 2 interpretation has an
+    # R error in the input AND didn't emit a retry. User gets left stuck.
+    is_phase2 = message.startswith("[R OUTPUT INTERPRETATION]")
+    if is_phase2 and not r_actions:
+        err = _extract_r_error(message)
+        if err:
+            return False, (
+                f"The previous R code errored: {err}. Your reply acknowledged "
+                "it but emitted NO retry. Emit a new run_r_code NOW that "
+                "fixes the specific error — e.g. if it said \"object 'xxx' "
+                "not found\", use the correct column name from "
+                "env_objects.col_names (case-sensitive). Do not ask the "
+                "user to clarify; the column list is already in the context."
+            )
 
     # Case A: user asked for analysis but no run_r_code → definitely broken
     if _user_wants_analysis(message) and not r_actions:
@@ -2724,6 +2795,23 @@ def _validate_r_actions(result: dict, message: str) -> tuple[bool, str]:
                 "actual analysis. Emit ONE run_r_code action that does the "
                 "full task in a single block: load the data if needed, then "
                 "perform the plot/model/calculation the user asked for."
+            )
+
+    # Case D: Phase 2 interpretation reply references an R error but didn't
+    # emit a retry run_r_code. Model read the error, described it ("I'll
+    # inspect the data..."), but never fixed it. User stays stuck.
+    is_phase2 = message.startswith("[R OUTPUT INTERPRETATION]")
+    if is_phase2:
+        err = _extract_r_error(message)
+        if err and not r_actions:
+            return False, (
+                f"The R output contained this error: {err}. Your Phase 2 "
+                "reply described the problem but did NOT emit a retry "
+                "run_r_code. That leaves the user stuck with broken code. "
+                "Emit a NEW run_r_code that fixes the specific error "
+                "(e.g. if it said \"object 'height' not found\", use the "
+                "correct column name from env_objects.col_names — likely "
+                "`Height` with a capital H). Retry now in ONE action."
             )
 
     return True, ""
