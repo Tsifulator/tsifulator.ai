@@ -1467,22 +1467,35 @@ run_tsifl_server <- function(port = 7444) {
               }, error = function(e) {})
             }
 
-            # POST data_snapshot for each data frame
-            df_info <- tryCatch(readRDS("/tmp/.tsifl_df_info.rds"), error = function(e) list())
-            for (df_meta in df_info) {
+            # POST data_snapshot for each data frame. We read from the env
+            # snapshot that the main-session watcher maintains (every 3s) —
+            # NOT from a non-existent /tmp/.tsifl_df_info.rds which never
+            # existed and caused a noisy gzfile warning on every chat.
+            .pick <- function(x, default = "") if (is.null(x) || length(x) == 0) default else x
+            env_snap <- suppressWarnings(tryCatch(
+              readRDS("/tmp/.tsifl_env_snapshot.rds"),
+              error = function(e) list()
+            ))
+            env_objs <- if (is.list(env_snap) && !is.null(env_snap$env))
+              env_snap$env else list()
+            for (obj in env_objs) {
+              # Only send data frames / tibbles, not random scalars
+              cls <- .pick(obj$class)
+              if (!grepl("data.frame|tbl", cls, ignore.case = TRUE)) next
+              obj_name <- .pick(obj$name, "unknown")
+              obj_dim  <- .pick(obj$dim, "?")
+              obj_cols <- .pick(obj$col_names)
               transfer_body <- list(
                 from_app  = "rstudio",
                 to_app    = "any",
                 data_type = "data_snapshot",
-                data      = paste0("Data frame '", df_meta$name, "': ",
-                                   df_meta$nrow, " rows x ", df_meta$ncol, " cols. ",
-                                   "Columns: ", df_meta$columns),
+                data      = paste0("Data frame '", obj_name, "': ", obj_dim,
+                                   " (Columns: ", obj_cols, ")"),
                 metadata  = list(
-                  name     = df_meta$name,
-                  nrow     = df_meta$nrow,
-                  ncol     = df_meta$ncol,
-                  columns  = df_meta$columns,
-                  csv_path = df_meta$csv_path
+                  name      = obj_name,
+                  dim       = obj_dim,
+                  col_names = obj_cols,
+                  class     = cls
                 )
               )
               tryCatch({
