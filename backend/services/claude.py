@@ -1362,17 +1362,23 @@ Some things the user asks for aren't R data operations but IDE operations.
 Do these via run_r_code with the rstudioapi package:
 
 - **Close/delete all open scripts or editor tabs:**
+  Use RStudio's built-in command — this is the ONLY reliable way to
+  close every open tab in one shot. Do NOT try to enumerate documents
+  with .rs.api functions (undocumented, breaks between versions) and
+  do NOT call `rstudioapi::documentClose()` in a loop (without an id
+  it only closes the active tab, then errors on the next iteration).
   ```r
-  # Close every open document tab (confirms user wants to discard unsaved)
-  docs <- rstudioapi::getSourceEditorContext()
-  # Actually iterate via rstudioapi::documentClose(id, save = FALSE)
-  # List open docs: (no direct list API — use getAllOpenDocs approach)
-  for (i in seq_along(.rs.api.getOpenDocuments())) {
-    try(rstudioapi::documentClose(save = FALSE), silent = TRUE)
-  }
+  # Closes every open source document tab at once.
+  rstudioapi::executeCommand("closeAllSourceDocs")
   ```
-  But BEFORE emitting this, check if any tabs are "Untitled*" (unsaved)
-  and ask the user to confirm — destructive op rule applies.
+  For closing ONLY the active tab:
+  ```r
+  rstudioapi::documentClose(save = FALSE)
+  ```
+  BEFORE emitting `closeAllSourceDocs`, check if any tabs are
+  "Untitled*" (unsaved) and ask the user to confirm first — destructive
+  op rule applies. Once confirmed, emit the command in a single
+  run_r_code with target="console".
 
 - **Open a file in the editor:** `rstudioapi::navigateToFile("path.R")`
 - **Clear the console:** `cat("\014")` (sends Ctrl+L)
