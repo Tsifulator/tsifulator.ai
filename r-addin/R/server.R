@@ -83,6 +83,109 @@ run_tsifl_server <- function(port = 7444) {
       border: none;
     }
 
+    /* ── Tab bar ─────────────────────────────────────────────────── */
+    #tsifl_tabs {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 6px 10px 0 10px;
+      background: #FFFFFF;
+      border-bottom: 1px solid #E2E8F0;
+      flex-shrink: 0;
+    }
+    .tsifl-tab {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #64748B;
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      transition: color 0.15s, border-bottom-color 0.15s;
+      font-family: inherit;
+    }
+    .tsifl-tab:hover { color: #0D5EAF; }
+    .tsifl-tab.active {
+      color: #0D5EAF;
+      border-bottom-color: #0D5EAF;
+    }
+    .tsifl-tab .tab-count {
+      font-size: 10px;
+      color: #94A3B8;
+      background: #F1F5F9;
+      padding: 1px 6px;
+      border-radius: 8px;
+      font-weight: 600;
+    }
+    #plot_tab {
+      display: none;
+      flex: 1;
+      flex-direction: column;
+      overflow: hidden;
+      background: #FFFFFF;
+    }
+    #plot_tab.active { display: flex; }
+    #chat_tab { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+    #chat_tab.hidden { display: none !important; }
+    #plot_toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-bottom: 1px solid #F1F5F9;
+      font-size: 12px;
+    }
+    #plot_toolbar select {
+      flex: 1;
+      padding: 6px 8px;
+      font-size: 12px;
+      border: 1px solid #E2E8F0;
+      border-radius: 6px;
+      background: #FFFFFF;
+      color: #1E293B;
+      font-family: inherit;
+    }
+    #plot_toolbar button {
+      padding: 6px 10px;
+      font-size: 11px;
+      color: #0D5EAF;
+      background: #EEF4FF;
+      border: 1px solid #C7D8FF;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+      white-space: nowrap;
+    }
+    #plot_toolbar button:hover { background: #DDE7FF; }
+    #plot_iframe_wrap {
+      flex: 1;
+      padding: 10px 14px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    #plot_iframe {
+      flex: 1;
+      width: 100%;
+      border: 1px solid #E2E8F0;
+      border-radius: 8px;
+      background: #FAFBFC;
+    }
+    #plot_empty_state {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #94A3B8;
+      font-size: 13px;
+      text-align: center;
+      padding: 40px;
+    }
+
     #chat_history {
       flex: 1;
       overflow-y: auto;
@@ -359,30 +462,60 @@ run_tsifl_server <- function(port = 7444) {
       )
     ),
 
-
-    shiny::div(id = "chat_history",
-      shiny::uiOutput("chat_messages"),
-      shiny::div(id = "thinking_container")
+    # ── Tab bar: Chat | Plot ─────────────────────────────────────────
+    shiny::div(id = "tsifl_tabs",
+      shiny::tags$button(id = "tab_chat_btn", class = "tsifl-tab active",
+                        onclick = "tsiflShowTab('chat');",
+                        shiny::HTML("&#128172; Chat")),
+      shiny::tags$button(id = "tab_plot_btn", class = "tsifl-tab",
+                        onclick = "tsiflShowTab('plot');",
+                        shiny::HTML("&#128202; Plot"),
+                        shiny::span(id = "plot_count", class = "tab-count",
+                                    style = "display:none;", "0"))
     ),
 
-    shiny::div(id = "input_area",
-      shiny::div(id = "image_preview_bar"),
-      shiny::tags$textarea(id = "user_input",
-        placeholder = "What can I help you with?",
-        rows = "2"
+    # ── Chat tab content (default) ───────────────────────────────────
+    shiny::div(id = "chat_tab",
+      shiny::div(id = "chat_history",
+        shiny::uiOutput("chat_messages"),
+        shiny::div(id = "thinking_container")
       ),
-      shiny::tags$input(type = "file", id = "image_input",
-        accept = "image/*,.pdf,.csv,.txt,.json,.xml,.r,.R,.py,.js,.ts,.sql,.md,.html,.yaml,.yml,.docx,.xlsx,.sas,.do,.log",
-        multiple = "multiple",
-        style = "display:none;"
+
+      shiny::div(id = "input_area",
+        shiny::div(id = "image_preview_bar"),
+        shiny::tags$textarea(id = "user_input",
+          placeholder = "What can I help you with?",
+          rows = "2"
+        ),
+        shiny::tags$input(type = "file", id = "image_input",
+          accept = "image/*,.pdf,.csv,.txt,.json,.xml,.r,.R,.py,.js,.ts,.sql,.md,.html,.yaml,.yml,.docx,.xlsx,.sas,.do,.log",
+          multiple = "multiple",
+          style = "display:none;"
+        ),
+        shiny::div(id = "input_actions",
+          shiny::tags$button(id = "attach_btn", title = "Attach file", "+"),
+          shiny::tags$button(id = "send_btn", style = "width:100%;",
+            onclick = "if(window._tsiflSend){window._tsiflSend();}",
+            "Send")
+        ),
+        shiny::div(id = "status_bar", class = "idle", shiny::HTML('<span class="status-dot"></span><span id="status_text"></span>'))
+      )
+    ),
+
+    # ── Plot tab content (hidden until user clicks Plot) ─────────────
+    shiny::div(id = "plot_tab",
+      shiny::div(id = "plot_toolbar",
+        shiny::uiOutput("plot_dropdown_ui", inline = TRUE),
+        shiny::tags$button(id = "plot_open_browser_btn",
+                          onclick = "Shiny.setInputValue('plot_open_browser', Date.now(), {priority: 'event'});",
+                          shiny::HTML("&#128279; Open in browser")),
+        shiny::tags$button(id = "plot_save_btn",
+                          onclick = "Shiny.setInputValue('plot_save_downloads', Date.now(), {priority: 'event'});",
+                          shiny::HTML("&#128190; Save to Downloads"))
       ),
-      shiny::div(id = "input_actions",
-        shiny::tags$button(id = "attach_btn", title = "Attach file", "+"),
-        shiny::tags$button(id = "send_btn", style = "width:100%;",
-          onclick = "if(window._tsiflSend){window._tsiflSend();}",
-          "Send")
-      ),
-      shiny::div(id = "status_bar", class = "idle", shiny::HTML('<span class="status-dot"></span><span id="status_text"></span>'))
+      shiny::div(id = "plot_iframe_wrap",
+        shiny::uiOutput("plot_iframe_ui")
+      )
     ),
 
     shiny::tags$script(shiny::HTML("
@@ -801,6 +934,44 @@ run_tsifl_server <- function(port = 7444) {
       Shiny.addCustomMessageHandler('trigger_send', function(msg) {
         Shiny.setInputValue('send_message', msg.msg, {priority: 'event'});
       });
+
+      // ── Tab switching: Chat | Plot ─────────────────────────────────
+      window.tsiflShowTab = function(name) {
+        var chatTab    = document.getElementById('chat_tab');
+        var plotTab    = document.getElementById('plot_tab');
+        var chatBtn    = document.getElementById('tab_chat_btn');
+        var plotBtn    = document.getElementById('tab_plot_btn');
+        if (!chatTab || !plotTab) return;
+        if (name === 'plot') {
+          chatTab.classList.add('hidden');
+          plotTab.classList.add('active');
+          chatBtn.classList.remove('active');
+          plotBtn.classList.add('active');
+          // Tell the server we want the plot list refreshed
+          if (typeof Shiny !== 'undefined' && Shiny.setInputValue) {
+            Shiny.setInputValue('plot_tab_opened', Date.now(), {priority: 'event'});
+          }
+        } else {
+          chatTab.classList.remove('hidden');
+          plotTab.classList.remove('active');
+          chatBtn.classList.add('active');
+          plotBtn.classList.remove('active');
+        }
+      };
+
+      // When a new plot is announced, flash the Plot tab badge so the
+      // user notices something new is available without forcing them away
+      // from the chat.
+      Shiny.addCustomMessageHandler('plot_count_update', function(msg) {
+        var badge = document.getElementById('plot_count');
+        if (!badge) return;
+        if (msg.count && msg.count > 0) {
+          badge.textContent = msg.count;
+          badge.style.display = 'inline-block';
+        } else {
+          badge.style.display = 'none';
+        }
+      });
     "))
 
   )
@@ -927,6 +1098,142 @@ run_tsifl_server <- function(port = 7444) {
     })
 
     # (status is now JS-driven via set_status())
+
+    # ── Plot tab: serve files from /tmp/.tsifl_plots via /plots/ URL ───
+    # Shiny doesn't serve arbitrary local files by default. We register
+    # the plots dir as a static resource path so the iframe can load
+    # plot HTML directly (file:// URLs don't work cross-origin in Shiny's
+    # iframe sandbox, but http://127.0.0.1:7444/plots/x.html does).
+    tryCatch(
+      shiny::addResourcePath("plots", "/tmp/.tsifl_plots"),
+      error = function(e) {}
+    )
+
+    # Reactive list of available plots (refreshed when user opens Plot
+    # tab OR every 5s while it's open). Returns named vector of "label" =
+    # "filename", sorted newest first.
+    plot_files <- shiny::reactivePoll(
+      intervalMillis = 5000,
+      session = session,
+      checkFunc = function() {
+        files <- list.files("/tmp/.tsifl_plots", pattern = "\\.html$",
+                            full.names = TRUE)
+        if (length(files) == 0) return(0)
+        sum(file.info(files)$mtime)  # changes when any file added/modified
+      },
+      valueFunc = function() {
+        files <- list.files("/tmp/.tsifl_plots", pattern = "\\.html$",
+                            full.names = TRUE)
+        if (length(files) == 0) return(character(0))
+        info <- file.info(files)
+        ord  <- order(info$mtime, decreasing = TRUE)
+        files <- files[ord]
+        # Use basename as both label (humanized) and value (the URL
+        # fragment we'll iframe).
+        labels <- basename(files)
+        # Format like "Plot — 5:42 PM" using the file timestamp
+        labels <- vapply(seq_along(files), function(i) {
+          mt <- info$mtime[ord[i]]
+          paste0("Plot ", format(mt, "%I:%M %p"))
+        }, character(1))
+        names(files) <- labels
+        files
+      }
+    )
+
+    selected_plot <- shiny::reactiveVal(NULL)
+
+    # Push plot count to JS so the badge on the Plot tab updates as new
+    # plots come in (without forcing the user to switch away from chat).
+    shiny::observe({
+      pf <- plot_files()
+      session$sendCustomMessage("plot_count_update", list(count = length(pf)))
+      # Auto-select most recent if nothing chosen yet
+      if (is.null(shiny::isolate(selected_plot())) && length(pf) > 0) {
+        selected_plot(pf[1])
+      }
+    })
+
+    # When the user opens the Plot tab, snap selection to most recent
+    shiny::observeEvent(input$plot_tab_opened, {
+      pf <- plot_files()
+      if (length(pf) > 0) selected_plot(pf[1])
+    })
+
+    # Render the dropdown of plots
+    output$plot_dropdown_ui <- shiny::renderUI({
+      pf <- plot_files()
+      if (length(pf) == 0) {
+        return(shiny::span("No plots yet — generate one in chat",
+                           style = "color:#94A3B8;font-size:12px;"))
+      }
+      sel <- shiny::isolate(selected_plot())
+      if (is.null(sel) || !(sel %in% pf)) sel <- pf[1]
+      shiny::tags$select(
+        id = "plot_picker",
+        onchange = "Shiny.setInputValue('plot_picker_change', this.value, {priority: 'event'});",
+        lapply(seq_along(pf), function(i) {
+          shiny::tags$option(value = pf[i], selected = if (pf[i] == sel) "selected" else NULL,
+                             names(pf)[i])
+        })
+      )
+    })
+
+    shiny::observeEvent(input$plot_picker_change, {
+      selected_plot(input$plot_picker_change)
+    })
+
+    # Render the iframe pointing at /plots/<basename>
+    output$plot_iframe_ui <- shiny::renderUI({
+      sel <- selected_plot()
+      pf <- plot_files()
+      if (is.null(sel) || length(pf) == 0 || !file.exists(sel)) {
+        return(shiny::div(id = "plot_empty_state",
+          shiny::HTML(paste(
+            "<div style='font-size:32px;margin-bottom:8px;'>&#128202;</div>",
+            "<div>No plots generated yet.</div>",
+            "<div style='font-size:11px;margin-top:6px;color:#CBD5E1;'>",
+            "Ask tsifl to make a plot in the Chat tab.</div>"
+          ))
+        ))
+      }
+      url <- paste0("plots/", basename(sel))
+      shiny::tags$iframe(id = "plot_iframe", src = url, frameborder = "0")
+    })
+
+    # "Open in browser" button
+    shiny::observeEvent(input$plot_open_browser, {
+      sel <- selected_plot()
+      if (is.null(sel) || !file.exists(sel)) return()
+      tryCatch(utils::browseURL(sel), error = function(e) {})
+    })
+
+    # "Save to Downloads" button — copies the HTML (and matching PNG if
+    # present) to ~/Downloads/ with a friendly timestamped name.
+    shiny::observeEvent(input$plot_save_downloads, {
+      sel <- selected_plot()
+      if (is.null(sel) || !file.exists(sel)) return()
+      tryCatch({
+        downloads_dir <- path.expand("~/Downloads")
+        if (!dir.exists(downloads_dir)) dir.create(downloads_dir, recursive = TRUE)
+        ts_tag <- format(Sys.time(), "%Y%m%d_%H%M%S")
+        html_target <- file.path(downloads_dir, paste0("tsifl_plot_", ts_tag, ".html"))
+        file.copy(sel, html_target, overwrite = TRUE)
+        # If a sibling PNG exists, copy that too — bosses paste PNGs into decks
+        png_src <- sub("\\.html$", ".png", sel)
+        if (file.exists(png_src)) {
+          png_target <- file.path(downloads_dir, paste0("tsifl_plot_", ts_tag, ".png"))
+          file.copy(png_src, png_target, overwrite = TRUE)
+        }
+        # Tell the user it worked via a toast in the chat
+        add_message("action",
+          paste0("Saved plot to Downloads as tsifl_plot_", ts_tag,
+                 if (file.exists(png_src)) ".html + .png" else ".html"))
+      }, error = function(e) {
+        add_message("action",
+          paste0("Could not save plot: ", conditionMessage(e)))
+      })
+    })
 
     img_counter <- shiny::reactiveVal(0)
 
