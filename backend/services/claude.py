@@ -2628,6 +2628,25 @@ def _user_wants_analysis(message: str) -> bool:
     return bool(_R_ANALYSIS_INTENT_RE.search(message))
 
 
+_FUTURE_TENSE_PROMISE_RE = re.compile(
+    r"\b(let me (check|look|see|try|create|build|run|fix|clean|load|adjust|update|"
+    r"generate|analyze|calculate|compute|plot|visualize|make)|"
+    r"i(?:'| wi)?ll (check|look|see|try|create|build|run|fix|clean|load|adjust|update|"
+    r"generate|analyze|calculate|compute|plot|visualize|make|go ahead)|"
+    r"(?:now |next )?(?:i need to|i should|we need to|we should) "
+    r"(check|look|see|try|create|build|run|fix|clean|load|adjust|update|"
+    r"generate|analyze|calculate|compute|plot|visualize|make))\b",
+    re.IGNORECASE
+)
+
+def _reply_promises_action(reply: str) -> bool:
+    """True if the reply contains a future-tense phrase that implies code is
+    about to be run ('let me check', 'I'll create', 'next I need to...')."""
+    if not reply:
+        return False
+    return bool(_FUTURE_TENSE_PROMISE_RE.search(reply))
+
+
 def _validate_r_actions(result: dict, message: str) -> tuple[bool, str]:
     """Check if the actions satisfy the user's intent.
 
@@ -2635,12 +2654,36 @@ def _validate_r_actions(result: dict, message: str) -> tuple[bool, str]:
     retry prompt can reference to explain what went wrong."""
     actions = result.get("actions") or []
     r_actions = [a for a in actions if a.get("type") == "run_r_code"]
+    reply = (result.get("reply") or "").strip()
 
-    # If user wanted analysis but no run_r_code at all → definitely broken
+    # Case A: user asked for analysis but no run_r_code → definitely broken
     if _user_wants_analysis(message) and not r_actions:
-        return False, "You didn't emit a run_r_code action even though the user asked for real analysis (plot/model/computation). Emit one now that does the full analysis."
+        return False, (
+            "You didn't emit a run_r_code action even though the user asked "
+            "for real analysis (plot/model/computation). Emit one now that "
+            "does the full analysis."
+        )
 
-    # If user wanted analysis but code is exploratory-only → retry
+    # Case B: reply PROMISES action ("Let me check", "I'll create...") but no
+    # run_r_code action fired. Promise without delivery — the user sees text
+    # implying work is underway but the R session shows nothing happened.
+    # Either emit the action now, OR rewrite the reply as a specific question
+    # (e.g. "Your dataset has 'Nationality' not 'Ethnicity' — should I use
+    # Nationality instead?"). NEVER leave the user with a dangling promise.
+    if _reply_promises_action(reply) and not r_actions:
+        return False, (
+            "Your reply contains a future-tense phrase like 'Let me check' or "
+            "'I'll create' but you did NOT emit a run_r_code action. The user "
+            "sees a promise with no work done. You MUST do ONE of these two "
+            "things instead:\n"
+            "  (a) Emit the run_r_code action that fulfills the promise NOW, OR\n"
+            "  (b) Replace the promise with a SPECIFIC clarifying question "
+            "that names the ambiguity (e.g. 'Your dataset has column X but "
+            "not Y. Should I use X instead?'). Do NOT emit 'Let me...' "
+            "without accompanying code."
+        )
+
+    # Case C: run_r_code exists but is exploratory-only → retry
     for a in r_actions:
         code = (a.get("payload") or {}).get("code", "")
         if _user_wants_analysis(message) and _is_exploratory_only_code(code):
