@@ -353,6 +353,124 @@ teardown <- function(quiet = FALSE) {
 }
 
 
+#' Cleanly reinstall tsifl from a local source directory
+#'
+#' Works around the common failure mode where `devtools::install()` silently
+#' fails because the Shiny background job has the package files locked. This
+#' function does the whole dance in order:
+#'   1. Stop any running tsifl server (kill port 7444)
+#'   2. Unload the tsifulator namespace so R releases its file handles
+#'   3. `remove.packages("tsifulator")` to wipe the stale install
+#'   4. `install.packages()` or `devtools::install()` from the source dir
+#'   5. Verify the installed version matches what's on disk
+#'   6. Warn loudly if the version didn't actually change
+#'
+#' Still safer to run from a fresh Rscript --vanilla session if anything
+#' persists — the .Rprofile auto-launch hook can re-lock the package if it
+#' fires during the install.
+#'
+#' @param source_dir Path to the r-addin source directory.
+#' @param quiet Logical. If TRUE, suppresses progress messages.
+#'
+#' @return Invisibly returns the new installed version string.
+#' @export
+reinstall <- function(source_dir = NULL, quiet = FALSE) {
+  .say <- function(msg, mark = "  ") if (!quiet) message(mark, msg)
+  .ok <- function(msg) .say(msg, "\u2713 ")
+  .warn <- function(msg) .say(msg, "\u26a0 ")
+
+  if (!quiet) message("\n\u26a1 tsifl reinstall...\n")
+
+  # 1. Kill any running tsifl
+  if (.Platform$OS.type == "unix") {
+    tryCatch({
+      system("lsof -ti:7444 | xargs kill -9 2>/dev/null",
+             intern = FALSE, ignore.stdout = TRUE, ignore.stderr = TRUE)
+      .ok("Stopped tsifl on port 7444")
+    }, error = function(e) {})
+  }
+
+  # 2. Unload namespace to release file handles
+  tryCatch({
+    if ("tsifulator" %in% loadedNamespaces()) {
+      unloadNamespace("tsifulator")
+      .ok("Unloaded tsifulator namespace")
+    }
+  }, error = function(e) {
+    .warn(sprintf("Could not unload namespace: %s", conditionMessage(e)))
+  })
+
+  # 3. Remove the installed package
+  old_ver <- tryCatch(as.character(utils::packageVersion("tsifulator")),
+                      error = function(e) "not installed")
+  tryCatch({
+    suppressWarnings(utils::remove.packages("tsifulator"))
+    .ok(sprintf("Removed v%s", old_ver))
+  }, error = function(e) {
+    .warn(sprintf("remove.packages failed: %s", conditionMessage(e)))
+  })
+
+  # 4. Install from source
+  if (is.null(source_dir)) {
+    # Try common default locations
+    candidates <- c(
+      "/Users/nicholastsiflikiotis/tsifulator.ai/r-addin",
+      file.path(getwd(), "r-addin"),
+      getwd()
+    )
+    source_dir <- candidates[vapply(candidates, function(d) {
+      file.exists(file.path(d, "DESCRIPTION"))
+    }, logical(1))][1]
+    if (is.na(source_dir)) {
+      message("\u2717 Could not find r-addin source directory. Pass source_dir explicitly.")
+      return(invisible(NA_character_))
+    }
+  }
+  if (!file.exists(file.path(source_dir, "DESCRIPTION"))) {
+    message("\u2717 No DESCRIPTION found in ", source_dir)
+    return(invisible(NA_character_))
+  }
+
+  .say(sprintf("Installing from %s", source_dir))
+  install_ok <- tryCatch({
+    if (requireNamespace("devtools", quietly = TRUE)) {
+      devtools::install(source_dir, quiet = quiet, upgrade = "never")
+    } else {
+      utils::install.packages(source_dir, repos = NULL, type = "source",
+                              quiet = quiet)
+    }
+    TRUE
+  }, error = function(e) {
+    message("\u2717 Install failed: ", conditionMessage(e))
+    FALSE
+  })
+
+  if (!install_ok) return(invisible(NA_character_))
+
+  # 5. Verify version actually updated
+  source_ver <- tryCatch(
+    read.dcf(file.path(source_dir, "DESCRIPTION"))[, "Version"],
+    error = function(e) "?"
+  )
+  new_ver <- tryCatch(as.character(utils::packageVersion("tsifulator")),
+                      error = function(e) "?")
+  if (identical(new_ver, old_ver) || !identical(new_ver, unname(source_ver))) {
+    .warn(sprintf(
+      "Installed version is %s but source is %s. The package file lock ",
+      new_ver, source_ver
+    ))
+    .warn("may still be held. Quit RStudio fully and run this in a Terminal:")
+    .warn(sprintf("  Rscript --vanilla -e 'remove.packages(\"tsifulator\")'"))
+    .warn(sprintf("  Rscript --vanilla -e 'devtools::install(\"%s\")'", source_dir))
+  } else {
+    .ok(sprintf("tsifulator v%s installed successfully", new_ver))
+  }
+
+  if (!quiet) message("")
+  invisible(new_ver)
+}
+
+
 #' Print tsifl status / diagnostics
 #'
 #' Reports what's currently configured, what's running, what's missing.
@@ -408,6 +526,32 @@ status <- function() {
   pkg_version <- tryCatch(as.character(utils::packageVersion("tsifulator")),
                           error = function(e) "unknown")
 
+  # Detect stale installs: compare loaded version vs source on disk if we
+  # can find the repo. Helps users notice when devtools::install() silently
+  # fails due to a file lock.
+  stale_warning <- ""
+  for (cand in c("/Users/nicholastsiflikiotis/tsifulator.ai/r-addin",
+                 file.path(getwd(), "r-addin"))) {
+    desc_file <- file.path(cand, "DESCRIPTION")
+    if (file.exists(desc_file)) {
+      src_ver <- tryCatch(
+        unname(read.dcf(desc_file)[, "Version"]),
+        error = function(e) NA_character_
+      )
+      if (!is.na(src_ver) && !identical(src_ver, pkg_version)) {
+        stale_warning <- sprintf(
+          "  \u26a0 STALE INSTALL: loaded v%s but source on disk is v%s.\n" ,
+          pkg_version, src_ver
+        )
+        stale_warning <- paste0(
+          stale_warning,
+          "    Run tsifulator::reinstall() or see status docs for a clean install.\n"
+        )
+      }
+      break
+    }
+  }
+
   message("\n\u26a1 tsifl status\n")
   message(sprintf("  Package version:       %s", pkg_version))
   message(sprintf("  R version:             %s", as.character(getRversion())))
@@ -423,6 +567,10 @@ status <- function() {
                   if (port_in_use) "yes" else "no"))
   message(sprintf("  Backend reachable:     %s",
                   if (backend_ok) sprintf("yes (%s)", backend_url) else "no"))
+  if (nzchar(stale_warning)) {
+    message("")
+    message(stale_warning)
+  }
   message("")
 
   invisible(list(
