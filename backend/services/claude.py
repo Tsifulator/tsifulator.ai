@@ -1357,6 +1357,36 @@ When in doubt, DON'T silently guess. Ask one clarifying question:
 "Did you mean the objects in your R environment (like `oscars_data`,
 `regression_model`, etc.) or the source editor tabs in RStudio?"
 
+### COMMON RSTUDIO-IDE OPERATIONS — USE rstudioapi INSIDE run_r_code
+Some things the user asks for aren't R data operations but IDE operations.
+Do these via run_r_code with the rstudioapi package:
+
+- **Close/delete all open scripts or editor tabs:**
+  ```r
+  # Close every open document tab (confirms user wants to discard unsaved)
+  docs <- rstudioapi::getSourceEditorContext()
+  # Actually iterate via rstudioapi::documentClose(id, save = FALSE)
+  # List open docs: (no direct list API — use getAllOpenDocs approach)
+  for (i in seq_along(.rs.api.getOpenDocuments())) {
+    try(rstudioapi::documentClose(save = FALSE), silent = TRUE)
+  }
+  ```
+  But BEFORE emitting this, check if any tabs are "Untitled*" (unsaved)
+  and ask the user to confirm — destructive op rule applies.
+
+- **Open a file in the editor:** `rstudioapi::navigateToFile("path.R")`
+- **Clear the console:** `cat("\014")` (sends Ctrl+L)
+- **Clear the environment:** `rm(list = ls())` — ALWAYS ask first
+- **Restart R:** `rstudioapi::restartSession()` — ask first, destroys state
+
+Any of these should go through run_r_code with target="console" so the
+editor tab isn't polluted with one-off IDE commands.
+
+User-facing phrases that map to these operations:
+- "delete the R scripts that are open" / "close all tabs" → documentClose loop
+- "wipe my environment" / "clear everything" → rm(list = ls()) after confirm
+- "restart R" / "reload R" → restartSession() after confirm
+
 ### DESTRUCTIVE OPERATIONS — CONFIRM FIRST, NEVER SILENTLY HANG
 Anything that DELETES, REMOVES, OVERWRITES, or CLEARS user state is
 destructive. Examples:
@@ -2459,23 +2489,45 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
                 selected_model, total_actions, response.stop_reason)
 
     # ── Empty-response guard ─────────────────────────────────────────────
-    # If both reply and actions are empty, the client shows literally
-    # nothing — the user sees their message sent into a void with no
-    # feedback. That's the worst possible UX. Inject a safe fallback so
-    # the chat always gets *something* back.
+    # If the user sees nothing in the chat, that's the worst possible UX.
+    # Guard against two empty-response failure modes:
+    #   1. Both reply AND actions are empty (pure silence)
+    #   2. In R context: reply is empty AND no executable R action fired,
+    #      even if some other stub action was emitted. User still sees
+    #      silence in the R console either way.
     reply_text = (result.get("reply") or "").strip()
     has_any_action = total_actions > 0
-    if not reply_text and not has_any_action:
+    has_r_action = any(
+        a.get("type") == "run_r_code"
+        for a in (result.get("actions") or [])
+    )
+
+    needs_fallback = (
+        (not reply_text and not has_any_action) or
+        (app_name == "rstudio" and not reply_text and not has_r_action)
+    )
+
+    if needs_fallback:
         logger.warning(
-            "[empty-response-guard] model produced empty reply AND zero actions "
+            "[empty-response-guard] app=%s reply_empty=%s actions=%d has_r=%s "
             "(stop_reason=%s, msg=%r). Injecting fallback.",
+            app_name, not reply_text, total_actions, has_r_action,
             response.stop_reason, message[:80]
         )
-        result["reply"] = (
-            "I didn't quite understand that one — could you rephrase? "
-            "If you were asking me to delete or modify something, tell me "
-            "exactly which items (by name) and I'll confirm before doing anything."
-        )
+        # Context-aware fallback based on what the user said
+        msg_lower = message.lower()
+        if any(w in msg_lower for w in ("delete", "remove", "close", "clear", "wipe")):
+            result["reply"] = (
+                "That looks like a destructive operation — I want to be sure "
+                "before doing anything. Could you tell me exactly which items "
+                "to target (by name if possible)? I'll confirm before acting."
+            )
+        else:
+            result["reply"] = (
+                "I didn't quite understand that one — could you rephrase with "
+                "more detail? If there are specific objects, files, or columns "
+                "involved, naming them helps me do the right thing."
+            )
 
     return result
 
