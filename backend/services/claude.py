@@ -1227,26 +1227,39 @@ The ONLY acceptable uses of R code in your reply text are:
 For anything the user asked you to compute, analyze, or plot, emit an
 actual run_r_code tool call. Nothing else.
 
-### NEVER NARRATE RESULTS YOU HAVEN'T COMPUTED — HARD RULE
+### NEVER NARRATE RESULTS OR DESCRIBE WHAT CODE WOULD DO — HARD RULE
 If you did NOT emit a run_r_code action this turn, you MUST NOT describe:
  - What a plot "shows" or "displays" (e.g. "the bar chart shows UAE at 81.2 kg")
  - Specific numeric values as if computed (e.g. "the mean is 172.4")
  - Rankings, comparisons, or conclusions drawn from hypothetical output
  - Summaries like "I've created a comprehensive visualization..."
+ - NUMBERED LISTS describing what your not-yet-executed code "will do"
+   ("The code will: 1. Clean the data 2. Calculate correlations 3. Build
+   the model..."). If the tool call didn't fire, none of that happened.
 
 A plot you did not run does not exist. A number you did not compute is
-fabricated. The user WILL catch this when they check the R session and
-see nothing ran. This destroys trust.
+fabricated. Code you describe but don't execute is vapor. The user WILL
+catch this when they check the R session and see nothing ran.
 
 If you want to describe what a plot WILL show, first emit the run_r_code
 action that produces it. Phase 2 (after real output is captured) is the
 ONLY place where you may describe specific values, plots, or results.
 
-Forbidden examples (never write these without an actual run_r_code):
+Forbidden Phase-1 patterns (never write any of these without a tool call):
  - "The visualization includes three plots: 1. Height Distribution..."
  - "UAE shown at 81.2 kg vs Congo at 68.2 kg"
  - "The red dashed lines clearly show the average..."
  - "Perfect! I've created a comprehensive visualization..."
+ - "I'm running a comprehensive analysis of the FIFA21 data..." ← implies
+   running but didn't. If you have code, call run_r_code. If you don't,
+   say "Here's my plan:" with a short bullet list, then STOP.
+
+Acceptable Phase-1 reply when emitting run_r_code:
+ - One or two sentences: "Running the analysis now — I'll interpret the
+   output once it's back."
+ - Emit the tool call.
+ - That's it. Do not write a long preamble. Do not write a long postscript.
+   Phase 2 will handle the real description with real numbers.
 
 ### DATA AVAILABILITY — NEVER HALLUCINATE DATASETS
 
@@ -2469,6 +2482,67 @@ def _parse_tool_response(response) -> dict:
                 pass
         if json_block_re.search(reply):
             reply = json_block_re.sub("", reply)
+
+        # Form 4: BARE JSON ARRAYS sitting in reply text with no fence at all.
+        # The model sometimes prints [{"type": "run_r_code", ...}] as raw text
+        # thinking it will become a tool call. It doesn't. Walk the reply
+        # looking for `[{"type":` anchors and try to balanced-parse from there.
+        import json as _json
+        start_pattern = re.compile(
+            r'\[\s*\{\s*"type"\s*:\s*"run_r_code"',
+            re.IGNORECASE
+        )
+        strip_spans = []  # (start, end) slices to remove from reply
+        search_from = 0
+        while True:
+            sm = start_pattern.search(reply, search_from)
+            if not sm:
+                break
+            start = sm.start()
+            # Balanced bracket scan to find the matching ]
+            depth = 0
+            in_str = False
+            escape = False
+            end = None
+            for i in range(start, len(reply)):
+                ch = reply[i]
+                if escape:
+                    escape = False
+                    continue
+                if ch == "\\" and in_str:
+                    escape = True
+                    continue
+                if ch == '"':
+                    in_str = not in_str
+                    continue
+                if in_str:
+                    continue
+                if ch == "[":
+                    depth += 1
+                elif ch == "]":
+                    depth -= 1
+                    if depth == 0:
+                        end = i + 1
+                        break
+            if end is None:
+                break  # unterminated, stop trying
+            candidate = reply[start:end]
+            try:
+                parsed = _json.loads(candidate)
+                if isinstance(parsed, list):
+                    found_any = False
+                    for a in parsed:
+                        if isinstance(a, dict) and a.get("type") == "run_r_code":
+                            rescued_actions.append(a)
+                            found_any = True
+                    if found_any:
+                        strip_spans.append((start, end))
+            except Exception:
+                pass
+            search_from = end
+        # Apply strips from end to start so earlier indices stay valid
+        for s, e in sorted(strip_spans, key=lambda x: -x[0]):
+            reply = reply[:s] + reply[e:]
 
         # Consolidate rescued pieces into actions
         if rescued_actions:
