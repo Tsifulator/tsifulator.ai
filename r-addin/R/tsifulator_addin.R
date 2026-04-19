@@ -193,29 +193,40 @@ tsifulator_addin <- function() {
 
   PORT <- 7444
 
-  # ── Check if already running & responsive ──────────────────────────────────
-  already_up <- tryCatch({
-    con <- url(paste0("http://127.0.0.1:", PORT), open = "r")
-    close(con)
-    TRUE
+  # ── Check if a LIVE tsifl is already serving ──────────────────────────────
+  # A raw open socket isn't enough (could be a zombie from a dead background
+  # job). Actually GET the page and check for a 2xx HTTP response with a
+  # short timeout. If anything looks off, kill the port and restart clean.
+  is_live <- tryCatch({
+    resp <- httr2::request(paste0("http://127.0.0.1:", PORT)) |>
+      httr2::req_timeout(2) |>
+      httr2::req_error(is_error = function(r) FALSE) |>
+      httr2::req_perform()
+    status <- httr2::resp_status(resp)
+    status >= 200 && status < 500
   }, error = function(e) FALSE)
 
-  if (already_up) {
-    # Verify it's actually responsive (not a zombie port)
-    responsive <- tryCatch({
-      resp <- httr2::request(paste0("http://127.0.0.1:", PORT)) |>
-        httr2::req_timeout(3) |>
-        httr2::req_perform()
-      TRUE
-    }, error = function(e) FALSE)
+  if (is_live) {
+    rstudioapi::viewer(paste0("http://127.0.0.1:", PORT))
+    return(invisible(NULL))
+  }
 
-    if (responsive) {
-      rstudioapi::viewer(paste0("http://127.0.0.1:", PORT))
-      return(invisible(NULL))
-    } else {
-      # Zombie process — kill it so we can restart fresh
-      message("tsifl: stale session detected, restarting...")
-      tryCatch(system(paste0("lsof -ti:", PORT, " | xargs kill -9"), intern = TRUE), error = function(e) {})
+  # Anything holding the port but not responding is a zombie — nuke it.
+  port_in_use <- tryCatch({
+    con <- suppressWarnings(socketConnection(
+      host = "127.0.0.1", port = PORT,
+      open = "r+", blocking = TRUE, timeout = 1
+    ))
+    close(con); TRUE
+  }, error = function(e) FALSE)
+  if (port_in_use) {
+    message("tsifl: stale process on port ", PORT, " — cleaning up...")
+    if (.Platform$OS.type == "unix") {
+      tryCatch(
+        system(paste0("lsof -ti:", PORT, " | xargs kill -9 2>/dev/null"),
+               intern = FALSE, ignore.stdout = TRUE, ignore.stderr = TRUE),
+        error = function(e) {}
+      )
       Sys.sleep(0.5)
     }
   }
