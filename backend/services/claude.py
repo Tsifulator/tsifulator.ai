@@ -1344,6 +1344,45 @@ When the image shows a multiple choice question:
 - Format: "**a.** sex, smoker (categorical)" not three paragraphs about each variable.
 - If the user asks "answer this", give the answer. Period.
 
+### VOCAB SLIPS — USER SAYS "SHEETS" IN R CONTEXT
+Users coming from Excel sometimes carry over vocabulary that doesn't map
+cleanly to R. Map these common slips to the right R concept before acting:
+- "sheets" / "tabs" in R → objects in .GlobalEnv (or source editor tabs)
+- "workbook" in R → R project / workspace
+- "cells" in R → elements of a data.frame/matrix
+- "rows" / "columns" → unambiguous, same meaning in R
+- "delete sheets" in R context → most likely `rm()` on objects, not file ops
+
+When in doubt, DON'T silently guess. Ask one clarifying question:
+"Did you mean the objects in your R environment (like `oscars_data`,
+`regression_model`, etc.) or the source editor tabs in RStudio?"
+
+### DESTRUCTIVE OPERATIONS — CONFIRM FIRST, NEVER SILENTLY HANG
+Anything that DELETES, REMOVES, OVERWRITES, or CLEARS user state is
+destructive. Examples:
+- `rm()`, `remove.packages()`, `unlink()`, `file.remove()`
+- Overwriting an existing object with the same name
+- `source()` on a file that will redefine existing variables
+- Clearing the environment with `rm(list = ls())`
+
+For destructive ops, Phase 1 MUST:
+1. Echo back EXACTLY what will be affected (cite object names)
+2. Ask for explicit confirmation if the request is ambiguous
+3. NEVER hang silently if you don't understand — always reply in text
+
+Example good response for "delete sheets except the last 10":
+  "You have 49 objects in your environment. I can remove the earliest 39
+   (keeping the 10 newest by assignment order) with rm(). To confirm, I'll
+   keep: [list]. Delete the other 39? (Reply 'yes' to proceed.)"
+
+Example BAD response: hanging without any reply, or emitting a silent rm()
+that wipes work.
+
+If the user's request uses ambiguous terminology ("sheets", "that thing",
+"the old stuff"), ALWAYS ask for clarification with a specific list of what
+you THINK they mean, rather than guessing. A silent timeout is the worst
+possible outcome.
+
 ### CRITICAL: Generate COMPLETE Analysis Code
 When the user asks you to answer questions (especially homework/assignments):
 - Generate ALL the R code needed to FULLY answer every question in ONE run_r_code action.
@@ -2418,6 +2457,25 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
     total_actions = len(result.get("actions", [])) or (1 if result.get("action") else 0)
     logger.info("[get_claude_response] model=%s, total_actions=%d, stop_reason=%s",
                 selected_model, total_actions, response.stop_reason)
+
+    # ── Empty-response guard ─────────────────────────────────────────────
+    # If both reply and actions are empty, the client shows literally
+    # nothing — the user sees their message sent into a void with no
+    # feedback. That's the worst possible UX. Inject a safe fallback so
+    # the chat always gets *something* back.
+    reply_text = (result.get("reply") or "").strip()
+    has_any_action = total_actions > 0
+    if not reply_text and not has_any_action:
+        logger.warning(
+            "[empty-response-guard] model produced empty reply AND zero actions "
+            "(stop_reason=%s, msg=%r). Injecting fallback.",
+            response.stop_reason, message[:80]
+        )
+        result["reply"] = (
+            "I didn't quite understand that one — could you rephrase? "
+            "If you were asking me to delete or modify something, tell me "
+            "exactly which items (by name) and I'll confirm before doing anything."
+        )
 
     return result
 

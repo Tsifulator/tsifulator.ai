@@ -1150,13 +1150,29 @@ run_tsifl_server <- function(port = 7444) {
             httr2::req_headers("Content-Type" = "application/json") |>
             httr2::req_body_json(body) |>
             httr2::req_options(ssl_verifypeer = 0) |>
-            httr2::req_timeout(120) |>
+            # 180s — allows room for the server-side retry loop (up to 2
+            # extra API calls at ~20-30s each) without dropping the client.
+            httr2::req_timeout(180) |>
             httr2::req_perform()
 
           set_status("generating")
           data <- httr2::resp_body_json(resp, simplifyVector = FALSE)
-          if (!is.null(data$reply) && nchar(trimws(data$reply)) > 0) {
+          has_reply   <- !is.null(data$reply) && nchar(trimws(data$reply)) > 0
+          # Peek at actions presence without full parsing (detailed extraction below)
+          has_actions <- (!is.null(data$actions) && length(data$actions) > 0) ||
+                         (!is.null(data$action) && is.list(data$action) &&
+                          !is.null(data$action$type) &&
+                          !identical(data$action$type, "none"))
+          if (has_reply) {
             add_message("assistant", data$reply)
+          } else if (!has_actions) {
+            # Backend guard already injects a fallback, but belt-and-suspenders:
+            # if somehow we get a genuinely empty response, the user should
+            # see SOMETHING so they don't think tsifl is broken.
+            add_message("assistant",
+              paste0("I didn't get a response to that — could you rephrase? ",
+                     "(If this keeps happening, it might be a backend hiccup; ",
+                     "try again in a moment.)"))
           }
 
           if (!is.null(data$tasks_remaining) && data$tasks_remaining >= 0)
