@@ -180,41 +180,67 @@
           }
 
           # Save whatever we got — PNG, HTML, or both — into the
-          # timestamped plots dir, but DEDUP against the most-recent
-          # existing file of the same type. The model often re-emits the
-          # same plot code across turns; without dedup, each turn copies
-          # the graphics device again and the Plots tab + chat fill up
-          # with identical entries.
-          latest_hash <- function(pat) {
+          # timestamped plots dir, but DEDUP against every existing
+          # file of the same type (not just the latest). The model
+          # re-emits the same plot code on most turns; without dedup
+          # the Plots tab and chat accumulate identical entries.
+          all_hashes <- function(pat) {
             f <- list.files(plots_dir, pattern = pat, full.names = TRUE)
-            if (length(f) == 0) return(NULL)
-            latest <- f[which.max(file.info(f)$mtime)]
-            tryCatch(unname(tools::md5sum(latest)),
-                     error = function(e) NULL)
+            if (length(f) == 0) return(character(0))
+            tryCatch(unname(tools::md5sum(f)),
+                     error = function(e) character(0))
+          }
+
+          # Try to pull a descriptive title out of the code so the chip
+          # label is "Math vs Reading Scores" instead of "Plot 4:32 AM".
+          extract_title <- function(src) {
+            patterns <- c(
+              'ggtitle\\s*\\(\\s*["\\\']([^"\\\']+)["\\\']',
+              'labs\\s*\\([^)]*title\\s*=\\s*["\\\']([^"\\\']+)["\\\']',
+              'plot_ly\\s*\\([^)]*title\\s*=\\s*["\\\']([^"\\\']+)["\\\']',
+              'layout\\s*\\([^)]*title\\s*=\\s*["\\\']([^"\\\']+)["\\\']',
+              '\\bmain\\s*=\\s*["\\\']([^"\\\']+)["\\\']'
+            )
+            for (pat in patterns) {
+              m <- tryCatch(
+                regmatches(src, regexec(pat, src, perl = TRUE))[[1]],
+                error = function(e) character(0)
+              )
+              if (length(m) >= 2 && nzchar(m[2])) return(m[2])
+            }
+            NA_character_
+          }
+          slugify <- function(s) {
+            if (is.na(s) || !nzchar(s)) return("")
+            s <- tolower(s)
+            s <- gsub("[^a-z0-9]+", "-", s)
+            s <- gsub("^-+|-+$", "", s)
+            if (nchar(s) > 50) s <- substr(s, 1, 50)
+            gsub("-+$", "", s)
           }
 
           if (png_ok || !is.null(widget_obj)) {
             tryCatch({
               ts_tag <- format(Sys.time(), "%Y%m%d_%H%M%S")
+              slug   <- slugify(extract_title(code))
+              suffix <- if (nzchar(slug)) paste0("_", slug) else ""
               png_path  <- NULL
               html_path <- NULL
 
               if (png_ok) {
-                new_hash  <- tryCatch(unname(tools::md5sum(plot_file)),
-                                      error = function(e) NULL)
-                prev_hash <- latest_hash("\\.png$")
-                if (is.null(new_hash) || is.null(prev_hash) ||
-                    !identical(new_hash, prev_hash)) {
+                new_hash <- tryCatch(unname(tools::md5sum(plot_file)),
+                                     error = function(e) NULL)
+                prev <- all_hashes("\\.png$")
+                if (!is.null(new_hash) && !(new_hash %in% prev)) {
                   png_path <- file.path(plots_dir,
-                                        paste0("plot_", ts_tag, ".png"))
+                                        paste0("plot_", ts_tag, suffix, ".png"))
                   file.copy(plot_file, png_path, overwrite = TRUE)
                 }
               }
 
               if (!is.null(widget_obj)) {
-                # saveWidget needs a real path, so write to a tmp file,
-                # hash it, and only promote it to the plots_dir if it's
-                # not a byte-identical copy of the last saved widget.
+                # saveWidget needs a real path — write to a tmp first so
+                # we can hash it before deciding whether to keep it.
                 tmp_html <- tempfile(pattern = "tsifl_widget_",
                                      fileext = ".html")
                 ok <- FALSE
@@ -224,13 +250,12 @@
                   ok <- file.exists(tmp_html)
                 }, error = function(e) {})
                 if (ok) {
-                  new_hash  <- tryCatch(unname(tools::md5sum(tmp_html)),
-                                        error = function(e) NULL)
-                  prev_hash <- latest_hash("\\.html$")
-                  if (is.null(new_hash) || is.null(prev_hash) ||
-                      !identical(new_hash, prev_hash)) {
+                  new_hash <- tryCatch(unname(tools::md5sum(tmp_html)),
+                                       error = function(e) NULL)
+                  prev <- all_hashes("\\.html$")
+                  if (!is.null(new_hash) && !(new_hash %in% prev)) {
                     html_path <- file.path(plots_dir,
-                                           paste0("plot_", ts_tag, ".html"))
+                                           paste0("plot_", ts_tag, suffix, ".html"))
                     file.rename(tmp_html, html_path)
                     sz <- file.info(html_path)$size
                     if (sz < 10000) {

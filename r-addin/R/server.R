@@ -236,9 +236,9 @@ run_tsifl_server <- function(port = 7444) {
       font-family: inherit;
       white-space: nowrap;
       transition: all 0.12s ease;
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
+      max-width: 200px;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .plot_chip:hover {
       color: #0F172A;
@@ -250,8 +250,6 @@ run_tsifl_server <- function(port = 7444) {
       background: #0F172A;
       border-color: #0F172A;
     }
-    .plot_chip .chip_icon { font-size: 10px; opacity: 0.75; }
-    .plot_chip.selected .chip_icon { opacity: 1; }
     #plot_list_empty {
       display: inline-block;
       padding: 2px 4px 10px 4px;
@@ -1250,7 +1248,7 @@ run_tsifl_server <- function(port = 7444) {
                             pattern = "\\.(html|png)$",
                             full.names = TRUE)
         if (length(files) == 0) return(character(0))
-        # Dedup: the listener writes plot_TS.png and plot_TS.html for the
+        # Dedup: the listener writes plot_TS[_slug].png and .html for the
         # same plot when both are available. Group by stem; prefer .html.
         stems <- tools::file_path_sans_ext(basename(files))
         exts  <- tools::file_ext(files)
@@ -1268,10 +1266,22 @@ run_tsifl_server <- function(port = 7444) {
         info <- file.info(files)
         ord  <- order(info$mtime, decreasing = TRUE)
         files <- files[ord]
-        # Format like "Plot — 5:42 PM" using the file timestamp
+        # Label: if the listener extracted a title from the plot code
+        # it appends a slug to the filename (plot_TS_<slug>.ext). Parse
+        # that slug back into a readable label. Fall back to the mtime
+        # when no slug is present (older files, or plots with no title).
         labels <- vapply(seq_along(files), function(i) {
-          mt <- info$mtime[ord[i]]
-          paste0("Plot ", format(mt, "%I:%M %p"))
+          stem  <- tools::file_path_sans_ext(basename(files[i]))
+          parts <- strsplit(stem, "_", fixed = TRUE)[[1]]
+          if (length(parts) > 3) {
+            slug  <- paste(parts[-(1:3)], collapse = " ")
+            label <- trimws(gsub("[-_]+", " ", slug))
+            if (nchar(label) > 0) {
+              return(paste0(toupper(substr(label, 1, 1)),
+                            substr(label, 2, nchar(label))))
+            }
+          }
+          paste0("Plot ", format(info$mtime[ord[i]], "%I:%M %p"))
         }, character(1))
         names(files) <- labels
         files
@@ -1297,9 +1307,16 @@ run_tsifl_server <- function(port = 7444) {
       if (length(pf) > 0) selected_plot(pf[1])
     })
 
-    # Render the horizontal chip strip — one chip per saved plot, with
-    # a tiny icon marking static (PNG) vs interactive (HTML). Clicking
-    # any chip loads that plot in the main pane below.
+    # Render the horizontal chip strip — one chip per saved plot. Each
+    # chip shows a descriptive label (pulled from the plot's title
+    # when the listener wrote it into the filename) or a timestamp
+    # fallback. Clicking any chip loads that plot in the pane below.
+    #
+    # IMPORTANT: type="button" prevents the default submit behaviour
+    # <button> inherits in HTML — without it, Shiny's input wrapping
+    # treats the click as a form submission, re-renders the UI, and
+    # the selection change is lost. That was the "can't click chips"
+    # bug.
     output$plot_list_ui <- shiny::renderUI({
       pf <- plot_files()
       if (length(pf) == 0) {
@@ -1311,17 +1328,15 @@ run_tsifl_server <- function(port = 7444) {
       shiny::div(
         class = "plot_chip_row",
         lapply(seq_along(pf), function(i) {
-          is_html <- identical(tolower(tools::file_ext(pf[i])), "html")
-          is_sel  <- identical(pf[i], sel)
-          icon    <- if (is_html) "\u26A1" else "\U0001F4CA"
+          is_sel <- identical(pf[i], sel)
           shiny::tags$button(
+            type = "button",
             class = paste("plot_chip", if (is_sel) "selected" else ""),
             onclick = sprintf(
-              "Shiny.setInputValue('plot_picker_change', '%s', {priority: 'event'});",
+              "event.preventDefault(); Shiny.setInputValue('plot_picker_change', '%s', {priority: 'event'});",
               gsub("'", "\\\\'", pf[i], fixed = TRUE)
             ),
-            shiny::tags$span(class = "chip_icon", icon),
-            shiny::tags$span(names(pf)[i])
+            names(pf)[i]
           )
         })
       )
