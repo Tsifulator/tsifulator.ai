@@ -83,43 +83,55 @@ run_tsifl_server <- function(port = 7444) {
       border: none;
     }
 
-    /* ── Tab bar ─────────────────────────────────────────────────── */
+    /* ── Tab bar — understated, Bloomberg/Linear-ish ───────────── */
     #tsifl_tabs {
       display: flex;
-      align-items: center;
-      gap: 4px;
-      padding: 6px 10px 0 10px;
+      align-items: stretch;
+      gap: 0;
+      padding: 0 14px;
       background: #FFFFFF;
-      border-bottom: 1px solid #E2E8F0;
+      border-bottom: 1px solid #E8ECF1;
       flex-shrink: 0;
+      height: 36px;
     }
     .tsifl-tab {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      padding: 8px 14px;
-      font-size: 13px;
+      gap: 8px;
+      padding: 0 14px;
+      font-size: 12px;
       font-weight: 500;
-      color: #64748B;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+      color: #94A3B8;
       background: transparent;
       border: none;
-      border-bottom: 2px solid transparent;
+      border-bottom: 1.5px solid transparent;
       cursor: pointer;
-      transition: color 0.15s, border-bottom-color 0.15s;
+      transition: color 0.12s ease, border-bottom-color 0.12s ease;
       font-family: inherit;
+      margin-bottom: -1px;
     }
-    .tsifl-tab:hover { color: #0D5EAF; }
+    .tsifl-tab:hover { color: #334155; }
     .tsifl-tab.active {
-      color: #0D5EAF;
-      border-bottom-color: #0D5EAF;
+      color: #0F172A;
+      border-bottom-color: #0F172A;
     }
     .tsifl-tab .tab-count {
       font-size: 10px;
-      color: #94A3B8;
+      font-weight: 600;
+      color: #475569;
       background: #F1F5F9;
       padding: 1px 6px;
-      border-radius: 8px;
-      font-weight: 600;
+      border-radius: 10px;
+      letter-spacing: 0;
+      text-transform: none;
+      min-width: 16px;
+      text-align: center;
+    }
+    .tsifl-tab.active .tab-count {
+      background: #0F172A;
+      color: #FFFFFF;
     }
     #plot_tab {
       display: none;
@@ -138,32 +150,48 @@ run_tsifl_server <- function(port = 7444) {
       padding: 10px 14px;
       border-bottom: 1px solid #F1F5F9;
       font-size: 12px;
+      background: #FCFCFD;
     }
     #plot_toolbar select {
       flex: 1;
-      padding: 6px 8px;
-      font-size: 12px;
-      border: 1px solid #E2E8F0;
-      border-radius: 6px;
-      background: #FFFFFF;
-      color: #1E293B;
-      font-family: inherit;
-    }
-    #plot_toolbar button {
       padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 500;
+      border: 1px solid #E2E8F0;
+      border-radius: 4px;
+      background: #FFFFFF;
+      color: #0F172A;
+      font-family: inherit;
+      letter-spacing: 0.1px;
+      outline: none;
+      cursor: pointer;
+    }
+    #plot_toolbar select:hover { border-color: #CBD5E1; }
+    #plot_toolbar select:focus { border-color: #0F172A; }
+    #plot_toolbar button {
+      padding: 6px 12px;
       font-size: 11px;
-      color: #0D5EAF;
-      background: #EEF4FF;
-      border: 1px solid #C7D8FF;
-      border-radius: 6px;
+      font-weight: 500;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+      color: #475569;
+      background: #FFFFFF;
+      border: 1px solid #E2E8F0;
+      border-radius: 4px;
       cursor: pointer;
       font-family: inherit;
       white-space: nowrap;
+      transition: all 0.12s ease;
     }
-    #plot_toolbar button:hover { background: #DDE7FF; }
+    #plot_toolbar button:hover {
+      color: #0F172A;
+      border-color: #CBD5E1;
+      background: #F8FAFC;
+    }
+    #plot_toolbar button:active { background: #F1F5F9; }
     #plot_iframe_wrap {
       flex: 1;
-      padding: 10px 14px;
+      padding: 10px 14px 14px 14px;
       overflow: hidden;
       display: flex;
       flex-direction: column;
@@ -171,18 +199,16 @@ run_tsifl_server <- function(port = 7444) {
     #plot_iframe {
       flex: 1;
       width: 100%;
-      border: 1px solid #E2E8F0;
-      border-radius: 8px;
-      background: #FAFBFC;
+      border: 1px solid #E8ECF1;
+      border-radius: 4px;
+      background: #FFFFFF;
     }
     #plot_empty_state {
       flex: 1;
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
-      color: #94A3B8;
-      font-size: 13px;
-      text-align: center;
       padding: 40px;
     }
 
@@ -466,10 +492,10 @@ run_tsifl_server <- function(port = 7444) {
     shiny::div(id = "tsifl_tabs",
       shiny::tags$button(id = "tab_chat_btn", class = "tsifl-tab active",
                         onclick = "tsiflShowTab('chat');",
-                        shiny::HTML("&#128172; Chat")),
+                        "Chat"),
       shiny::tags$button(id = "tab_plot_btn", class = "tsifl-tab",
                         onclick = "tsiflShowTab('plot');",
-                        shiny::HTML("&#128202; Plot"),
+                        "Plots",
                         shiny::span(id = "plot_count", class = "tab-count",
                                     style = "display:none;", "0"))
     ),
@@ -508,10 +534,10 @@ run_tsifl_server <- function(port = 7444) {
         shiny::uiOutput("plot_dropdown_ui", inline = TRUE),
         shiny::tags$button(id = "plot_open_browser_btn",
                           onclick = "Shiny.setInputValue('plot_open_browser', Date.now(), {priority: 'event'});",
-                          shiny::HTML("&#128279; Open in browser")),
+                          "Open in browser"),
         shiny::tags$button(id = "plot_save_btn",
                           onclick = "Shiny.setInputValue('plot_save_downloads', Date.now(), {priority: 'event'});",
-                          shiny::HTML("&#128190; Save to Downloads"))
+                          "Save")
       ),
       shiny::div(id = "plot_iframe_wrap",
         shiny::uiOutput("plot_iframe_ui")
@@ -1070,15 +1096,16 @@ run_tsifl_server <- function(port = 7444) {
           if (isTRUE(m$plot$interactive) && !is.null(m$plot$html_path)) {
             plot_children <- c(plot_children, list(
               shiny::tags$button(
-                shiny::HTML("&#128269; Open interactive version"),
+                "Open interactive",
                 onclick = sprintf(
                   "Shiny.setInputValue('open_plot_html', '%s', {priority: 'event'});",
                   gsub("'", "\\\\'", m$plot$html_path, fixed = TRUE)
                 ),
                 style = paste(
-                  "display:inline-block; margin-top:4px; font-size:11px;",
-                  "color:#0B5CFF; background:#EEF4FF; border:1px solid #C7D8FF;",
-                  "padding:4px 10px; border-radius:6px; cursor:pointer;",
+                  "display:inline-block; margin-top:6px; font-size:10px;",
+                  "font-weight:500; letter-spacing:0.3px; text-transform:uppercase;",
+                  "color:#475569; background:#FFFFFF; border:1px solid #E2E8F0;",
+                  "padding:4px 10px; border-radius:4px; cursor:pointer;",
                   "font-family:-apple-system,BlinkMacSystemFont,sans-serif;"
                 )
               )
@@ -1119,7 +1146,10 @@ run_tsifl_server <- function(port = 7444) {
         files <- list.files("/tmp/.tsifl_plots", pattern = "\\.html$",
                             full.names = TRUE)
         if (length(files) == 0) return(0)
-        sum(file.info(files)$mtime)  # changes when any file added/modified
+        # sum() doesn't work on POSIXct directly — convert to numeric
+        # seconds first. Any change in file set or mtime shifts this
+        # checksum, which is all reactivePoll needs.
+        sum(as.numeric(file.info(files)$mtime))
       },
       valueFunc = function() {
         files <- list.files("/tmp/.tsifl_plots", pattern = "\\.html$",
@@ -1190,10 +1220,10 @@ run_tsifl_server <- function(port = 7444) {
       if (is.null(sel) || length(pf) == 0 || !file.exists(sel)) {
         return(shiny::div(id = "plot_empty_state",
           shiny::HTML(paste(
-            "<div style='font-size:32px;margin-bottom:8px;'>&#128202;</div>",
-            "<div>No plots generated yet.</div>",
-            "<div style='font-size:11px;margin-top:6px;color:#CBD5E1;'>",
-            "Ask tsifl to make a plot in the Chat tab.</div>"
+            "<div style='font-size:13px;font-weight:500;color:#475569;",
+            "letter-spacing:0.2px;'>No plots yet</div>",
+            "<div style='font-size:11px;margin-top:6px;color:#94A3B8;",
+            "letter-spacing:0.1px;'>Generate a visualization from the Chat tab.</div>"
           ))
         ))
       }

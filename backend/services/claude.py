@@ -1219,6 +1219,31 @@ When the user asks questions that need computed answers (statistics, p-values, c
    turn. ALWAYS read the actual col_names before writing filter/select
    /plot_ly/ggplot code that references columns by name.
 
+0b. COLUMN NAMES ARE NOT COLUMN TYPES. Just because a column exists
+    doesn't mean it's the type you assume. FIFA 21 specifically:
+    - `Height` is a CHARACTER string like `"5'9\""` or `"5'11\""` — NOT
+      centimeters, NOT numeric. Feed it directly to `plot_ly(y = ~Height)`
+      and the plot will treat it as a categorical axis OR error on the
+      arithmetic you implied.
+    - `Weight` is `"159lbs"` — CHARACTER, not kilograms.
+    - `X.OVA` IS numeric (0-99).
+    When using any dataset for the first time, before plotting or
+    modeling, CLEAN the columns IN THE SAME code block:
+      ```r
+      # Convert 5'9" → total inches as numeric
+      h_in <- sapply(strsplit(df$Height, "'"), function(x) {
+        as.numeric(x[1]) * 12 + as.numeric(gsub("\"", "", x[2]))
+      })
+      # Convert 159lbs → numeric lbs
+      w_lb <- as.numeric(gsub("lbs", "", df$Weight))
+      df$Height_num <- h_in
+      df$Weight_num <- w_lb
+      ```
+    Then plot against `Height_num` / `Weight_num`. Never label an axis
+    "(cm)" or "(kg)" unless you actually converted to those units.
+    Prefer inches + lbs (the source units) unless the user asked for
+    metric.
+
 1. NEVER hardcode computed values (p-values, R-squared, coefficients, means, SDs) into cat() or comments. If the user shows you a previous output with "R² = 0.7611", DO NOT just echo `cat("R² = 0.7611")`. RE-RUN the model and let summary() produce the number. The whole point of tsifl is verifying, not parroting.
 2. NEVER produce code that is mostly comments with a single cat() hardcoded value. Every analytical question requires a real R function call (lm, t.test, cor, chisq.test, etc.).
 3. EVERY question from the user must have a corresponding print()/summary()/cat() of the ACTUAL COMPUTED RESULT, not a pre-written answer.
@@ -1456,6 +1481,37 @@ Do these via run_r_code with the rstudioapi package:
 - **Clear the environment:** `rm(list = ls())` — ALWAYS ask first
 - **Restart R:** `rstudioapi::restartSession()` — ask first, destroys state
 
+- **Create / save an R Markdown or R script file for the user:**
+  Use a single run_r_code that writes the file content with writeLines
+  and then opens it in the editor via rstudioapi::navigateToFile().
+  Use target="console" so the editor doesn't get a stray tab with the
+  generator code, and the user immediately sees the real Rmd/R file
+  they asked for.
+  ```r
+  rmd_text <- '---
+  title: "Analysis"
+  output: html_document
+  ---
+
+  ```{r setup, include=FALSE}
+  knitr::opts_chunk$set(echo = TRUE)
+  library(plotly)
+  ```
+
+  ... full Rmd body here ...
+  '
+  out_path <- "~/Downloads/analysis.Rmd"
+  writeLines(rmd_text, out_path)
+  rstudioapi::navigateToFile(out_path)
+  cat("Wrote", out_path, "\n")
+  ```
+  The R string literal MUST be constructed carefully so the triple
+  backticks inside Rmd chunks don't terminate your R string. Safe
+  approach: use single-quoted R strings and escape any single quotes
+  inside with backslash, OR wrap in paste0() with components.
+  NEVER emit the Rmd content as markdown in your reply text — it has
+  to go INSIDE a run_r_code action so the file actually gets written.
+
 Any of these should go through run_r_code with target="console" so the
 editor tab isn't polluted with one-off IDE commands.
 
@@ -1463,6 +1519,8 @@ User-facing phrases that map to these operations:
 - "delete the R scripts that are open" / "close all tabs" → documentClose loop
 - "wipe my environment" / "clear everything" → rm(list = ls()) after confirm
 - "restart R" / "reload R" → restartSession() after confirm
+- "create an Rmd / save as Rmd / make a knittable Rmd" → writeLines + navigateToFile
+- "export to a script" / "save this as a .R file" → same pattern, .R extension
 
 ### DESTRUCTIVE OPERATIONS — CONFIRM FIRST, NEVER SILENTLY HANG
 Anything that DELETES, REMOVES, OVERWRITES, or CLEARS user state is
@@ -3047,6 +3105,50 @@ def _parse_tool_response(response) -> dict:
         # Apply strips from end to start so earlier indices stay valid
         for s, e in sorted(strip_spans, key=lambda x: -x[0]):
             reply = reply[:s] + reply[e:]
+
+        # Form 5: LEAKED RMD CONTENT. Users ask "make this a knittable Rmd"
+        # and the model sometimes emits the Rmd text inline in the reply
+        # (complete with ```{r} chunk fences) instead of inside a run_r_code
+        # that writes the file. Detect this by looking for the Rmd header
+        # pattern (YAML block with --- delimiters + title/output) AND an
+        # indication the user asked for an Rmd file. If we find both, wrap
+        # the whole Rmd into a writeLines call that saves it to Downloads.
+        msg_lower_for_rmd = ""  # set later if we need it
+        has_rmd_header = bool(re.search(
+            r"^---\s*\n.*?\n---\s*\n",
+            reply or "", re.DOTALL | re.MULTILINE
+        ))
+        has_rmd_chunk = bool(re.search(
+            r"```\{?r[ ,\}]", reply or "", re.IGNORECASE
+        ))
+        # Ask for Rmd in the original user message? (we're inside
+        # _parse_tool_response which doesn't have the user msg directly;
+        # rely on reply-side signals only to avoid false positives)
+        reply_looks_like_rmd = has_rmd_header and has_rmd_chunk
+
+        if reply_looks_like_rmd and not any(
+            a.get("type") == "run_r_code" for a in actions + rescued_actions
+        ):
+            # Escape single quotes so we can wrap in single-quoted R string
+            rmd_escaped = (reply or "").replace("\\", "\\\\").replace("'", "\\'")
+            wrap_code = (
+                "rmd_content <- '" + rmd_escaped + "'\n"
+                'out_path <- path.expand("~/Downloads/tsifl_analysis.Rmd")\n'
+                "writeLines(rmd_content, out_path)\n"
+                "cat('Wrote', out_path, '\\n')\n"
+                "tryCatch(rstudioapi::navigateToFile(out_path), error = function(e) {})\n"
+            )
+            rescued_actions.append({
+                "type": "run_r_code",
+                "payload": {"code": wrap_code, "target": "console"},
+            })
+            # Blank the leaked text entirely — keep only a brief note
+            reply = (
+                "Saved your R Markdown to `~/Downloads/tsifl_analysis.Rmd` "
+                "and opened it in the editor. Hit the Knit button when you're "
+                "ready to render it."
+            )
+            logger.info("[rescue] Caught leaked Rmd content, wrapped into writeLines")
 
         # Consolidate rescued pieces into actions
         if rescued_actions:
