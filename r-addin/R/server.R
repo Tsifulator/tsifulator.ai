@@ -1336,17 +1336,39 @@ run_tsifl_server <- function(port = 7444) {
     # tracking and sometimes blew up the whole render.
     output$plot_list_ui <- shiny::renderUI({
       pf <- plot_files()
-      if (length(pf) == 0) {
-        return(shiny::div(id = "plot_list_empty",
-                          "No plots yet — generate one in chat"))
-      }
       paths  <- unname(as.character(pf))
       labels <- names(pf)
       if (is.null(labels) || length(labels) != length(paths)) {
         labels <- paste0("Plot ", seq_along(paths))
       }
       sel <- shiny::isolate(selected_plot())
-      if (is.null(sel) || !(sel %in% paths)) sel <- paths[1]
+      if (is.null(sel) || !(sel %in% paths)) {
+        sel <- if (length(paths) > 0) paths[1] else NULL
+      }
+
+      # Inline debug banner — prints version + state inline so we can
+      # see what plot_list_ui actually receives without needing browser
+      # devtools. Remove once chip rendering is verified end-to-end.
+      debug_banner <- shiny::div(
+        style = paste(
+          "background:#FEF3C7;color:#78350F;padding:6px 10px;",
+          "font-size:10px;font-family:monospace;border-radius:3px;",
+          "margin-bottom:6px;border:1px solid #FCD34D;"
+        ),
+        sprintf("[v0.7.3 debug] paths=%d sel=%s labels[1]=%s",
+                length(paths),
+                if (is.null(sel)) "NULL" else basename(sel),
+                if (length(labels) > 0) labels[1] else "(none)")
+      )
+
+      if (length(paths) == 0) {
+        return(shiny::tagList(
+          debug_banner,
+          shiny::div(id = "plot_list_empty",
+                     "No plots yet — generate one in chat")
+        ))
+      }
+
       chips <- tryCatch(
         lapply(seq_along(paths), function(i) {
           is_sel <- identical(paths[i], sel)
@@ -1365,7 +1387,10 @@ run_tsifl_server <- function(port = 7444) {
           paste("tsifl: chip render error —", conditionMessage(e))
         ))
       )
-      shiny::div(class = "plot_chip_row", chips)
+      shiny::tagList(
+        debug_banner,
+        do.call(shiny::div, c(list(class = "plot_chip_row"), chips))
+      )
     })
 
     shiny::observeEvent(input$plot_picker_change, {
