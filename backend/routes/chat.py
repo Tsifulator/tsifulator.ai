@@ -814,6 +814,15 @@ async def debug_postprocess_version():
     """Verify which version of postprocessing code is deployed."""
     return {"e15_formula": "=I5", "version": "v2_fixed_2026-04-12", "data_table_injection": "disabled"}
 
+@router.get("/debug/attachment-config")
+async def debug_attachment_config():
+    """Verify attachment routing code is deployed (built 2026-04-20)."""
+    return {
+        "saveable_extensions": sorted(_SAVEABLE_EXTENSIONS),
+        "rstudio_hint_active": True,
+        "build_tag": "tsifl-0.6.9-attachments",
+    }
+
 @router.get("/debug")
 async def debug():
     """Quick test: does the tool call work and return actions?"""
