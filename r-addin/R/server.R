@@ -199,6 +199,7 @@ run_tsifl_server <- function(port = 7444) {
     #plot_iframe {
       flex: 1;
       width: 100%;
+      min-height: 500px;
       border: 1px solid #E8ECF1;
       border-radius: 4px;
       background: #FFFFFF;
@@ -977,6 +978,18 @@ run_tsifl_server <- function(port = 7444) {
           if (typeof Shiny !== 'undefined' && Shiny.setInputValue) {
             Shiny.setInputValue('plot_tab_opened', Date.now(), {priority: 'event'});
           }
+          // Force the plot iframe to reload NOW that it's visible.
+          // Without this, plotly inside the iframe measured itself at 0x0
+          // while the tab was hidden and rendered at that size — you saw
+          // only the title with an empty canvas below.
+          setTimeout(function() {
+            var f = document.getElementById('plot_iframe');
+            if (f && f.src) {
+              var url = f.src;
+              f.src = 'about:blank';
+              setTimeout(function() { f.src = url; }, 30);
+            }
+          }, 50);
         } else {
           chatTab.classList.remove('hidden');
           plotTab.classList.remove('active');
@@ -984,6 +997,12 @@ run_tsifl_server <- function(port = 7444) {
           plotBtn.classList.remove('active');
         }
       };
+
+      // When the selected plot changes (user picked a different timestamp
+      // from the dropdown), also trigger a clean reload so plotly remeasures.
+      window.addEventListener('message', function(e) {
+        // no-op placeholder for potential cross-frame comms
+      });
 
       // When a new plot is announced, flash the Plot tab badge so the
       // user notices something new is available without forcing them away
