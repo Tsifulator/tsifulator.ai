@@ -1693,6 +1693,31 @@ run_tsifl_server <- function(port = 7444) {
       if (nchar(msg) == 0) return()
       cat("[tsifl] send_message received:", length(images), "images\n")
 
+      # Mirror data-file attachments to LOCAL /tmp/ so the R code the
+      # model generates (which runs on this Mac) can actually read them.
+      # The backend ALSO saves them to /tmp/ on its side, and emits a
+      # system hint telling the model "load from /tmp/<name>". Without
+      # this local mirror the model's read_csv("/tmp/x.csv") would fail
+      # — the backend's /tmp/ is on Railway, not here.
+      local_dataset_exts <- c("csv", "tsv", "txt", "json", "xml",
+                              "xlsx", "xls", "docx", "doc", "pptx", "ppt")
+      for (img in images) {
+        fname <- if (is.null(img$file_name)) "" else img$file_name
+        if (!nzchar(fname)) next
+        ext <- tolower(tools::file_ext(fname))
+        if (!(ext %in% local_dataset_exts)) next
+        safe <- gsub("[/ ]+", "_", fname)
+        local_path <- file.path("/tmp", safe)
+        tryCatch({
+          raw_bytes <- base64enc::base64decode(img$data)
+          writeBin(raw_bytes, local_path)
+        }, error = function(e) {
+          cat("[tsifl] warning: could not mirror ", fname,
+              " to ", local_path, ": ", conditionMessage(e), "\n",
+              sep = "")
+        })
+      }
+
       # Input already cleared by JS — just show user message + start thinking
       add_message("user", msg, images = if (length(images) > 0) images else NULL)
       set_status("thinking")
