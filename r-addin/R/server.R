@@ -595,8 +595,10 @@ run_tsifl_server <- function(port = 7444) {
       # Horizontal scroll strip of clickable chips, one per saved plot.
       # Replaces the old hidden <select> dropdown — analysts see every
       # plot at once and can flip between them with a single click.
+      # NOT inline=TRUE: Shiny would wrap in <span>, then our <div>
+      # chip_row child is invalid HTML and gets stripped silently.
       shiny::div(id = "plot_list_strip",
-        shiny::uiOutput("plot_list_ui", inline = TRUE)
+        shiny::uiOutput("plot_list_ui")
       ),
       shiny::div(id = "plot_iframe_wrap",
         shiny::uiOutput("plot_iframe_ui")
