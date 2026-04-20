@@ -134,23 +134,41 @@
               html_path <- NULL
               file.copy(plot_file, png_path, overwrite = TRUE)
 
-              # If the code used plotly/etc., save the last top-level widget
-              # to HTML for interactive viewing. Look for the most recent
-              # htmlwidget object in .GlobalEnv (fig, p, etc. — common names).
+              # If the code used plotly/etc., save the htmlwidget to HTML for
+              # interactive viewing. Scan ALL .GlobalEnv objects (not just
+              # known names like fig/p) so user-chosen variable names like
+              # `p3d`, `interactive_plot`, `my_fig` also work. Pick the
+              # MOST RECENTLY ASSIGNED widget if multiple exist.
               if (has_htmlwidget &&
                   requireNamespace("htmlwidgets", quietly = TRUE)) {
-                widget_candidates <- c("fig", "p", "plt", "chart",
-                                       "viz", "widget", ".Last.value")
                 widget_obj <- NULL
-                for (nm in widget_candidates) {
-                  obj <- tryCatch(get(nm, envir = .GlobalEnv),
-                                  error = function(e) NULL)
-                  if (!is.null(obj) &&
-                      (inherits(obj, "htmlwidget") ||
-                       inherits(obj, "plotly") ||
-                       inherits(obj, "datatables"))) {
-                    widget_obj <- obj
-                    break
+                # First, prefer .Last.value — it's whatever was last
+                # auto-printed at the top level (usually the final
+                # `plot_ly(...)` expression).
+                lv <- tryCatch(get(".Last.value", envir = baseenv()),
+                               error = function(e) NULL)
+                if (!is.null(lv) &&
+                    (inherits(lv, "htmlwidget") ||
+                     inherits(lv, "plotly") ||
+                     inherits(lv, "datatables"))) {
+                  widget_obj <- lv
+                }
+                # Fall back: scan every user object in .GlobalEnv for any
+                # htmlwidget. Skip our internal plumbing objects.
+                if (is.null(widget_obj)) {
+                  internal_skip <- c(".tsifl_watcher", ".tsifl_capture",
+                                     ".tsifl_listener_capture",
+                                     ".tsifl_listener_poll")
+                  for (nm in setdiff(ls(.GlobalEnv), internal_skip)) {
+                    obj <- tryCatch(get(nm, envir = .GlobalEnv),
+                                    error = function(e) NULL)
+                    if (!is.null(obj) &&
+                        (inherits(obj, "htmlwidget") ||
+                         inherits(obj, "plotly") ||
+                         inherits(obj, "datatables"))) {
+                      widget_obj <- obj
+                      break
+                    }
                   }
                 }
                 if (!is.null(widget_obj)) {
@@ -162,6 +180,16 @@
                       html_path <<- NULL
                     }
                   )
+                  # Sanity-check: if the saved HTML is suspiciously small or
+                  # has no data traces, log a diagnostic so we can tell a
+                  # "saved but empty" case from "didn't save at all".
+                  if (!is.null(html_path) && file.exists(html_path)) {
+                    sz <- file.info(html_path)$size
+                    if (sz < 10000) {
+                      cat("tsifl warning: saved widget is only", sz,
+                          "bytes — likely empty. Check data filtering.\n")
+                    }
+                  }
                 }
               }
 
