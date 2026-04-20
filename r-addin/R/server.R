@@ -686,7 +686,15 @@ run_tsifl_server <- function(port = 7444) {
         txt: 'text/plain', json: 'application/json', xml: 'application/xml',
         r: 'text/x-r-source', rmd: 'text/x-r-markdown',
         md: 'text/markdown', html: 'text/html', htm: 'text/html',
-        py: 'text/x-python', js: 'application/javascript'
+        py: 'text/x-python', js: 'application/javascript',
+        xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        xls: 'application/vnd.ms-excel',
+        docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        doc: 'application/msword',
+        pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        ppt: 'application/vnd.ms-powerpoint',
+        pdf: 'application/pdf',
+        png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif'
       };
       function readFileAsBase64(file) {
         var reader = new FileReader();
@@ -1292,19 +1300,21 @@ run_tsifl_server <- function(port = 7444) {
 
     # Push plot count to JS so the badge on the Plot tab updates as new
     # plots come in (without forcing the user to switch away from chat).
+    # unname() is important: pf carries chip labels as names, and a
+    # named character in selected_plot breaks identical() comparisons
+    # later in the chip render.
     shiny::observe({
       pf <- plot_files()
       session$sendCustomMessage("plot_count_update", list(count = length(pf)))
-      # Auto-select most recent if nothing chosen yet
       if (is.null(shiny::isolate(selected_plot())) && length(pf) > 0) {
-        selected_plot(pf[1])
+        selected_plot(unname(as.character(pf[1])))
       }
     })
 
     # When the user opens the Plot tab, snap selection to most recent
     shiny::observeEvent(input$plot_tab_opened, {
       pf <- plot_files()
-      if (length(pf) > 0) selected_plot(pf[1])
+      if (length(pf) > 0) selected_plot(unname(as.character(pf[1])))
     })
 
     # Render the horizontal chip strip — one chip per saved plot. Each
@@ -1313,33 +1323,42 @@ run_tsifl_server <- function(port = 7444) {
     # fallback. Clicking any chip loads that plot in the pane below.
     #
     # IMPORTANT: type="button" prevents the default submit behaviour
-    # <button> inherits in HTML — without it, Shiny's input wrapping
-    # treats the click as a form submission, re-renders the UI, and
-    # the selection change is lost. That was the "can't click chips"
-    # bug.
+    # <button> inherits in HTML. We also unname(pf) before iterating —
+    # comparing named vs unnamed character vectors with identical()
+    # returns FALSE even when values match, which broke selection
+    # tracking and sometimes blew up the whole render.
     output$plot_list_ui <- shiny::renderUI({
       pf <- plot_files()
       if (length(pf) == 0) {
         return(shiny::div(id = "plot_list_empty",
                           "No plots yet — generate one in chat"))
       }
+      paths  <- unname(as.character(pf))
+      labels <- names(pf)
+      if (is.null(labels) || length(labels) != length(paths)) {
+        labels <- paste0("Plot ", seq_along(paths))
+      }
       sel <- shiny::isolate(selected_plot())
-      if (is.null(sel) || !(sel %in% pf)) sel <- pf[1]
-      shiny::div(
-        class = "plot_chip_row",
-        lapply(seq_along(pf), function(i) {
-          is_sel <- identical(pf[i], sel)
+      if (is.null(sel) || !(sel %in% paths)) sel <- paths[1]
+      chips <- tryCatch(
+        lapply(seq_along(paths), function(i) {
+          is_sel <- identical(paths[i], sel)
           shiny::tags$button(
             type = "button",
             class = paste("plot_chip", if (is_sel) "selected" else ""),
             onclick = sprintf(
-              "event.preventDefault(); Shiny.setInputValue('plot_picker_change', '%s', {priority: 'event'});",
-              gsub("'", "\\\\'", pf[i], fixed = TRUE)
+              "Shiny.setInputValue('plot_picker_change', '%s', {priority: 'event'}); return false;",
+              gsub("'", "\\\\'", paths[i], fixed = TRUE)
             ),
-            names(pf)[i]
+            labels[i]
           )
-        })
+        }),
+        error = function(e) list(shiny::div(
+          style = "color:#DC2626;font-size:11px;padding:4px 8px;",
+          paste("tsifl: chip render error —", conditionMessage(e))
+        ))
       )
+      shiny::div(class = "plot_chip_row", chips)
     })
 
     shiny::observeEvent(input$plot_picker_change, {

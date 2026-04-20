@@ -31,7 +31,10 @@ except Exception as _cu_import_err:
         return None
 
 # File extensions that should be saved to /tmp/ for import_csv
-_SAVEABLE_EXTENSIONS = {".csv", ".tsv", ".txt", ".json", ".xml"}
+_SAVEABLE_EXTENSIONS = {
+    ".csv", ".tsv", ".txt", ".json", ".xml",
+    ".xlsx", ".xls", ".docx", ".doc", ".pptx", ".ppt",
+}
 
 router = APIRouter()
 
@@ -943,20 +946,39 @@ async def chat(request: ChatRequest):
         paths_str = ", ".join(saved_file_paths)
         message = f"{message}\n\n[SYSTEM: The user uploaded data files that have been saved to the server. Use import_csv to import them into the spreadsheet. File paths: {paths_str}]"
     elif saved_file_paths and app == "rstudio":
-        # For R, the CSV was stripped from the attachment list above, so the
-        # model never sees its contents — it needs to read_csv() from disk
-        # instead. Without this hint it hallucinates code against a data
-        # frame that doesn't exist in .GlobalEnv.
-        paths_quoted = ", ".join(f'"{p}"' for p in saved_file_paths)
+        # For R, the file was stripped from the attachment list above, so the
+        # model never sees its contents — it needs to load it from disk
+        # instead. Tailor the loader to the file type (CSV, Excel, Word,
+        # PowerPoint, JSON, TXT). Without this hint the model hallucinates
+        # code against data that doesn't exist in .GlobalEnv.
+        _LOADERS = {
+            ".csv":  'readr::read_csv',
+            ".tsv":  'readr::read_tsv',
+            ".txt":  'readLines',
+            ".json": 'jsonlite::fromJSON',
+            ".xml":  'xml2::read_xml',
+            ".xlsx": 'readxl::read_excel',
+            ".xls":  'readxl::read_excel',
+            ".docx": 'officer::read_docx',
+            ".doc":  'officer::read_docx',
+            ".pptx": 'officer::read_pptx',
+            ".ppt":  'officer::read_pptx',
+        }
+        lines = []
+        for p in saved_file_paths:
+            ext = ("." + p.rsplit(".", 1)[-1].lower()) if "." in p else ""
+            loader = _LOADERS.get(ext, "# load manually")
+            lines.append(f'- {p}  →  {loader}("{p}")')
+        listing = "\n".join(lines)
         message = (
             f"{message}\n\n[SYSTEM: The user attached {len(saved_file_paths)} "
-            f"data file(s), saved to disk at: {paths_quoted}. "
-            "In your R code, load them FIRST via readr::read_csv() (or "
-            "read.csv() if readr isn't available), assigning to a "
-            "descriptively-named object (e.g. `oscars_data <- readr::read_csv(\"...\")`). "
-            "DO NOT assume the data is already in .GlobalEnv — it is not. "
-            "After loading, use str()/head() to inspect the columns before "
-            "referring to any variable name. Never invent column names."
+            "file(s) that have been saved to disk. You MUST load each one "
+            "before referencing its contents — the data is NOT in .GlobalEnv:\n"
+            f"{listing}\n"
+            "If the loader package isn't installed, install.packages() it "
+            "first. After loading, inspect with str()/head() to discover the "
+            "real column or slide/paragraph names before writing code that "
+            "references them. NEVER invent column names or assume schema."
         )
 
     # Fetch cross-app context
