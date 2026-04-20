@@ -206,24 +206,29 @@ run_tsifl_server <- function(port = 7444) {
     }
     #plot_list_strip {
       flex-shrink: 0;
-      padding: 8px 14px 0 14px;
+      min-height: 44px;
+      padding: 8px 14px;
       overflow-x: auto;
       overflow-y: hidden;
-      white-space: nowrap;
       background: #FFFFFF;
       border-bottom: 1px solid #F1F5F9;
+      box-sizing: border-box;
     }
     #plot_list_strip::-webkit-scrollbar { height: 4px; }
     #plot_list_strip::-webkit-scrollbar-thumb {
       background: #E2E8F0;
       border-radius: 2px;
     }
-    #plot_list_strip .plot_chip_row {
-      display: inline-flex;
+    #plot_list_ui { display: block; width: 100%; }
+    .plot_chip_row {
+      display: flex;
+      flex-wrap: nowrap;
       gap: 6px;
-      padding-bottom: 8px;
+      width: max-content;
+      min-width: 100%;
     }
     .plot_chip {
+      flex-shrink: 0;
       padding: 6px 10px;
       font-size: 11px;
       font-weight: 500;
@@ -236,7 +241,7 @@ run_tsifl_server <- function(port = 7444) {
       font-family: inherit;
       white-space: nowrap;
       transition: all 0.12s ease;
-      max-width: 200px;
+      max-width: 220px;
       overflow: hidden;
       text-overflow: ellipsis;
     }
