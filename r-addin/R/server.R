@@ -204,6 +204,61 @@ run_tsifl_server <- function(port = 7444) {
       border-radius: 4px;
       background: #FFFFFF;
     }
+    #plot_list_strip {
+      flex-shrink: 0;
+      padding: 8px 14px 0 14px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      white-space: nowrap;
+      background: #FFFFFF;
+      border-bottom: 1px solid #F1F5F9;
+    }
+    #plot_list_strip::-webkit-scrollbar { height: 4px; }
+    #plot_list_strip::-webkit-scrollbar-thumb {
+      background: #E2E8F0;
+      border-radius: 2px;
+    }
+    #plot_list_strip .plot_chip_row {
+      display: inline-flex;
+      gap: 6px;
+      padding-bottom: 8px;
+    }
+    .plot_chip {
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.2px;
+      color: #475569;
+      background: #FFFFFF;
+      border: 1px solid #E2E8F0;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: inherit;
+      white-space: nowrap;
+      transition: all 0.12s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .plot_chip:hover {
+      color: #0F172A;
+      border-color: #CBD5E1;
+      background: #F8FAFC;
+    }
+    .plot_chip.selected {
+      color: #FFFFFF;
+      background: #0F172A;
+      border-color: #0F172A;
+    }
+    .plot_chip .chip_icon { font-size: 10px; opacity: 0.75; }
+    .plot_chip.selected .chip_icon { opacity: 1; }
+    #plot_list_empty {
+      display: inline-block;
+      padding: 2px 4px 10px 4px;
+      color: #94A3B8;
+      font-size: 11px;
+      letter-spacing: 0.1px;
+    }
     #plot_empty_state {
       flex: 1;
       display: flex;
@@ -532,13 +587,18 @@ run_tsifl_server <- function(port = 7444) {
     # ── Plot tab content (hidden until user clicks Plot) ─────────────
     shiny::div(id = "plot_tab",
       shiny::div(id = "plot_toolbar",
-        shiny::uiOutput("plot_dropdown_ui", inline = TRUE),
         shiny::tags$button(id = "plot_open_browser_btn",
                           onclick = "Shiny.setInputValue('plot_open_browser', Date.now(), {priority: 'event'});",
                           "Open in browser"),
         shiny::tags$button(id = "plot_save_btn",
                           onclick = "Shiny.setInputValue('plot_save_downloads', Date.now(), {priority: 'event'});",
                           "Save")
+      ),
+      # Horizontal scroll strip of clickable chips, one per saved plot.
+      # Replaces the old hidden <select> dropdown — analysts see every
+      # plot at once and can flip between them with a single click.
+      shiny::div(id = "plot_list_strip",
+        shiny::uiOutput("plot_list_ui", inline = TRUE)
       ),
       shiny::div(id = "plot_iframe_wrap",
         shiny::uiOutput("plot_iframe_ui")
@@ -619,15 +679,28 @@ run_tsifl_server <- function(port = 7444) {
       window.addEventListener('paste', handlePasteEvent, true);
       document.addEventListener('paste', handlePasteEvent, true);
 
-      // Read any file → base64
+      // Read any file → base64. Browsers often leave file.type empty for
+      // CSV/TSV/R scripts, so infer from the extension — otherwise the
+      // backend treats it as opaque octet-stream and strips it before it
+      // ever reaches the model.
+      var EXT_TO_MEDIA = {
+        csv: 'text/csv', tsv: 'text/tab-separated-values',
+        txt: 'text/plain', json: 'application/json', xml: 'application/xml',
+        r: 'text/x-r-source', rmd: 'text/x-r-markdown',
+        md: 'text/markdown', html: 'text/html', htm: 'text/html',
+        py: 'text/x-python', js: 'application/javascript'
+      };
       function readFileAsBase64(file) {
         var reader = new FileReader();
         reader.onload = function() {
           var base64 = reader.result;
           var isImage = file.type && file.type.startsWith('image/');
-          var mediaType = file.type || (isImage ? 'image/png' : 'application/octet-stream');
+          var name = file.name || '';
+          var ext = (name.indexOf('.') >= 0) ? name.split('.').pop().toLowerCase() : '';
+          var mediaType = file.type ||
+                          (isImage ? 'image/png' : (EXT_TO_MEDIA[ext] || 'application/octet-stream'));
           var data = base64.split(',')[1];
-          pendingImages.push({ media_type: mediaType, data: data, file_name: file.name || '' });
+          pendingImages.push({ media_type: mediaType, data: data, file_name: name });
           updatePreview();
         };
         reader.readAsDataURL(file);
@@ -1155,14 +1228,16 @@ run_tsifl_server <- function(port = 7444) {
       error = function(e) {}
     )
 
-    # Reactive list of available plots (refreshed when user opens Plot
-    # tab OR every 5s while it's open). Returns named vector of "label" =
-    # "filename", sorted newest first.
+    # Reactive list of available plots — both interactive (.html from
+    # plotly/leaflet/DT) and static (.png from ggplot/base). When a single
+    # plot produced both (timestamp-matched pair), prefer the .html so the
+    # user gets the interactive version.
     plot_files <- shiny::reactivePoll(
       intervalMillis = 5000,
       session = session,
       checkFunc = function() {
-        files <- list.files("/tmp/.tsifl_plots", pattern = "\\.html$",
+        files <- list.files("/tmp/.tsifl_plots",
+                            pattern = "\\.(html|png)$",
                             full.names = TRUE)
         if (length(files) == 0) return(0)
         # sum() doesn't work on POSIXct directly — convert to numeric
@@ -1171,15 +1246,28 @@ run_tsifl_server <- function(port = 7444) {
         sum(as.numeric(file.info(files)$mtime))
       },
       valueFunc = function() {
-        files <- list.files("/tmp/.tsifl_plots", pattern = "\\.html$",
+        files <- list.files("/tmp/.tsifl_plots",
+                            pattern = "\\.(html|png)$",
                             full.names = TRUE)
         if (length(files) == 0) return(character(0))
+        # Dedup: the listener writes plot_TS.png and plot_TS.html for the
+        # same plot when both are available. Group by stem; prefer .html.
+        stems <- tools::file_path_sans_ext(basename(files))
+        exts  <- tools::file_ext(files)
+        keep  <- logical(length(files))
+        for (s in unique(stems)) {
+          idx <- which(stems == s)
+          html_idx <- idx[exts[idx] == "html"]
+          if (length(html_idx) > 0) {
+            keep[html_idx[1]] <- TRUE
+          } else {
+            keep[idx[1]] <- TRUE
+          }
+        }
+        files <- files[keep]
         info <- file.info(files)
         ord  <- order(info$mtime, decreasing = TRUE)
         files <- files[ord]
-        # Use basename as both label (humanized) and value (the URL
-        # fragment we'll iframe).
-        labels <- basename(files)
         # Format like "Plot — 5:42 PM" using the file timestamp
         labels <- vapply(seq_along(files), function(i) {
           mt <- info$mtime[ord[i]]
@@ -1209,21 +1297,32 @@ run_tsifl_server <- function(port = 7444) {
       if (length(pf) > 0) selected_plot(pf[1])
     })
 
-    # Render the dropdown of plots
-    output$plot_dropdown_ui <- shiny::renderUI({
+    # Render the horizontal chip strip — one chip per saved plot, with
+    # a tiny icon marking static (PNG) vs interactive (HTML). Clicking
+    # any chip loads that plot in the main pane below.
+    output$plot_list_ui <- shiny::renderUI({
       pf <- plot_files()
       if (length(pf) == 0) {
-        return(shiny::span("No plots yet — generate one in chat",
-                           style = "color:#94A3B8;font-size:12px;"))
+        return(shiny::div(id = "plot_list_empty",
+                          "No plots yet — generate one in chat"))
       }
       sel <- shiny::isolate(selected_plot())
       if (is.null(sel) || !(sel %in% pf)) sel <- pf[1]
-      shiny::tags$select(
-        id = "plot_picker",
-        onchange = "Shiny.setInputValue('plot_picker_change', this.value, {priority: 'event'});",
+      shiny::div(
+        class = "plot_chip_row",
         lapply(seq_along(pf), function(i) {
-          shiny::tags$option(value = pf[i], selected = if (pf[i] == sel) "selected" else NULL,
-                             names(pf)[i])
+          is_html <- identical(tolower(tools::file_ext(pf[i])), "html")
+          is_sel  <- identical(pf[i], sel)
+          icon    <- if (is_html) "\u26A1" else "\U0001F4CA"
+          shiny::tags$button(
+            class = paste("plot_chip", if (is_sel) "selected" else ""),
+            onclick = sprintf(
+              "Shiny.setInputValue('plot_picker_change', '%s', {priority: 'event'});",
+              gsub("'", "\\\\'", pf[i], fixed = TRUE)
+            ),
+            shiny::tags$span(class = "chip_icon", icon),
+            shiny::tags$span(names(pf)[i])
+          )
         })
       )
     })
@@ -1232,7 +1331,8 @@ run_tsifl_server <- function(port = 7444) {
       selected_plot(input$plot_picker_change)
     })
 
-    # Render the iframe pointing at /plots/<basename>
+    # Render an iframe (for .html htmlwidgets) or an <img> (for .png
+    # ggplot/base plots) pointing at /plots/<basename>.
     output$plot_iframe_ui <- shiny::renderUI({
       sel <- selected_plot()
       pf <- plot_files()
@@ -1247,7 +1347,23 @@ run_tsifl_server <- function(port = 7444) {
         ))
       }
       url <- paste0("plots/", basename(sel))
-      shiny::tags$iframe(id = "plot_iframe", src = url, frameborder = "0")
+      if (identical(tolower(tools::file_ext(sel)), "html")) {
+        shiny::tags$iframe(id = "plot_iframe", src = url, frameborder = "0")
+      } else {
+        # Static PNG — wrap in the same #plot_iframe shell (reuses the
+        # border/background/min-height styling) but center the image.
+        shiny::tags$div(
+          id = "plot_iframe",
+          style = paste(
+            "display:flex; align-items:center; justify-content:center;",
+            "padding:16px; box-sizing:border-box;"
+          ),
+          shiny::tags$img(
+            src = url,
+            style = "max-width:100%; max-height:100%; object-fit:contain;"
+          )
+        )
+      }
     })
 
     # "Open in browser" button
@@ -1257,8 +1373,9 @@ run_tsifl_server <- function(port = 7444) {
       tryCatch(utils::browseURL(sel), error = function(e) {})
     })
 
-    # "Save to Downloads" button — copies the HTML (and matching PNG if
-    # present) to ~/Downloads/ with a friendly timestamped name.
+    # "Save to Downloads" button — copies the selected plot (HTML and/or
+    # PNG) to ~/Downloads/ with a friendly timestamped name. Bosses paste
+    # PNGs into decks, so we always copy the PNG when it exists.
     shiny::observeEvent(input$plot_save_downloads, {
       sel <- selected_plot()
       if (is.null(sel) || !file.exists(sel)) return()
@@ -1266,18 +1383,25 @@ run_tsifl_server <- function(port = 7444) {
         downloads_dir <- path.expand("~/Downloads")
         if (!dir.exists(downloads_dir)) dir.create(downloads_dir, recursive = TRUE)
         ts_tag <- format(Sys.time(), "%Y%m%d_%H%M%S")
-        html_target <- file.path(downloads_dir, paste0("tsifl_plot_", ts_tag, ".html"))
-        file.copy(sel, html_target, overwrite = TRUE)
-        # If a sibling PNG exists, copy that too — bosses paste PNGs into decks
-        png_src <- sub("\\.html$", ".png", sel)
-        if (file.exists(png_src)) {
-          png_target <- file.path(downloads_dir, paste0("tsifl_plot_", ts_tag, ".png"))
-          file.copy(png_src, png_target, overwrite = TRUE)
+        stem <- tools::file_path_sans_ext(sel)
+        html_src <- paste0(stem, ".html")
+        png_src  <- paste0(stem, ".png")
+        saved <- character(0)
+        if (file.exists(html_src)) {
+          html_target <- file.path(downloads_dir,
+                                   paste0("tsifl_plot_", ts_tag, ".html"))
+          file.copy(html_src, html_target, overwrite = TRUE)
+          saved <- c(saved, ".html")
         }
-        # Tell the user it worked via a toast in the chat
+        if (file.exists(png_src)) {
+          png_target <- file.path(downloads_dir,
+                                  paste0("tsifl_plot_", ts_tag, ".png"))
+          file.copy(png_src, png_target, overwrite = TRUE)
+          saved <- c(saved, ".png")
+        }
         add_message("action",
           paste0("Saved plot to Downloads as tsifl_plot_", ts_tag,
-                 if (file.exists(png_src)) ".html + .png" else ".html"))
+                 " (", paste(saved, collapse = " + "), ")"))
       }, error = function(e) {
         add_message("action",
           paste0("Could not save plot: ", conditionMessage(e)))

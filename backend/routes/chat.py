@@ -942,6 +942,22 @@ async def chat(request: ChatRequest):
     if saved_file_paths and app in {"excel", "google_sheets"}:
         paths_str = ", ".join(saved_file_paths)
         message = f"{message}\n\n[SYSTEM: The user uploaded data files that have been saved to the server. Use import_csv to import them into the spreadsheet. File paths: {paths_str}]"
+    elif saved_file_paths and app == "rstudio":
+        # For R, the CSV was stripped from the attachment list above, so the
+        # model never sees its contents — it needs to read_csv() from disk
+        # instead. Without this hint it hallucinates code against a data
+        # frame that doesn't exist in .GlobalEnv.
+        paths_quoted = ", ".join(f'"{p}"' for p in saved_file_paths)
+        message = (
+            f"{message}\n\n[SYSTEM: The user attached {len(saved_file_paths)} "
+            f"data file(s), saved to disk at: {paths_quoted}. "
+            "In your R code, load them FIRST via readr::read_csv() (or "
+            "read.csv() if readr isn't available), assigning to a "
+            "descriptively-named object (e.g. `oscars_data <- readr::read_csv(\"...\")`). "
+            "DO NOT assume the data is already in .GlobalEnv — it is not. "
+            "After loading, use str()/head() to inspect the columns before "
+            "referring to any variable name. Never invent column names."
+        )
 
     # Fetch cross-app context
     cross_app_context = ""

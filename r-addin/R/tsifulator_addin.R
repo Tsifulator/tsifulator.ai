@@ -87,6 +87,18 @@
                                        function(k) grepl(k, code, fixed = TRUE)))
           if (has_plot) try(unlink(plot_file), silent = TRUE)
 
+          # htmlwidgets (plotly, leaflet, DT) auto-print by calling
+          # getOption("viewer")(url) — which routes to RStudio's Viewer
+          # pane, the same pane hosting tsifl. That displaces tsifl
+          # entirely. Install a no-op viewer while we execute user code so
+          # the widget doesn't hijack the pane; we capture the object from
+          # .Last.value / .GlobalEnv below and save it to our plots dir,
+          # which tsifl's Plot tab picks up via reactivePoll.
+          orig_viewer <- getOption("viewer")
+          if (has_htmlwidget) {
+            options(viewer = function(url, height = NULL) invisible(NULL))
+          }
+
           # Use source() with print.eval=TRUE instead of bare eval(parse(...))
           # so top-level expressions get auto-printed the same way they do at
           # the R prompt. Without this, `ggplot(...)` creates the object but
@@ -104,7 +116,12 @@
               print.eval = TRUE,  # auto-print top-level values (renders plots)
               max.deparse.length = 500
             )
-          }, error = function(e) cat("Error:", conditionMessage(e), "\n"))
+          }, error = function(e) cat("Error:", conditionMessage(e), "\n"),
+             finally = {
+               if (has_htmlwidget) {
+                 try(options(viewer = orig_viewer), silent = TRUE)
+               }
+             })
 
           # Best-effort plot capture
           plot_meta_data <- NULL
@@ -123,89 +140,125 @@
             }, error = function(e) {})
           }
 
-          # Timestamped copy of the plot for the chat UI to reference.
-          # This lets multiple plots exist in history without overwriting
-          # each other. PNG is always saved (static preview); HTML is saved
-          # separately if the code produced a plotly/htmlwidget.
-          if (file.exists(plot_file) && file.info(plot_file)$size > 200) {
+          # Resolve PNG and widget outputs independently. A ggplot/base
+          # plot produces a PNG but no widget; a plot_ly() call produces a
+          # widget but no PNG. Prior versions gated the entire save block
+          # on PNG existence, which silently dropped plotly-only plots.
+          png_ok <- file.exists(plot_file) && file.info(plot_file)$size > 200
+
+          widget_obj <- NULL
+          if (has_htmlwidget &&
+              requireNamespace("htmlwidgets", quietly = TRUE)) {
+            # Prefer .Last.value — the auto-printed result of the last
+            # top-level expression (usually the final plot_ly(...) call).
+            lv <- tryCatch(get(".Last.value", envir = baseenv()),
+                           error = function(e) NULL)
+            if (!is.null(lv) &&
+                (inherits(lv, "htmlwidget") ||
+                 inherits(lv, "plotly") ||
+                 inherits(lv, "datatables"))) {
+              widget_obj <- lv
+            }
+            # Fall back: scan user objects in .GlobalEnv for any
+            # htmlwidget so names like p3d / interactive_plot still work.
+            if (is.null(widget_obj)) {
+              internal_skip <- c(".tsifl_watcher", ".tsifl_capture",
+                                 ".tsifl_listener_capture",
+                                 ".tsifl_listener_poll")
+              for (nm in setdiff(ls(.GlobalEnv), internal_skip)) {
+                obj <- tryCatch(get(nm, envir = .GlobalEnv),
+                                error = function(e) NULL)
+                if (!is.null(obj) &&
+                    (inherits(obj, "htmlwidget") ||
+                     inherits(obj, "plotly") ||
+                     inherits(obj, "datatables"))) {
+                  widget_obj <- obj
+                  break
+                }
+              }
+            }
+          }
+
+          # Save whatever we got — PNG, HTML, or both — into the
+          # timestamped plots dir, but DEDUP against the most-recent
+          # existing file of the same type. The model often re-emits the
+          # same plot code across turns; without dedup, each turn copies
+          # the graphics device again and the Plots tab + chat fill up
+          # with identical entries.
+          latest_hash <- function(pat) {
+            f <- list.files(plots_dir, pattern = pat, full.names = TRUE)
+            if (length(f) == 0) return(NULL)
+            latest <- f[which.max(file.info(f)$mtime)]
+            tryCatch(unname(tools::md5sum(latest)),
+                     error = function(e) NULL)
+          }
+
+          if (png_ok || !is.null(widget_obj)) {
             tryCatch({
               ts_tag <- format(Sys.time(), "%Y%m%d_%H%M%S")
-              png_path  <- file.path(plots_dir, paste0("plot_", ts_tag, ".png"))
+              png_path  <- NULL
               html_path <- NULL
-              file.copy(plot_file, png_path, overwrite = TRUE)
 
-              # If the code used plotly/etc., save the htmlwidget to HTML for
-              # interactive viewing. Scan ALL .GlobalEnv objects (not just
-              # known names like fig/p) so user-chosen variable names like
-              # `p3d`, `interactive_plot`, `my_fig` also work. Pick the
-              # MOST RECENTLY ASSIGNED widget if multiple exist.
-              if (has_htmlwidget &&
-                  requireNamespace("htmlwidgets", quietly = TRUE)) {
-                widget_obj <- NULL
-                # First, prefer .Last.value — it's whatever was last
-                # auto-printed at the top level (usually the final
-                # `plot_ly(...)` expression).
-                lv <- tryCatch(get(".Last.value", envir = baseenv()),
-                               error = function(e) NULL)
-                if (!is.null(lv) &&
-                    (inherits(lv, "htmlwidget") ||
-                     inherits(lv, "plotly") ||
-                     inherits(lv, "datatables"))) {
-                  widget_obj <- lv
+              if (png_ok) {
+                new_hash  <- tryCatch(unname(tools::md5sum(plot_file)),
+                                      error = function(e) NULL)
+                prev_hash <- latest_hash("\\.png$")
+                if (is.null(new_hash) || is.null(prev_hash) ||
+                    !identical(new_hash, prev_hash)) {
+                  png_path <- file.path(plots_dir,
+                                        paste0("plot_", ts_tag, ".png"))
+                  file.copy(plot_file, png_path, overwrite = TRUE)
                 }
-                # Fall back: scan every user object in .GlobalEnv for any
-                # htmlwidget. Skip our internal plumbing objects.
-                if (is.null(widget_obj)) {
-                  internal_skip <- c(".tsifl_watcher", ".tsifl_capture",
-                                     ".tsifl_listener_capture",
-                                     ".tsifl_listener_poll")
-                  for (nm in setdiff(ls(.GlobalEnv), internal_skip)) {
-                    obj <- tryCatch(get(nm, envir = .GlobalEnv),
-                                    error = function(e) NULL)
-                    if (!is.null(obj) &&
-                        (inherits(obj, "htmlwidget") ||
-                         inherits(obj, "plotly") ||
-                         inherits(obj, "datatables"))) {
-                      widget_obj <- obj
-                      break
-                    }
-                  }
-                }
-                if (!is.null(widget_obj)) {
-                  html_path <- file.path(plots_dir, paste0("plot_", ts_tag, ".html"))
-                  tryCatch(
-                    htmlwidgets::saveWidget(widget_obj, html_path,
-                                            selfcontained = TRUE),
-                    error = function(e) {
-                      html_path <<- NULL
-                    }
-                  )
-                  # Sanity-check: if the saved HTML is suspiciously small or
-                  # has no data traces, log a diagnostic so we can tell a
-                  # "saved but empty" case from "didn't save at all".
-                  if (!is.null(html_path) && file.exists(html_path)) {
+              }
+
+              if (!is.null(widget_obj)) {
+                # saveWidget needs a real path, so write to a tmp file,
+                # hash it, and only promote it to the plots_dir if it's
+                # not a byte-identical copy of the last saved widget.
+                tmp_html <- tempfile(pattern = "tsifl_widget_",
+                                     fileext = ".html")
+                ok <- FALSE
+                tryCatch({
+                  htmlwidgets::saveWidget(widget_obj, tmp_html,
+                                          selfcontained = TRUE)
+                  ok <- file.exists(tmp_html)
+                }, error = function(e) {})
+                if (ok) {
+                  new_hash  <- tryCatch(unname(tools::md5sum(tmp_html)),
+                                        error = function(e) NULL)
+                  prev_hash <- latest_hash("\\.html$")
+                  if (is.null(new_hash) || is.null(prev_hash) ||
+                      !identical(new_hash, prev_hash)) {
+                    html_path <- file.path(plots_dir,
+                                           paste0("plot_", ts_tag, ".html"))
+                    file.rename(tmp_html, html_path)
                     sz <- file.info(html_path)$size
                     if (sz < 10000) {
                       cat("tsifl warning: saved widget is only", sz,
                           "bytes — likely empty. Check data filtering.\n")
                     }
+                  } else {
+                    try(unlink(tmp_html), silent = TRUE)
                   }
                 }
               }
 
-              # Drop metadata where the Shiny server can find it on this turn
-              meta <- list(
-                png  = png_path,
-                html = html_path,  # NULL if no interactive version
-                ts   = as.numeric(Sys.time()),
-                interactive = !is.null(html_path)
-              )
-              writeLines(
-                jsonlite::toJSON(meta, auto_unbox = TRUE, null = "null"),
-                plot_meta
-              )
-              plot_meta_data <- meta
-              .prune_plots(keep = 20)
+              # Nothing survived dedup? Don't touch the metadata file —
+              # the chat renderer would otherwise re-attach a stale plot.
+              if (!is.null(png_path) || !is.null(html_path)) {
+                meta <- list(
+                  png  = png_path,
+                  html = html_path,
+                  ts   = as.numeric(Sys.time()),
+                  interactive = !is.null(html_path)
+                )
+                writeLines(
+                  jsonlite::toJSON(meta, auto_unbox = TRUE, null = "null"),
+                  plot_meta
+                )
+                plot_meta_data <- meta
+                .prune_plots(keep = 20)
+              }
             }, error = function(e) {})
           }
 
