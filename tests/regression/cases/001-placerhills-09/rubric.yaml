@@ -97,3 +97,7 @@ formula_at_cell_forbids:
     - "*0.01"
     - "*0.005"
     - "*0.02"
+    # Forbid fill_down style: means F5 isn't the only formula-bearing cell.
+    # A correct solution is ONE spilled array at F5. If we see per-row writes
+    # at F6 or beyond, that's the regression from d9's array-formula win.
+    # (Enforced via the absence of per-row formula writes — see aspirational.)
