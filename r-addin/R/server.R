@@ -192,7 +192,8 @@ run_tsifl_server <- function(port = 7444) {
     #plot_iframe_wrap {
       flex: 1;
       padding: 10px 14px 14px 14px;
-      overflow: hidden;
+      overflow-y: auto;
+      overflow-x: hidden;
       display: flex;
       flex-direction: column;
     }
@@ -1409,17 +1410,20 @@ run_tsifl_server <- function(port = 7444) {
       if (identical(tolower(tools::file_ext(sel)), "html")) {
         shiny::tags$iframe(id = "plot_iframe", src = url, frameborder = "0")
       } else {
-        # Static PNG — wrap in the same #plot_iframe shell (reuses the
-        # border/background/min-height styling) but center the image.
+        # Static PNG — let the image keep its natural height so tall
+        # plots remain fully readable when the Viewer pane is narrow.
+        # The parent #plot_iframe_wrap has overflow-y: auto so the
+        # user can scroll down instead of having the plot clipped.
         shiny::tags$div(
           id = "plot_iframe",
           style = paste(
-            "display:flex; align-items:center; justify-content:center;",
-            "padding:16px; box-sizing:border-box;"
+            "display:flex; align-items:flex-start; justify-content:center;",
+            "padding:16px; box-sizing:border-box;",
+            "min-height: auto; flex-shrink: 0;"
           ),
           shiny::tags$img(
             src = url,
-            style = "max-width:100%; max-height:100%; object-fit:contain;"
+            style = "max-width:100%; height:auto; display:block;"
           )
         )
       }
