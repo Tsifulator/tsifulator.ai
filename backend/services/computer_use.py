@@ -42,6 +42,8 @@ COMPUTER_USE_ACTIONS = {
     "run_solver",            # Run Solver (needs VBA macros)
     "scenario_summary",      # Generate scenario summary report
     "create_data_table",     # TABLE formula can only be entered via dialog
+    "install_addins",        # Ribbon → File → Options → Add-ins; no Office.js API
+    "uninstall_addins",      # Same — must toggle the checkbox in Excel Options
     "computer_use",          # Generic computer use fallback
 }
 
@@ -56,8 +58,6 @@ ADDIN_ACTIONS = {
     "import_csv", "save_workbook",
     "goal_seek",             # Iterative solver in JavaScript
     "run_toolpak",           # Descriptive stats via formulas
-    "install_addins",        # No-op in add-in (auto-handled)
-    "uninstall_addins",      # No-op in add-in (auto-handled)
 }
 
 

@@ -71,6 +71,75 @@ def _set_cached_response(key: str, data: dict):
     _response_cache[key] = {"data": data, "ts": time.time()}
 
 
+# ── Post-processing: drop actions targeting phantom sheets ────────────────────
+
+def _strip_phantom_sheet_actions(actions: list, context: dict) -> tuple[list, list]:
+    """Drop actions whose target sheet isn't in context.all_sheets.
+
+    The LLM sometimes invents sheet names ("Transactions", "Summary") from
+    other SIMnet projects. Rather than let those silently fail client-side,
+    drop them here and surface a clear message.
+
+    Returns (kept_actions, dropped_sheet_names). Matches case-insensitively
+    and normalizes the canonical casing on kept actions. Any `add_sheet`
+    action in this same batch counts as "will exist" for later actions.
+    """
+    existing = {
+        s.casefold(): s
+        for s in (context or {}).get("all_sheets") or []
+        if isinstance(s, str)
+    }
+    # Sheets about to be created in this batch count as existing
+    for a in actions:
+        if a.get("type") == "add_sheet":
+            name = (a.get("payload") or {}).get("name")
+            if isinstance(name, str):
+                existing.setdefault(name.casefold(), name)
+
+    # No context info → can't validate, pass everything through
+    if not existing:
+        return actions, []
+
+    kept: list = []
+    dropped: list = []
+    for a in actions:
+        t = a.get("type", "")
+        p = a.get("payload") or {}
+
+        if t == "add_sheet":
+            kept.append(a)
+            continue
+
+        target = None
+        if t == "create_named_range":
+            ref = p.get("reference")
+            if isinstance(ref, str) and "!" in ref:
+                target = ref.split("!", 1)[0].strip().strip("'")
+        else:
+            sheet = p.get("sheet")
+            if isinstance(sheet, str) and sheet.strip():
+                target = sheet.strip()
+
+        if not target:
+            kept.append(a)
+            continue
+
+        key = target.casefold()
+        if key in existing:
+            canonical = existing[key]
+            if t == "create_named_range":
+                rest = p["reference"].split("!", 1)[1]
+                p["reference"] = f"{canonical}!{rest}"
+            else:
+                p["sheet"] = canonical
+            a["payload"] = p
+            kept.append(a)
+        else:
+            dropped.append(target)
+
+    return kept, dropped
+
+
 # ── Post-processing: inject actions the model forgets ─────────────────────────
 
 def _postprocess_excel_actions(result: dict, context: dict) -> dict:
@@ -1122,6 +1191,33 @@ async def chat(request: ChatRequest):
 
     # 7.5 Hybrid Router: split actions into add-in (fast) and computer-use (GUI)
     all_actions = result.get("actions", [])
+
+    # Phantom-sheet guard: the LLM occasionally invents sheet names from other
+    # projects. Drop any actions whose sheet isn't in context.all_sheets and
+    # prepend a clear warning to the reply so the user can retry with a real
+    # sheet name. Runs for Excel/Sheets only (other apps lack all_sheets).
+    if app in ("excel", "google_sheets"):
+        all_actions, _dropped_sheets = _strip_phantom_sheet_actions(
+            all_actions, request.context
+        )
+        if _dropped_sheets:
+            _real = request.context.get("all_sheets") or []
+            _dropped_uniq = sorted(set(_dropped_sheets))
+            _warn = (
+                f"\n\n⚠️ Skipped {len(_dropped_sheets)} action(s) targeting sheet(s) "
+                f"that don't exist in your workbook: **{', '.join(_dropped_uniq)}**. "
+                f"Your actual sheets are: **{', '.join(_real) if _real else '(none detected)'}**. "
+                "Rephrase naming one of the real tabs, or ask me to create the missing "
+                "sheet first."
+            )
+            result["reply"] = (result.get("reply") or "") + _warn
+            result["actions"] = all_actions
+            print(
+                f"[phantom-sheet] Dropped {len(_dropped_sheets)} action(s) "
+                f"for non-existent sheet(s): {_dropped_uniq}",
+                flush=True,
+            )
+
     addin_actions, cu_actions = split_actions(all_actions)
     cu_session_id = None
 
