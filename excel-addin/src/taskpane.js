@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v52";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v53";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -921,8 +921,11 @@ async function getExcelContext() {
         }
 
         // Cap how much data we pass for each sheet
-        // Active sheet gets 200 rows so Claude can compute values itself; others get 60
-        const MAX_ROWS = name === activeName ? 200 : 60;
+        // Active sheet gets 200 rows so Claude can compute values itself; non-active
+        // sheets get 150 so multi-sheet SIMnet projects (typically ≤ 30 rows/sheet
+        // across 3-4 tabs) don't silently truncate — prior 60-row cap was causing
+        // the LLM to stop mid-range on secondary sheets.
+        const MAX_ROWS = name === activeName ? 200 : 150;
         const values   = used.values.slice(0, MAX_ROWS).map(r => r.slice(0, 26));
         const formulas = used.formulas ? used.formulas.slice(0, MAX_ROWS).map(r => r.slice(0, 26)) : values;
 
@@ -932,8 +935,11 @@ async function getExcelContext() {
           activeUsedRange     = used.address;
         }
 
-        // Non-active sheets: 20-row preview; active sheet gets full 200-row data
-        const PREVIEW_ROWS = name === activeName ? 200 : 20;
+        // Preview rows sent to the LLM. Previously 20 for non-active sheets, which
+        // truncated secondary-sheet data in multi-sheet projects (e.g. Sales Forecast
+        // has 26 data rows — the LLM only saw rows 1-20 and wrote formulas that stopped
+        // at row 20). 100 covers typical SIMnet sheets without blowing the context.
+        const PREVIEW_ROWS = name === activeName ? 200 : 100;
         sheetSummaries.push({
           name,
           used_range:       used.address,
