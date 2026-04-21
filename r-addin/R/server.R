@@ -1335,24 +1335,46 @@ run_tsifl_server <- function(port = 7444) {
     # returns FALSE even when values match, which broke selection
     # tracking and sometimes blew up the whole render.
     output$plot_list_ui <- shiny::renderUI({
-      # v0.7.4 EXTREME debug: skip all logic, return a giant lime banner
-      # to prove whether ANY render can reach the plot_list_ui placeholder
-      # at all. If this shows, binding works and we need to fix the chip
-      # logic. If this doesn't show, Shiny isn't dispatching to this
-      # output — deeper issue.
-      pf <- plot_files()  # still create reactive dependency
-      message("[tsifl render] plot_list_ui fired at ", format(Sys.time()),
-              " with ", length(pf), " paths")
-      shiny::div(
-        style = paste(
-          "background:#84CC16;color:#1A2E05;padding:12px;",
-          "font-size:13px;font-weight:700;border:2px solid #365314;",
-          "border-radius:4px;font-family:monospace;"
-        ),
-        sprintf("[v0.7.4 RENDER FIRED] paths=%d ts=%s",
-                length(pf), format(Sys.time(), "%H:%M:%S"))
-      )
+      pf <- plot_files()
+      paths  <- unname(as.character(pf))
+      labels <- names(pf)
+      if (is.null(labels) || length(labels) != length(paths)) {
+        labels <- paste0("Plot ", seq_along(paths))
+      }
+      sel <- shiny::isolate(selected_plot())
+      if (is.null(sel) || !(sel %in% paths)) {
+        sel <- if (length(paths) > 0) paths[1] else NULL
+      }
+      if (length(paths) == 0) {
+        return(shiny::div(id = "plot_list_empty",
+                          "No plots yet — generate one in chat"))
+      }
+      chips <- lapply(seq_along(paths), function(i) {
+        is_sel <- identical(paths[i], sel)
+        shiny::tags$button(
+          type = "button",
+          class = paste("plot_chip", if (is_sel) "selected" else ""),
+          onclick = sprintf(
+            "Shiny.setInputValue('plot_picker_change', '%s', {priority: 'event'}); return false;",
+            gsub("'", "\\\\'", paths[i], fixed = TRUE)
+          ),
+          labels[i]
+        )
+      })
+      do.call(shiny::div, c(list(class = "plot_chip_row"), chips))
     })
+    # CRITICAL: tell Shiny to compute these renders even when the
+    # plot_tab container is hidden. Default Shiny behaviour suspends
+    # outputs whose containers have display:none. Since plot_tab is
+    # display:none until the user clicks PLOTS, the renders for
+    # plot_list_ui and plot_iframe_ui never fire. By the time the
+    # tab is shown, Shiny would normally then trigger them — but if
+    # the tab-switch JS is for any reason not flipping the .active
+    # class, the render never fires and the user sees an empty pane.
+    # Disabling suspendWhenHidden makes the renders compute on session
+    # start regardless.
+    shiny::outputOptions(output, "plot_list_ui", suspendWhenHidden = FALSE)
+    shiny::outputOptions(output, "plot_iframe_ui", suspendWhenHidden = FALSE)
 
     shiny::observeEvent(input$plot_picker_change, {
       selected_plot(input$plot_picker_change)
