@@ -883,6 +883,17 @@ async def debug_postprocess_version():
     """Verify which version of postprocessing code is deployed."""
     return {"e15_formula": "=I5", "version": "v2_fixed_2026-04-12", "data_table_injection": "disabled"}
 
+@router.get("/debug/guards")
+async def debug_guards():
+    """Verify which runtime guards are deployed (phantom-sheet, routing)."""
+    from services.computer_use import COMPUTER_USE_ACTIONS
+    return {
+        "phantom_sheet_guard": "_strip_phantom_sheet_actions" in globals(),
+        "install_addins_routed_to_cu": "install_addins" in COMPUTER_USE_ACTIONS,
+        "uninstall_addins_routed_to_cu": "uninstall_addins" in COMPUTER_USE_ACTIONS,
+        "build_tag": "guards-2026-04-21",
+    }
+
 @router.get("/debug/attachment-config")
 async def debug_attachment_config():
     """Verify attachment routing code is deployed (built 2026-04-20)."""
