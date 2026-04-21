@@ -109,6 +109,14 @@ def build_context_from_workbook(path: Path, active: str | None = None) -> dict:
             active_data = preview
 
     active_ws = wb[active]
+    # Match the Excel add-in's namedRanges shape: list of {name, reference}
+    named_ranges = []
+    for nm in wb.defined_names:
+        try:
+            named_ranges.append({"name": nm, "reference": wb.defined_names[nm].value})
+        except Exception:
+            named_ranges.append({"name": nm, "reference": ""})
+
     return {
         "app":              "excel",
         "sheet":            active,
@@ -119,7 +127,7 @@ def build_context_from_workbook(path: Path, active: str | None = None) -> dict:
         "sheet_data":       active_data,
         "sheet_formulas":   active_data,
         "sheet_summaries":  sheet_summaries,
-        "named_ranges":     [list(wb.defined_names)],
+        "named_ranges":     named_ranges,
         "preferences":      {},
     }
 
