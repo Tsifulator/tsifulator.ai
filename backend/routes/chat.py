@@ -934,6 +934,42 @@ async def pm_clear(user_id: str, workbook_id: str):
     deleted = project_memory.clear(user_id, workbook_id)
     return {"deleted": deleted, "workbook_id": workbook_id}
 
+
+@router.get("/debug/project-memory-list")
+async def pm_list_all():
+    """List ALL state files across all users. Debug only — remove after the
+    first couple of memory sessions are validated.
+
+    Returns a summary (user_id, workbook_id, completed_count, updated_at, first-5
+    completed entries) so we can spot phantom-sheet echoes without exposing
+    the full state blob.
+    """
+    from services.project_memory import DEFAULT_STATE_DIR
+    import json as _json
+    root = DEFAULT_STATE_DIR
+    if not root.exists():
+        return {"state_dir": str(root), "exists": False, "entries": []}
+    entries = []
+    for user_dir in root.iterdir():
+        if not user_dir.is_dir():
+            continue
+        for f in user_dir.glob("*.json"):
+            try:
+                data = _json.loads(f.read_text())
+            except Exception as e:
+                entries.append({"user_id": user_dir.name, "workbook_id": f.stem,
+                                "error": str(e)})
+                continue
+            entries.append({
+                "user_id":         user_dir.name,
+                "workbook_id":     f.stem,
+                "updated_at":      data.get("updated_at"),
+                "completed_count": len(data.get("completed") or []),
+                "turns_count":     len(data.get("turns") or []),
+                "first_5_completed": (data.get("completed") or [])[:5],
+            })
+    return {"state_dir": str(root), "exists": True, "count": len(entries), "entries": entries}
+
 @router.get("/debug/attachment-config")
 async def debug_attachment_config():
     """Verify attachment routing code is deployed (built 2026-04-20)."""
