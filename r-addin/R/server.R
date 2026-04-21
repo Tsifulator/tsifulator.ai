@@ -1341,11 +1341,13 @@ run_tsifl_server <- function(port = 7444) {
       if (is.null(labels) || length(labels) != length(paths)) {
         labels <- paste0("Plot ", seq_along(paths))
       }
-      # Read selected_plot reactively (no isolate) so clicking a
-      # different chip re-renders the strip with the new selection
-      # highlighted. With isolate() the underlying value updated but
-      # the visual "selected" class stayed on the first chip.
-      sel <- selected_plot()
+      # Keep isolate() here — having the render depend on selected_plot
+      # caused chips to re-render mid-click and the click handler got
+      # lost (v0.7.8 regression). Highlight is handled client-side via
+      # JS in the onclick instead: we toggle 'selected' class locally
+      # on every click, and Shiny.setInputValue still fires for server
+      # state so the iframe can follow.
+      sel <- shiny::isolate(selected_plot())
       if (is.null(sel) || !(sel %in% paths)) {
         sel <- if (length(paths) > 0) paths[1] else NULL
       }
@@ -1359,7 +1361,15 @@ run_tsifl_server <- function(port = 7444) {
           type = "button",
           class = paste("plot_chip", if (is_sel) "selected" else ""),
           onclick = sprintf(
-            "Shiny.setInputValue('plot_picker_change', '%s', {priority: 'event'}); return false;",
+            paste0(
+              "var root=this.parentNode;",
+              "for(var c=0;c<root.children.length;c++){",
+              "  root.children[c].classList.remove('selected');",
+              "}",
+              "this.classList.add('selected');",
+              "Shiny.setInputValue('plot_picker_change', '%s', {priority: 'event'});",
+              "return false;"
+            ),
             gsub("'", "\\\\'", paths[i], fixed = TRUE)
           ),
           labels[i]
