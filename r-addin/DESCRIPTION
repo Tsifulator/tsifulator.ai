@@ -1,6 +1,6 @@
 Package: tsifulator
 Title: tsifl — Agentic Sandbox for Financial Analysts
-Version: 0.7.5
+Version: 0.7.6
 Author: tsifl
 Maintainer: tsifl <hello@tsifl.ai>
 Description: AI-powered sidebar for RStudio. Executes real R code, renders

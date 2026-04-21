@@ -589,6 +589,17 @@ run_tsifl_server <- function(port = 7444) {
 
     # ── Plot tab content (hidden until user clicks Plot) ─────────────
     shiny::div(id = "plot_tab",
+      # v0.7.6 static red banner. If you can see this when the PLOTS
+      # tab is active, the tab-switch JS is working and the issue is
+      # output binding. If you can't see it, the tab isn't being made
+      # visible — JS click handler is broken.
+      shiny::tags$div(
+        style = paste(
+          "background:#DC2626;color:#FFF;padding:14px;font-size:13px;",
+          "font-weight:700;font-family:monospace;text-align:center;"
+        ),
+        "[v0.7.6 STATIC TEST] If you see this, tab switching works"
+      ),
       shiny::div(id = "plot_toolbar",
         shiny::tags$button(id = "plot_open_browser_btn",
                           onclick = "Shiny.setInputValue('plot_open_browser', Date.now(), {priority: 'event'});",
