@@ -1452,13 +1452,10 @@ run_tsifl_server <- function(port = 7444) {
     shiny::observeEvent(input$plot_open_browser, {
       sel <- current_plot_path()
       if (is.null(sel)) {
-        add_message("action",
-          "No plot to open — generate one from the Chat tab first.")
+        shiny::showNotification("No plot to open — generate one in chat first.",
+                                type = "warning", duration = 3)
         return()
       }
-      # browseURL works for .html (opens in default browser) and .png
-      # (opens in default image viewer on macOS) — if it fails on a
-      # given file type, fall back to system's `open` command.
       ok <- FALSE
       tryCatch({
         utils::browseURL(sel); ok <- TRUE
@@ -1468,8 +1465,12 @@ run_tsifl_server <- function(port = 7444) {
           system2("open", args = shQuote(sel)); ok <- TRUE
         }, error = function(e) {})
       }
-      if (!ok) {
-        add_message("action", paste0("Could not open ", basename(sel)))
+      if (ok) {
+        shiny::showNotification(paste("Opened", basename(sel), "in browser"),
+                                type = "message", duration = 2)
+      } else {
+        shiny::showNotification(paste("Could not open", basename(sel)),
+                                type = "error", duration = 4)
       }
     })
 
@@ -1479,8 +1480,8 @@ run_tsifl_server <- function(port = 7444) {
     shiny::observeEvent(input$plot_save_downloads, {
       sel <- current_plot_path()
       if (is.null(sel)) {
-        add_message("action",
-          "No plot to save — generate one from the Chat tab first.")
+        shiny::showNotification("No plot to save — generate one in chat first.",
+                                type = "warning", duration = 3)
         return()
       }
       tryCatch({
@@ -1505,9 +1506,6 @@ run_tsifl_server <- function(port = 7444) {
           file.copy(png_src, png_target, overwrite = TRUE)
           saved <- c(saved, ".png")
         }
-        # If neither sibling existed, copy `sel` as-is — guards against
-        # edge cases where the selected file isn't in the .html/.png
-        # sibling naming scheme (future formats, user-renamed files).
         if (length(saved) == 0 && file.exists(sel)) {
           target <- file.path(downloads_dir,
                               paste0("tsifl_plot_", ts_tag, ".",
@@ -1515,12 +1513,14 @@ run_tsifl_server <- function(port = 7444) {
           file.copy(sel, target, overwrite = TRUE)
           saved <- paste0(".", tools::file_ext(sel))
         }
-        add_message("action",
-          paste0("Saved to Downloads: tsifl_plot_", ts_tag,
-                 " (", paste(saved, collapse = " + "), ")"))
+        shiny::showNotification(
+          paste0("Saved to Downloads — tsifl_plot_", ts_tag,
+                 " (", paste(saved, collapse = " + "), ")"),
+          type = "message", duration = 3)
       }, error = function(e) {
-        add_message("action",
-          paste0("Could not save plot: ", conditionMessage(e)))
+        shiny::showNotification(
+          paste("Could not save plot:", conditionMessage(e)),
+          type = "error", duration = 5)
       })
     })
 
