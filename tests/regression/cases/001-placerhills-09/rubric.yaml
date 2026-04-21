@@ -1,0 +1,99 @@
+# PlacerHills-09 SIMnet project — regression rubric.
+#
+# Assertions below encode every bug class we've actually seen across d1..d8.
+# Relaxed where LLM output legitimately varies; strict where correctness matters.
+
+_project: PlacerHills-09 Excel 9-5 (Commission Split Calculator)
+
+# ── Sheet-safety guarantees ────────────────────────────────────────────────
+
+# The workbook has exactly these three sheets. Any action targeting something
+# else is a hallucination (the "Transactions" bug we fixed twice).
+allowed_sheet_targets:
+  - Calculator
+  - Price Solver
+  - Sales Forecast
+
+# Known phantom names the LLM has invented in this project before.
+forbidden_sheet_targets:
+  - Transactions
+  - Transactions Stats
+  - Summary
+  - Criteria
+  - Data
+  - Stats
+
+# Destructive edits observed in d3/d4/d5/d6 that must not recur.
+must_not_overwrite:
+  - "Price Solver!B12:B17"          # labels that were renamed to "(Gross)" in d5
+  - "Sales Forecast!A5:E26"         # existing property data rows (E23 was broken in d3/d4)
+
+# ── Minimum viable output ─────────────────────────────────────────────────
+
+# Across 13 SIMnet steps we expect at least this many actions emitted. d2-d8
+# typically emitted 8-22; a healthy run should exceed 15.
+min_action_count: 15
+
+# The reply text should exist (catches empty-reply regressions from cu-routing).
+reply_not_empty: true
+
+# Action types that any correct solution must include.
+must_include_action_types:
+  - write_formula       # C18, F5 array, data table
+  - create_named_range  # step 5: Create from Selection
+
+# ── Cells that MUST be written (baseline — what tsifl currently does) ─────
+#
+# Baseline is locked at 2026-04-21 behavior. The assertions below reflect
+# what the current backend reliably produces. Any future regression below
+# this line blocks a deploy.
+
+must_reference_cells:
+  - "Calculator!C18"                # step 3a
+  - "Sales Forecast!F5"              # step 8 array formula anchor
+  - "Sales Forecast!H13:H23"         # step 9a bin range
+
+# ── KNOWN GAPS (aspirational — not yet enforced, feature work) ────────────
+#
+# These items SHOULD be emitted by a fully-correct run but the current backend
+# doesn't reach them. Uncomment each as the backend improves and becomes
+# reliable. Do NOT uncomment to "hope it passes" — only when it passes ≥3 runs.
+#
+# _aspirational_must_reference_cells:
+#   - "Calculator!C19:C26"           # step 3b data table output
+#
+# _aspirational_must_include_action_types:
+#   - create_data_table              # step 3b (CU route) or equivalent fill_down
+#   - install_addins                 # step 4
+#   - run_solver                     # step 6a-d
+#   - save_solver_scenario           # step 6a-d
+#   - scenario_summary               # step 7b
+#   - run_toolpak                    # step 9b
+#   - add_chart                      # step 9c-f
+#   - uninstall_addins               # step 10
+#
+# _aspirational_formula_at_cell_contains:
+#   "Calculator!C19":
+#     - "$C$14"                      # absolute-reference to total commission
+#     - "B19"
+
+# ── Formula-correctness checks ────────────────────────────────────────────
+
+# Calculator!C18 is =C14*D7 (or =D7*C14) — must reference both.
+formula_at_cell_contains:
+  "Calculator!C18":
+    - "C14"
+    - "D7"
+  # The array formula: =(E5:E26/C5:C26)*2 — must divide sale price by sq ft
+  # and multiply by 2. No guessed rates allowed.
+  "Sales Forecast!F5":
+    - "E5:E26"
+    - "C5:C26"
+    - "*2"
+
+# Explicitly forbidden patterns (the d2/d3/d4/d8 bug: LLM guessing a rate).
+formula_at_cell_forbids:
+  "Sales Forecast!F5":
+    - "*0.01"
+    - "*0.005"
+    - "*0.02"

@@ -1,0 +1,53 @@
+name: tsifl regression suite
+
+# Blocks any push/PR that causes a previously-passing test case to fail.
+# Locks in known-good behavior so prompt/backend changes can't silently regress.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'tests/regression/**'
+      - '.github/workflows/regression.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'tests/regression/**'
+      - '.github/workflows/regression.yml'
+  workflow_dispatch: {}   # allow manual runs
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r tests/regression/requirements.txt
+
+      - name: Wait for Railway to pick up backend changes
+        # Best-effort: backend deploy is async; give it 90s to catch up when
+        # this run was triggered by a push to main touching backend/.
+        if: github.event_name == 'push'
+        run: sleep 90
+
+      - name: Run regression suite
+        env:
+          TSIFL_BACKEND: https://focused-solace-production-6839.up.railway.app
+        run: python tests/regression/run_tests.py --save-report
+
+      - name: Upload reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-reports
+          path: tests/regression/_reports/
+          retention-days: 14
