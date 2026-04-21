@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v51";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v52";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -423,6 +423,23 @@ async function renderImageToCanvas(base64Data, mediaType, maxW, maxH) {
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
 
+// Detect replies that claim an Excel change was made. Used to flag hallucinated
+// success messages that arrive with zero actions and no computer-use session.
+function claimsActionCompletion(text) {
+  if (!text) return false;
+  const t = text.toLowerCase();
+  const patterns = [
+    /\bi['']?ve (written|added|created|updated|inserted|applied|imported|formatted|filled|set up|placed|put|made|built|generated|populated|entered)/,
+    /\bi have (written|added|created|updated|inserted|applied|imported|formatted|filled|placed|populated|entered)/,
+    /\ball set\b/,
+    /\bdone[\s\.\!—–-]/,
+    /\b(data|formulas?|chart|values|cells?|table|rows?|columns?) (have been|has been|were|was) (written|added|imported|created|inserted|populated|entered|formatted|applied)/,
+    /\b(written|added|created|updated|inserted|imported|formatted|populated) (the |your )?(data|formulas?|values|cells?|range|chart|table)/,
+    /\bsuccessfully (wrote|added|created|inserted|imported|formatted|populated)/,
+  ];
+  return patterns.some(rx => rx.test(t));
+}
+
 async function handleSubmit() {
   const input   = document.getElementById("user-input");
   const message = input.value.trim();
@@ -500,18 +517,31 @@ async function handleSubmit() {
 
     const data = await response.json();
     hideTypingIndicator();
+
+    const allActions = [];
+    if (data.actions && data.actions.length > 0) allActions.push(...data.actions);
+    else if (data.action && data.action.type && data.action.type !== "none") allActions.push(data.action);
+    const willExecute = allActions.length > 0 || !!data.cu_session_id;
+
     if (data.reply && data.reply.trim()) {
-      appendMessage("assistant", data.reply);
+      let reply = data.reply;
+      if (!willExecute && claimsActionCompletion(reply)) {
+        reply =
+          "⚠️ **Nothing was actually changed in the spreadsheet.** " +
+          "The assistant claimed to have done something, but no action was executed. " +
+          "Try rephrasing your request with specifics (cell range, sheet name, exact values), " +
+          "or if you asked for something that needs the desktop agent, start it with:\n\n" +
+          "    cd desktop-agent && python3 agent.py\n\n" +
+          "---\n\n" +
+          reply;
+      }
+      appendMessage("assistant", reply);
     }
 
     if (data.tasks_remaining >= 0) {
       document.getElementById("tasks-remaining").textContent =
         `${data.tasks_remaining} tasks left`;
     }
-
-    const allActions = [];
-    if (data.actions && data.actions.length > 0) allActions.push(...data.actions);
-    else if (data.action && data.action.type && data.action.type !== "none") allActions.push(data.action);
 
     if (allActions.length > 0) {
       setStatus(`Applying ${allActions.length} action${allActions.length > 1 ? "s" : ""}...`);
