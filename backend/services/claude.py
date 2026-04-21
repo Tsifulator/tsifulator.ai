@@ -2353,25 +2353,73 @@ async def get_claude_response(message: str, context: dict,
     msg_lower = message.lower()
     app_name_hw = context.get("app", "")
     has_images = bool(images)
-    sheet_names = [s.get("name", "").lower() for s in context.get("sheets", [])]
-    has_homework_sheets = any(s in ("transactions", "criteria", "employee insurance", "depreciation") for s in sheet_names)
+
+    # Detect sheets from either `sheets` (list of dicts) or `all_sheets` (list of strings)
+    sheet_names_raw: list[str] = []
+    for s in context.get("sheets") or []:
+        if isinstance(s, dict):
+            sheet_names_raw.append(s.get("name", ""))
+        elif isinstance(s, str):
+            sheet_names_raw.append(s)
+    for s in context.get("all_sheets") or []:
+        if isinstance(s, str):
+            sheet_names_raw.append(s)
+    sheet_names = [s.lower() for s in sheet_names_raw if s]
+
+    has_transactions_project = any(s in ("transactions", "criteria", "employee insurance", "depreciation") for s in sheet_names)
+    has_placerhills_project  = any(s in ("price solver", "sales forecast") for s in sheet_names) and any(s == "calculator" for s in sheet_names)
     has_homework_keywords = any(kw in msg_lower for kw in ("homework", "assignment", "simnet", "complete", "task", "step", "do this", "do these", "finish", "all the"))
-    logger.info(f"[HW-CHECK] app={app_name_hw} images={has_images} hw_sheets={has_homework_sheets} hw_kw={has_homework_keywords} sheets={sheet_names}")
-    if app_name_hw == "excel" and (has_homework_keywords or (has_images and has_homework_sheets)):
-        logger.info("[HW-INJECT] Homework reminder injected into user message")
+    logger.info(f"[HW-CHECK] app={app_name_hw} images={has_images} hw_kw={has_homework_keywords} transactions={has_transactions_project} placerhills={has_placerhills_project} sheets={sheet_names}")
+
+    if app_name_hw == "excel" and (has_homework_keywords or has_images):
+        logger.info("[HW-INJECT] Generic SIMnet reminder injected into user message")
         homework_reminder = """
 
-CRITICAL REMINDERS — COPY THESE EXACTLY:
+PROJECT-INSTRUCTIONS MODE — READ EVERY SCREENSHOT TOP-TO-BOTTOM. NEVER SKIM.
+
+BEFORE the execute_actions call, your text reply MUST list EVERY numbered step and sub-step you found in the images (1., 2., 3a., 3b., … through the last one). Mark each one:
+  ✓ <brief description> — will be handled by add-in action
+  → <brief description> — will be handled by computer-use action (Solver / Scenario Manager / Data Table / Analysis ToolPak / Install-Uninstall Addins)
+  ✗ SKIPPED: step N — <specific reason>
+
+Then emit actions for EVERY ✓ and → step in ONE execute_actions call. Do not stop at step 3 and leave 4-13 silently undone. If a sub-step is truly not actionable (e.g. "Click Enable Editing" after the file is already open), skip it with ✗ and say why.
+
+FORMULA LITERACY — translate English math LITERALLY.
+  • "two times the price per square foot" → `=(E5/C5)*2` — price DIVIDED BY sq ft, TIMES 2. NOT `=E5*0.005`, NOT `=E5*0.01`, NOT any guessed rate.
+  • "5% of total commission" → `=C14*0.05`. NOT `=C14*5`.
+  • "commission rate TIMES selling price" → `=C13*C12`.
+  • "X per Y" means DIVISION: `X / Y`. Never replace a division with a percentage constant.
+  If you don't see an exact numeric rate in the instructions, do NOT invent one. Build the formula from the cell references named in the instructions.
+
+ARRAY FORMULAS — a step like "Select F5, type =, select E5:E26, / for division, select C5:C26, *2, Enter" produces ONE spilled array formula at F5: `=(E5:E26/C5:C26)*2`. Emit a single write_formula at F5 with that exact formula. Do NOT emit per-row fill_down — SIMnet distinguishes them and will mark a per-row solution wrong.
+
+RANGE COVERAGE — read context.used_range (authoritative), not the preview. If a sheet's used_range goes to row 26, your formulas cover rows 5-26, not 5-20. The preview may be truncated.
+
+DATA TABLES — "Create the data table using a column input" requires a real Excel Data Table (TABLE formula entered via What-If Analysis > Data Table dialog). Emit the `create_data_table` action — it routes to computer-use. Do NOT fake it by writing individual formulas per output cell; SIMnet checks for the TABLE array formula.
+
+NAMED RANGES — "Use Create from Selection" on a block like B12:C12 with a label in B and a value in C produces a name equal to the label (spaces → underscores). Emit one `create_named_range` per row pair.
+
+SCENARIO MANAGER / SOLVER / ANALYSIS TOOLPAK / INSTALL-UNINSTALL — ALL route through computer-use. Emit `run_solver`, `save_solver_scenario`, `scenario_manager`, `scenario_summary`, `install_addins`, `uninstall_addins` as appropriate. Tell the user in your reply to start the desktop agent (`cd desktop-agent && python3 agent.py`) if they haven't.
+
+HISTOGRAMS — the bin-range cells (e.g. H13:H23 with values 400000, 450000, …, 900000) are straight write_cell entries you CAN do with add-in actions. The Analysis ToolPak histogram output routes to computer-use (`run_toolpak`). Hide the helper column with format_range having hidden=true.
+
+CHARTS — when the instruction specifies axis titles ("horizontal axis title Selling Price") or chart title, put those in the add_chart payload (title, axis_title_x, axis_title_y). When it says "delete the legend", include show_legend:false. When it says "position L4 to W16", include position with those anchors.
+"""
+        user_text = user_text + homework_reminder
+
+    if app_name_hw == "excel" and has_transactions_project:
+        logger.info("[HW-INJECT] Transactions-project specific hints appended")
+        transactions_hints = """
+
+TRANSACTIONS PROJECT SPECIFICS:
 1. NAMED RANGE: emit {"type":"create_named_range","payload":{"name":"Stats","range":"A4:D29","sheet":"Transactions"}}
    Then ALL DSUM formulas must be =DSUM(Stats,3,...) and =DSUM(Stats,4,...). NEVER write Transactions!$A$4:$D$29 in DSUM.
 2. INDEX/XMATCH in C16: use a 2D INDEX with TWO XMATCH arguments:
    =INDEX(Stats,XMATCH(B16,Transactions!A4:A29),XMATCH('Transactions Stats'!C15,Transactions!A4:D4))
-   First XMATCH finds the row (city), second XMATCH finds the column (# Transactions).
-3. COMMA STYLE means Excel's built-in format: _(* #,##0_);_(* (#,##0);_(* "-"??_);_(@_)
-   Apply to B7:C10 and C16. NOT plain #,##0.
-4. PERCENT STYLE with two decimal places means format "0.00%" — apply to D7:D10.
+3. COMMA STYLE = _(* #,##0_);_(* (#,##0);_(* "-"??_);_(@_)  — apply to B7:C10 and C16.
+4. PERCENT STYLE with two decimal places = "0.00%" — apply to D7:D10.
 """
-        user_text = user_text + homework_reminder
+        user_text = user_text + transactions_hints
 
     # Build app-specific system prompt (saves thousands of tokens)
     system_prompt = _build_system_prompt(context.get("app", ""), message)

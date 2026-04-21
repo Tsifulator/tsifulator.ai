@@ -895,7 +895,7 @@ async def debug_guards():
         "formula_literacy_rule": "Formula literacy" in SYSTEM_PROMPT,
         "complete_every_step_rule": "Complete every numbered step" in SYSTEM_PROMPT,
         "dont_truncate_ranges_rule": "Do not truncate ranges" in SYSTEM_PROMPT,
-        "build_tag": "guards-2026-04-21b",
+        "build_tag": "guards-2026-04-21c-project-mode",
     }
 
 @router.get("/debug/attachment-config")
