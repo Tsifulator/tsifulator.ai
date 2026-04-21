@@ -936,6 +936,49 @@ async def pm_clear(user_id: str, workbook_id: str):
     return {"deleted": deleted, "workbook_id": workbook_id}
 
 
+@router.get("/debug/project-memory-supabase-probe")
+async def pm_supabase_probe():
+    """Direct write/read/delete against the Supabase table so we can see
+    the actual error if saves are silently falling back to the file backend."""
+    from services.project_memory import _supabase_client
+    from datetime import datetime, timezone
+    client = _supabase_client()
+    if client is None:
+        return {"ok": False, "error": "no supabase client — check SUPABASE_URL/KEY env vars"}
+
+    probe_user = "_probe_test"
+    probe_wb   = "_probe_wb"
+    now = datetime.now(timezone.utc).isoformat()
+    steps = []
+    try:
+        client.table("project_memory_state").upsert({
+            "user_id":     probe_user,
+            "workbook_id": probe_wb,
+            "state":       {"probe": True, "at": now},
+            "updated_at":  now,
+        }, on_conflict="user_id,workbook_id").execute()
+        steps.append("upsert: ok")
+    except Exception as e:
+        return {"ok": False, "step": "upsert", "error": f"{type(e).__name__}: {e}"}
+
+    try:
+        r = client.table("project_memory_state") \
+            .select("user_id, workbook_id, state, updated_at") \
+            .eq("user_id", probe_user).eq("workbook_id", probe_wb).execute()
+        steps.append(f"select: {len(r.data or [])} row(s)")
+    except Exception as e:
+        return {"ok": False, "step": "select", "error": f"{type(e).__name__}: {e}"}
+
+    try:
+        client.table("project_memory_state") \
+            .delete().eq("user_id", probe_user).eq("workbook_id", probe_wb).execute()
+        steps.append("delete: ok")
+    except Exception as e:
+        return {"ok": False, "step": "delete", "error": f"{type(e).__name__}: {e}"}
+
+    return {"ok": True, "steps": steps}
+
+
 @router.get("/debug/project-memory-list")
 async def pm_list_all():
     """List ALL state across both backends (Supabase + file). Debug only."""

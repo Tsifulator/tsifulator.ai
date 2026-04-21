@@ -149,15 +149,18 @@ def save(user_id: str, workbook_id: str, state: dict, state_dir: Path | None = N
     client = _supabase_client()
     if client is not None:
         try:
+            from datetime import datetime, timezone
             client.table("project_memory_state").upsert({
                 "user_id":     user_id,
                 "workbook_id": workbook_id,
                 "state":       state,
-                "updated_at":  "now()",
+                "updated_at":  datetime.now(timezone.utc).isoformat(),
             }, on_conflict="user_id,workbook_id").execute()
             return
         except Exception as e:
-            logger.warning("project_memory: supabase save failed, falling back to file: %s", e)
+            # Loud logging so the fallback doesn't hide real failures.
+            logger.error("project_memory: supabase save FAILED, falling back to file: %s: %s",
+                         type(e).__name__, e)
 
     # File fallback
     path = _state_path(user_id, workbook_id, state_dir)
