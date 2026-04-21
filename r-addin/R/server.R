@@ -1341,7 +1341,11 @@ run_tsifl_server <- function(port = 7444) {
       if (is.null(labels) || length(labels) != length(paths)) {
         labels <- paste0("Plot ", seq_along(paths))
       }
-      sel <- shiny::isolate(selected_plot())
+      # Read selected_plot reactively (no isolate) so clicking a
+      # different chip re-renders the strip with the new selection
+      # highlighted. With isolate() the underlying value updated but
+      # the visual "selected" class stayed on the first chip.
+      sel <- selected_plot()
       if (is.null(sel) || !(sel %in% paths)) {
         sel <- if (length(paths) > 0) paths[1] else NULL
       }
