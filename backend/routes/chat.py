@@ -885,13 +885,17 @@ async def debug_postprocess_version():
 
 @router.get("/debug/guards")
 async def debug_guards():
-    """Verify which runtime guards are deployed (phantom-sheet, routing)."""
+    """Verify which runtime guards are deployed (phantom-sheet, routing, prompt)."""
     from services.computer_use import COMPUTER_USE_ACTIONS
+    from services.claude import SYSTEM_PROMPT
     return {
         "phantom_sheet_guard": "_strip_phantom_sheet_actions" in globals(),
         "install_addins_routed_to_cu": "install_addins" in COMPUTER_USE_ACTIONS,
         "uninstall_addins_routed_to_cu": "uninstall_addins" in COMPUTER_USE_ACTIONS,
-        "build_tag": "guards-2026-04-21",
+        "formula_literacy_rule": "Formula literacy" in SYSTEM_PROMPT,
+        "complete_every_step_rule": "Complete every numbered step" in SYSTEM_PROMPT,
+        "dont_truncate_ranges_rule": "Do not truncate ranges" in SYSTEM_PROMPT,
+        "build_tag": "guards-2026-04-21b",
     }
 
 @router.get("/debug/attachment-config")
