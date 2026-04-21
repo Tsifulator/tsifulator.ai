@@ -589,17 +589,6 @@ run_tsifl_server <- function(port = 7444) {
 
     # ── Plot tab content (hidden until user clicks Plot) ─────────────
     shiny::div(id = "plot_tab",
-      # v0.7.6 static red banner. If you can see this when the PLOTS
-      # tab is active, the tab-switch JS is working and the issue is
-      # output binding. If you can't see it, the tab isn't being made
-      # visible — JS click handler is broken.
-      shiny::tags$div(
-        style = paste(
-          "background:#DC2626;color:#FFF;padding:14px;font-size:13px;",
-          "font-weight:700;font-family:monospace;text-align:center;"
-        ),
-        "[v0.7.6 STATIC TEST] If you see this, tab switching works"
-      ),
       shiny::div(id = "plot_toolbar",
         shiny::tags$button(id = "plot_open_browser_btn",
                           onclick = "Shiny.setInputValue('plot_open_browser', Date.now(), {priority: 'event'});",
@@ -1374,18 +1363,14 @@ run_tsifl_server <- function(port = 7444) {
       })
       do.call(shiny::div, c(list(class = "plot_chip_row"), chips))
     })
-    # CRITICAL: tell Shiny to compute these renders even when the
-    # plot_tab container is hidden. Default Shiny behaviour suspends
-    # outputs whose containers have display:none. Since plot_tab is
-    # display:none until the user clicks PLOTS, the renders for
-    # plot_list_ui and plot_iframe_ui never fire. By the time the
-    # tab is shown, Shiny would normally then trigger them — but if
-    # the tab-switch JS is for any reason not flipping the .active
-    # class, the render never fires and the user sees an empty pane.
-    # Disabling suspendWhenHidden makes the renders compute on session
-    # start regardless.
+    # Force the chip render to compute on session start regardless of
+    # whether plot_tab is visible. (plot_iframe_ui's outputOptions is
+    # set further down, AFTER its renderUI assignment — calling
+    # outputOptions on an output that hasn't been registered yet
+    # throws "not in list of output objects" and silently aborts the
+    # whole server function. That was the root cause of every empty
+    # Plots tab in this session.)
     shiny::outputOptions(output, "plot_list_ui", suspendWhenHidden = FALSE)
-    shiny::outputOptions(output, "plot_iframe_ui", suspendWhenHidden = FALSE)
 
     shiny::observeEvent(input$plot_picker_change, {
       selected_plot(input$plot_picker_change)
@@ -1425,6 +1410,10 @@ run_tsifl_server <- function(port = 7444) {
         )
       }
     })
+    # Same suspendWhenHidden override as plot_list_ui above — placed
+    # here AFTER the renderUI assignment so the output is registered
+    # by the time outputOptions tries to look it up.
+    shiny::outputOptions(output, "plot_iframe_ui", suspendWhenHidden = FALSE)
 
     # "Open in browser" button
     shiny::observeEvent(input$plot_open_browser, {
