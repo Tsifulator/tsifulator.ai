@@ -938,38 +938,69 @@ async def pm_clear(user_id: str, workbook_id: str):
 
 @router.get("/debug/project-memory-list")
 async def pm_list_all():
-    """List ALL state files across all users. Debug only — remove after the
-    first couple of memory sessions are validated.
-
-    Returns a summary (user_id, workbook_id, completed_count, updated_at, first-5
-    completed entries) so we can spot phantom-sheet echoes without exposing
-    the full state blob.
-    """
-    from services.project_memory import DEFAULT_STATE_DIR
+    """List ALL state across both backends (Supabase + file). Debug only."""
+    from services.project_memory import DEFAULT_STATE_DIR, _supabase_client, backend_type
     import json as _json
-    root = DEFAULT_STATE_DIR
-    if not root.exists():
-        return {"state_dir": str(root), "exists": False, "entries": []}
+
     entries = []
-    for user_dir in root.iterdir():
-        if not user_dir.is_dir():
-            continue
-        for f in user_dir.glob("*.json"):
-            try:
-                data = _json.loads(f.read_text())
-            except Exception as e:
-                entries.append({"user_id": user_dir.name, "workbook_id": f.stem,
-                                "error": str(e)})
+
+    # Supabase rows (primary)
+    supa_rows = 0
+    client = _supabase_client()
+    if client is not None:
+        try:
+            result = client.table("project_memory_state") \
+                .select("user_id, workbook_id, state, updated_at") \
+                .order("updated_at", desc=True) \
+                .limit(200) \
+                .execute()
+            for row in (result.data or []):
+                st = row.get("state") or {}
+                entries.append({
+                    "backend":         "supabase",
+                    "user_id":         row.get("user_id"),
+                    "workbook_id":     row.get("workbook_id"),
+                    "updated_at":      row.get("updated_at"),
+                    "completed_count": len(st.get("completed") or []),
+                    "turns_count":     len(st.get("turns") or []),
+                    "first_5_completed": (st.get("completed") or [])[:5],
+                })
+                supa_rows += 1
+        except Exception as e:
+            entries.append({"backend": "supabase", "error": str(e)})
+
+    # File entries (fallback / stale)
+    file_rows = 0
+    root = DEFAULT_STATE_DIR
+    if root.exists():
+        for user_dir in root.iterdir():
+            if not user_dir.is_dir():
                 continue
-            entries.append({
-                "user_id":         user_dir.name,
-                "workbook_id":     f.stem,
-                "updated_at":      data.get("updated_at"),
-                "completed_count": len(data.get("completed") or []),
-                "turns_count":     len(data.get("turns") or []),
-                "first_5_completed": (data.get("completed") or [])[:5],
-            })
-    return {"state_dir": str(root), "exists": True, "count": len(entries), "entries": entries}
+            for f in user_dir.glob("*.json"):
+                try:
+                    data = _json.loads(f.read_text())
+                except Exception as e:
+                    entries.append({"backend": "file", "user_id": user_dir.name,
+                                    "workbook_id": f.stem, "error": str(e)})
+                    continue
+                entries.append({
+                    "backend":         "file",
+                    "user_id":         user_dir.name,
+                    "workbook_id":     f.stem,
+                    "updated_at":      data.get("updated_at"),
+                    "completed_count": len(data.get("completed") or []),
+                    "turns_count":     len(data.get("turns") or []),
+                    "first_5_completed": (data.get("completed") or [])[:5],
+                })
+                file_rows += 1
+
+    return {
+        "active_backend": backend_type(),
+        "supabase_rows":  supa_rows,
+        "file_rows":      file_rows,
+        "total":          len(entries),
+        "entries":        entries,
+    }
 
 @router.get("/debug/attachment-config")
 async def debug_attachment_config():
