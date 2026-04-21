@@ -27,6 +27,23 @@ create table if not exists model_contexts (
   unique (user_id, model_type)
 );
 
+-- Per-workbook project memory: what cells are already correct, what's locked,
+-- what's pending. Loaded on every /chat turn and injected into the system
+-- prompt so the LLM knows what NOT to redo. Survives Railway redeploys.
+create table if not exists project_memory_state (
+  user_id     text        not null,
+  workbook_id text        not null,                  -- sha256(app + sorted sheet names)[:16]
+  state       jsonb       not null default '{}'::jsonb,
+  updated_at  timestamptz not null default now(),
+  primary key (user_id, workbook_id)
+);
+create index if not exists project_memory_state_updated_idx
+  on project_memory_state (updated_at desc);
+
+-- Backend writes with a trusted service_role key; app-level access rules are
+-- enforced in Python, not Postgres. Disable RLS so inserts don't 42501.
+alter table project_memory_state disable row level security;
+
 -- ============================================================
 -- Done. Go back to your .env and add your Supabase credentials.
 -- ============================================================
