@@ -283,7 +283,7 @@ def _postprocess_excel_actions(result: dict, context: dict) -> dict:
 
         # Detect one-variable data table pattern:
         # Look for a column of sequential values (500,600,700...) with an empty cell above+right
-        _detect_and_inject_data_tables(name, preview, formulas, targeted_cells, injected)
+        _detect_and_inject_data_tables(name, preview, formulas, targeted_cells, targeted_formulas, injected)
 
     # --- 2. Descriptive statistics ---
     # If model wrote variance/computed formulas on a sheet but no stats in H:I, inject them
@@ -665,7 +665,7 @@ def _postprocess_excel_actions(result: dict, context: dict) -> dict:
     return result
 
 
-def _detect_and_inject_data_tables(sheet_name: str, preview: list, formulas: list, targeted_cells: set, injected: list):
+def _detect_and_inject_data_tables(sheet_name: str, preview: list, formulas: list, targeted_cells: set, targeted_formulas: dict, injected: list):
     """Detect one-variable and two-variable data table structures and inject output formulas."""
     print(f"[postprocess/dt] Checking {sheet_name}: preview rows={len(preview) if preview else 0}, targeted={targeted_cells}")
     if not preview or len(preview) < 16:
