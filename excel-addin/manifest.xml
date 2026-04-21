@@ -26,6 +26,14 @@
 
   <Permissions>ReadWriteDocument</Permissions>
 
+  <!-- External domains the add-in is allowed to fetch from. Without
+       these entries Office silently blocks cross-origin fetches and
+       the error surfaces as "TypeError: Load failed" in WKWebView. -->
+  <AppDomains>
+    <AppDomain>https://focused-solace-production-6839.up.railway.app</AppDomain>
+    <AppDomain>https://tsifulator.ai</AppDomain>
+  </AppDomains>
+
   <!-- Modern ribbon button + auto-open -->
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
 

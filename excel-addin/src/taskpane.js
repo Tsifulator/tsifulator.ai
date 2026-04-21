@@ -768,37 +768,67 @@ async function handleSubmit() {
     }
 
     // ── Computer Use session polling ────────────────────────────────────
-    // If the backend started a computer use session, show access modal and poll
+    // If the backend started a computer use session, show access modal
+    // and poll. Two UX fixes:
+    //   1. Stop button flips _cuCancelRequested so the polling loop
+    //      exits on the NEXT tick instead of waiting for the backend
+    //      status to round-trip back to "cancelled".
+    //   2. If no desktop agent claims the session within 15s, treat it
+    //      as "no agent running" and surface a clear message — the
+    //      common case when the user hasn't started desktop-agent.py.
     if (data.cu_session_id) {
       const cuSessionId = data.cu_session_id;
+      _cuCancelRequested = false;
       setStatus("Desktop automation...");
       showAccessModal(cuSessionId);
       let cuDone = false;
       let cuPolls = 0;
-      const maxPolls = 300;
+      const maxPolls = 120; // 2 min cap (was 5)
+      let agentPickupDeadline = 15; // poll # by which agent must claim
+      let everRunning = false;
       while (!cuDone && cuPolls < maxPolls) {
+        if (_cuCancelRequested) {
+          cuDone = true;
+          hideAccessModal();
+          appendMessage("assistant", "Stopped.");
+          break;
+        }
         cuPolls++;
         await new Promise(r => setTimeout(r, 1000));
         try {
           const statusResp = await fetch(`${BACKEND_URL}/computer-use/status/${cuSessionId}`);
           if (statusResp.ok) {
             const statusData = await statusResp.json();
-            if (statusData.status === "completed") {
+            const s = statusData.status;
+            if (s === "running") everRunning = true;
+            if (s === "completed") {
               cuDone = true;
               hideAccessModal();
-              appendMessage("assistant", `Done — advanced features applied.`);
-            } else if (statusData.status === "failed") {
+              appendMessage("assistant", "Done — advanced features applied.");
+            } else if (s === "failed") {
               cuDone = true;
               hideAccessModal();
               appendMessage("assistant", `Desktop automation failed: ${statusData.error || "unknown error"}`);
-            } else if (statusData.status === "cancelled") {
+            } else if (s === "cancelled") {
               cuDone = true;
               hideAccessModal();
-              appendMessage("assistant", `Stopped.`);
-            } else if (statusData.status === "partial") {
+              appendMessage("assistant", "Stopped.");
+            } else if (s === "partial") {
               cuDone = true;
               hideAccessModal();
-              appendMessage("assistant", `Done — some advanced features applied (partial completion).`);
+              appendMessage("assistant", "Done — some advanced features applied (partial completion).");
+            } else if (s === "pending" && cuPolls >= agentPickupDeadline && !everRunning) {
+              // No desktop agent has claimed the session after 15s —
+              // almost certainly means the user hasn't started the
+              // agent. Bail out with a clear message.
+              cuDone = true;
+              hideAccessModal();
+              appendMessage("assistant",
+                "No desktop agent is running on your machine, so advanced actions can't be executed. Start the agent from a Terminal with:\n\n  cd desktop-agent && python3 agent.py\n\nThen retry your request.");
+              // Also tell the backend to clean up the stuck session.
+              try {
+                await fetch(`${BACKEND_URL}/computer-use/cancel/${cuSessionId}`, { method: "POST" });
+              } catch {}
             }
           }
         } catch (pollErr) {
@@ -807,7 +837,7 @@ async function handleSubmit() {
       }
       hideAccessModal();
       if (!cuDone) {
-        appendMessage("assistant", "Desktop automation timed out. Check Excel for partial results.");
+        appendMessage("assistant", "Desktop automation timed out after 2 min. Check Excel for partial results.");
       }
     }
 
@@ -2497,6 +2527,10 @@ function setSubmitEnabled(enabled) { document.getElementById("submit-btn").disab
 // ── Access Modal (desktop automation overlay) ───────────────────────────────
 
 let _activeAccessSessionId = null;
+// When the user hits Stop (or Esc), the polling loop in handleSubmit
+// reads this flag on its next tick and breaks immediately, instead of
+// waiting for the backend status to round-trip back as "cancelled".
+let _cuCancelRequested = false;
 
 function showAccessModal(sessionId) {
   _activeAccessSessionId = sessionId;
@@ -2549,6 +2583,9 @@ function hideAccessModal() {
 async function _cancelAccess() {
   const sessionId = _activeAccessSessionId;
   if (!sessionId) return;
+  // Flip the flag FIRST so the polling loop in handleSubmit breaks on
+  // its next tick without having to wait for the backend round-trip.
+  _cuCancelRequested = true;
   const btn = document.getElementById("access-modal-stop");
   if (btn) { btn.textContent = "Stopping..."; btn.disabled = true; }
   const statusEl = document.querySelector(".access-modal-status");
