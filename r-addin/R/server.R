@@ -1434,21 +1434,60 @@ run_tsifl_server <- function(port = 7444) {
     shiny::outputOptions(output, "plot_iframe_ui", suspendWhenHidden = FALSE)
 
     # "Open in browser" button
+    # Helper: return the currently-selected plot path, or fall back to
+    # the most-recent file in plots_dir if nothing's selected. Both
+    # Save and Open in browser use this so they never silently bail
+    # when selected_plot() hasn't been set yet.
+    current_plot_path <- function() {
+      sel <- shiny::isolate(selected_plot())
+      if (!is.null(sel) && nzchar(sel) && file.exists(sel)) return(sel)
+      pf <- shiny::isolate(plot_files())
+      if (length(pf) > 0) {
+        cand <- unname(as.character(pf[1]))
+        if (file.exists(cand)) return(cand)
+      }
+      NULL
+    }
+
     shiny::observeEvent(input$plot_open_browser, {
-      sel <- selected_plot()
-      if (is.null(sel) || !file.exists(sel)) return()
-      tryCatch(utils::browseURL(sel), error = function(e) {})
+      sel <- current_plot_path()
+      if (is.null(sel)) {
+        add_message("action",
+          "No plot to open — generate one from the Chat tab first.")
+        return()
+      }
+      # browseURL works for .html (opens in default browser) and .png
+      # (opens in default image viewer on macOS) — if it fails on a
+      # given file type, fall back to system's `open` command.
+      ok <- FALSE
+      tryCatch({
+        utils::browseURL(sel); ok <- TRUE
+      }, error = function(e) {})
+      if (!ok && .Platform$OS.type == "unix") {
+        tryCatch({
+          system2("open", args = shQuote(sel)); ok <- TRUE
+        }, error = function(e) {})
+      }
+      if (!ok) {
+        add_message("action", paste0("Could not open ", basename(sel)))
+      }
     })
 
     # "Save to Downloads" button — copies the selected plot (HTML and/or
     # PNG) to ~/Downloads/ with a friendly timestamped name. Bosses paste
     # PNGs into decks, so we always copy the PNG when it exists.
     shiny::observeEvent(input$plot_save_downloads, {
-      sel <- selected_plot()
-      if (is.null(sel) || !file.exists(sel)) return()
+      sel <- current_plot_path()
+      if (is.null(sel)) {
+        add_message("action",
+          "No plot to save — generate one from the Chat tab first.")
+        return()
+      }
       tryCatch({
         downloads_dir <- path.expand("~/Downloads")
-        if (!dir.exists(downloads_dir)) dir.create(downloads_dir, recursive = TRUE)
+        if (!dir.exists(downloads_dir)) {
+          dir.create(downloads_dir, recursive = TRUE)
+        }
         ts_tag <- format(Sys.time(), "%Y%m%d_%H%M%S")
         stem <- tools::file_path_sans_ext(sel)
         html_src <- paste0(stem, ".html")
@@ -1466,8 +1505,18 @@ run_tsifl_server <- function(port = 7444) {
           file.copy(png_src, png_target, overwrite = TRUE)
           saved <- c(saved, ".png")
         }
+        # If neither sibling existed, copy `sel` as-is — guards against
+        # edge cases where the selected file isn't in the .html/.png
+        # sibling naming scheme (future formats, user-renamed files).
+        if (length(saved) == 0 && file.exists(sel)) {
+          target <- file.path(downloads_dir,
+                              paste0("tsifl_plot_", ts_tag, ".",
+                                     tools::file_ext(sel)))
+          file.copy(sel, target, overwrite = TRUE)
+          saved <- paste0(".", tools::file_ext(sel))
+        }
         add_message("action",
-          paste0("Saved plot to Downloads as tsifl_plot_", ts_tag,
+          paste0("Saved to Downloads: tsifl_plot_", ts_tag,
                  " (", paste(saved, collapse = " + "), ")"))
       }, error = function(e) {
         add_message("action",
