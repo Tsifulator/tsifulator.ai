@@ -120,7 +120,7 @@ def run_case(case: dict, backend: str, timeout: int) -> dict:
     actions = data.get("actions") or []
     reply = data.get("reply") or ""
 
-    check_results = evaluator(rubric, actions, reply)
+    check_results = evaluator(rubric, actions, reply, cu_session_id=data.get("cu_session_id"))
     all_ok = all(ok for ok, _, _ in check_results)
 
     return {

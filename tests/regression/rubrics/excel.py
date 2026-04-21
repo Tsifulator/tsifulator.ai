@@ -196,12 +196,23 @@ def min_action_count(actions: list[dict], spec: int) -> tuple[bool, str]:
     return True, f"{len(actions)} actions (≥ {spec})"
 
 
-def reply_not_empty(actions: list[dict], spec: bool, reply: str = "") -> tuple[bool, str]:
-    """Sanity: reply text should exist (catches empty-reply regressions)."""
-    ok = bool(reply.strip())
+def reply_not_empty(actions: list[dict], spec: bool, reply: str = "",
+                    cu_session_id: str | None = None) -> tuple[bool, str]:
+    """Sanity: reply text should exist unless a CU session took over.
+
+    Backend intentionally blanks the reply when cu_actions are emitted (the
+    add-in's typing animation covers UX while the desktop agent works). So
+    "empty reply AND has cu_session_id" is valid — the check only fails when
+    BOTH are absent.
+    """
+    has_reply = bool((reply or "").strip())
+    has_cu = bool(cu_session_id)
+    ok = has_reply or has_cu
     if spec and not ok:
-        return False, "reply text is empty"
-    return True, "reply present" if ok else "no reply required"
+        return False, "reply is empty and no cu_session_id"
+    if has_cu and not has_reply:
+        return True, f"reply blanked (cu_session_id={cu_session_id})"
+    return True, "reply present"
 
 
 # ── Dispatcher ───────────────────────────────────────────────────────────────
@@ -219,7 +230,8 @@ CHECKS: dict[str, Callable[..., tuple[bool, str]]] = {
 }
 
 
-def evaluate(rubric: dict, actions: list[dict], reply: str = "") -> list[tuple[bool, str, str]]:
+def evaluate(rubric: dict, actions: list[dict], reply: str = "",
+             cu_session_id: str | None = None) -> list[tuple[bool, str, str]]:
     """Run every check listed in `rubric`. Returns list of (pass, name, detail)."""
     results: list[tuple[bool, str, str]] = []
     for name, spec in rubric.items():
@@ -231,7 +243,7 @@ def evaluate(rubric: dict, actions: list[dict], reply: str = "") -> list[tuple[b
             continue
         try:
             if name == "reply_not_empty":
-                ok, detail = check(actions, spec, reply=reply)
+                ok, detail = check(actions, spec, reply=reply, cu_session_id=cu_session_id)
             else:
                 ok, detail = check(actions, spec)
         except Exception as e:

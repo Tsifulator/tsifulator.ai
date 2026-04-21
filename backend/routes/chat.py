@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from services.claude import get_claude_response, get_claude_stream
 from services.usage import check_and_increment_usage
 from services.memory import save_message, get_recent_history, is_connected
+from services import project_memory
 try:
     from services.computer_use import split_actions, create_session
 except Exception as _cu_import_err:
@@ -895,8 +896,43 @@ async def debug_guards():
         "formula_literacy_rule": "Formula literacy" in SYSTEM_PROMPT,
         "complete_every_step_rule": "Complete every numbered step" in SYSTEM_PROMPT,
         "dont_truncate_ranges_rule": "Do not truncate ranges" in SYSTEM_PROMPT,
-        "build_tag": "guards-2026-04-21d-trim",
+        "project_memory_available": True,
+        "project_memory_enabled":   project_memory.is_enabled(),
+        "build_tag": "guards-2026-04-21e-project-memory",
     }
+
+
+# ── Project memory debug endpoints ───────────────────────────────────────────
+
+@router.get("/debug/project-memory/fingerprint")
+async def pm_fingerprint(app: str = "excel", sheets: str = ""):
+    """Compute the workbook_id for a given app + comma-separated sheet list.
+
+    Example: /chat/debug/project-memory/fingerprint?app=excel&sheets=Calculator,Price%20Solver,Sales%20Forecast
+    """
+    fake_ctx = {"app": app, "all_sheets": [s.strip() for s in sheets.split(",") if s.strip()]}
+    return {"workbook_id": project_memory.fingerprint(fake_ctx), "input": fake_ctx}
+
+
+@router.get("/debug/project-memory/{user_id}/{workbook_id}")
+async def pm_get(user_id: str, workbook_id: str):
+    """Inspect state for a (user_id, workbook_id). Useful for debugging regressions."""
+    state = project_memory.load(user_id, workbook_id)
+    return {
+        "enabled": project_memory.is_enabled(),
+        "workbook_id": workbook_id,
+        "completed_count": len(state.get("completed") or []),
+        "locks_count":     len(state.get("user_locks") or []),
+        "turns_count":     len(state.get("turns") or []),
+        "state": state,
+    }
+
+
+@router.delete("/debug/project-memory/{user_id}/{workbook_id}")
+async def pm_clear(user_id: str, workbook_id: str):
+    """Wipe state for a workbook. Use to reset when the state gets out of sync."""
+    deleted = project_memory.clear(user_id, workbook_id)
+    return {"deleted": deleted, "workbook_id": workbook_id}
 
 @router.get("/debug/attachment-config")
 async def debug_attachment_config():
@@ -1087,6 +1123,14 @@ async def chat(request: ChatRequest):
     if cross_app_context:
         message = message + cross_app_context
 
+    # Per-project memory (flag-gated): inject "what's already done" before
+    # sending to Claude. Prevents the "every run starts from scratch and may
+    # undo prior correct work" pattern we saw across d1..d9 in PlacerHills-09.
+    # `_pm_state` / `_pm_wb_id` are reused below to persist new actions.
+    message, _pm_wb_id, _pm_state = project_memory.inject_and_load(
+        request.user_id, request.context, message
+    )
+
     # Limit image sizes to avoid 413 from Claude API
     # Each base64 image ~1.33x original size; cap at 1MB base64 per image, max 5 images
     safe_images = []
@@ -1245,6 +1289,16 @@ async def chat(request: ChatRequest):
         # and the "Done" message appears after completion
         result["reply"] = ""
         print(f"[hybrid] Split: {len(addin_actions)} add-in + {len(cu_actions)} computer-use (session {cu_session_id})")
+
+    # Per-project memory: record what got written this turn so the next
+    # turn sees it as "already done". No-op if PROJECT_MEMORY_ENABLED is off.
+    try:
+        project_memory.record_and_save(
+            request.user_id, _pm_wb_id, _pm_state,
+            all_actions, result.get("reply", "")
+        )
+    except Exception as e:
+        logger.warning(f"[project_memory] save failed (non-fatal): {e}")
 
     return ChatResponse(
         reply=result["reply"],
