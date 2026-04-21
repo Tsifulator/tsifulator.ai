@@ -9,11 +9,15 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v53";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v54";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
 let pendingImages      = [];     // base64 images queued for next message
+
+// Project memory state (shown in the Memory panel)
+let currentWorkbookId = null;
+let memoryPanelExpanded = false;
 
 // Undo stack (Improvement 11) — stores cell states before actions
 const undoStack = [];
@@ -139,6 +143,21 @@ function showChatScreen(user) {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
     if (e.key === "Escape") { e.target.value = ""; }
   });
+
+  // Memory panel: toggle on header click, clear on reset button
+  const memHeader = document.getElementById("memory-header");
+  if (memHeader) {
+    memHeader.addEventListener("click", (e) => {
+      // Don't toggle when the Reset button itself is clicked
+      if ((e.target.id || "") === "memory-clear") return;
+      toggleMemoryPanel();
+    });
+  }
+  const memClear = document.getElementById("memory-clear");
+  if (memClear) memClear.addEventListener("click", (e) => { e.stopPropagation(); clearMemory(); });
+
+  // Initial memory state load (runs after a short delay so Excel context is ready)
+  setTimeout(() => { refreshMemoryPanel(); }, 800);
 
   // Auto-resize textarea
   const input = document.getElementById("user-input");
@@ -418,6 +437,98 @@ async function renderImageToCanvas(base64Data, mediaType, maxW, maxH) {
   } catch (e) {
     console.warn("renderImageToCanvas failed:", e);
     return null;
+  }
+}
+
+// ── Project memory panel ─────────────────────────────────────────────────────
+
+/** Fetch memory state for the current user + workbook context and re-render. */
+async function refreshMemoryPanel() {
+  if (!CURRENT_USER) return;
+  try {
+    const ctx = await getExcelContext();
+    const resp = await fetch(`${BACKEND_URL}/chat/project-memory/lookup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: CURRENT_USER.id, context: ctx }),
+    });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    currentWorkbookId = data.workbook_id;
+    renderMemoryPanel(data);
+  } catch (e) {
+    console.warn("[tsifl] memory panel refresh failed:", e);
+  }
+}
+
+function renderMemoryPanel(data) {
+  const panel   = document.getElementById("memory-panel");
+  const countEl = document.getElementById("memory-count");
+  const listEl  = document.getElementById("memory-list");
+  const clearBtn = document.getElementById("memory-clear");
+  if (!panel) return;
+
+  // Hide the panel entirely if memory feature is disabled server-side
+  if (!data.enabled) {
+    panel.style.display = "none";
+    return;
+  }
+
+  const items = data.completed || [];
+  const n = items.length;
+
+  panel.style.display = "block";
+  countEl.textContent = n === 0 ? "empty" : `${n} cell${n === 1 ? "" : "s"} remembered`;
+  clearBtn.style.display = n > 0 ? "inline-block" : "none";
+
+  if (n === 0) {
+    listEl.innerHTML = `<div class="memory-empty">nothing tracked yet — memory populates as you work</div>`;
+    return;
+  }
+
+  // Render each tracked cell. Dedup already done server-side.
+  const rows = items.slice(-50).reverse().map(item => {
+    const cell = (item.cell || item.range || "?");
+    const body = item.formula ? escapeHtml(String(item.formula)) :
+                 item.note    ? escapeHtml(String(item.note)) :
+                 item.name    ? `named: ${escapeHtml(String(item.name))}` :
+                                escapeHtml(item.type || "");
+    return `<div class="memory-row"><span class="memory-cell">${escapeHtml(cell)}</span><span class="memory-body">${body}</span></div>`;
+  }).join("");
+  listEl.innerHTML = rows;
+}
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function toggleMemoryPanel() {
+  memoryPanelExpanded = !memoryPanelExpanded;
+  const panel = document.getElementById("memory-panel");
+  const list  = document.getElementById("memory-list");
+  panel.classList.toggle("expanded", memoryPanelExpanded);
+  list.style.display = memoryPanelExpanded ? "block" : "none";
+}
+
+async function clearMemory() {
+  if (!CURRENT_USER) return;
+  if (!confirm("Clear all project memory for this workbook? tsifl will forget every cell it's tracked.")) return;
+  try {
+    const ctx = await getExcelContext();
+    const resp = await fetch(`${BACKEND_URL}/chat/project-memory/clear`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: CURRENT_USER.id, context: ctx }),
+    });
+    if (!resp.ok) {
+      appendMessage("assistant", "Couldn't clear memory — backend returned " + resp.status);
+      return;
+    }
+    await refreshMemoryPanel();
+  } catch (e) {
+    appendMessage("assistant", "Couldn't clear memory: " + (e?.message || e));
   }
 }
 
@@ -879,6 +990,8 @@ async function handleSubmit() {
     setStatus("Disconnected");
   } finally {
     setSubmitEnabled(true);
+    // Refresh memory panel (fire-and-forget) so the user sees what just got tracked
+    refreshMemoryPanel().catch(() => {});
   }
 }
 

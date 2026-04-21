@@ -46,6 +46,17 @@
 
       <div id="user-bar"></div>
 
+      <!-- Memory panel — shows what project_memory is tracking for this workbook -->
+      <div id="memory-panel" style="display:none;">
+        <div id="memory-header">
+          <span id="memory-title">Memory</span>
+          <span id="memory-count">0 cells</span>
+          <button id="memory-toggle" title="Expand / collapse">&#9656;</button>
+          <button id="memory-clear" title="Clear memory for this workbook" style="display:none;">Reset</button>
+        </div>
+        <div id="memory-list" style="display:none;"></div>
+      </div>
+
       <!-- Progress bar (Improvement 13) -->
       <div id="progress-bar-wrap" style="display:none;padding:0 12px;">
         <div style="background:#E2E8F0;border-radius:2px;height:3px;width:100%;overflow:hidden;">

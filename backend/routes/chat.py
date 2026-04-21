@@ -877,6 +877,8 @@ class ChatResponse(BaseModel):
     tasks_remaining: int = -1
     memory_active: bool = False
     model_used: str = ""
+    workbook_id: str = ""          # project_memory fingerprint for this turn
+    memory_completed_count: int = 0 # how many cells are tracked in memory
     cu_session_id: str | None = None  # Computer use session ID (if any actions need GUI)
 
 @router.get("/debug/postprocess-version")
@@ -934,6 +936,45 @@ async def pm_clear(user_id: str, workbook_id: str):
     """Wipe state for a workbook. Use to reset when the state gets out of sync."""
     deleted = project_memory.clear(user_id, workbook_id)
     return {"deleted": deleted, "workbook_id": workbook_id}
+
+
+class MemoryLookupRequest(BaseModel):
+    user_id: str
+    context: dict
+
+
+@router.post("/project-memory/lookup")
+async def pm_lookup(request: MemoryLookupRequest):
+    """Fetch the memory state for the current user + workbook context.
+
+    Called by the taskpane on boot (to render the Memory panel before the
+    user's first chat turn) and after each chat turn (to refresh the panel).
+    Returns the workbook_id so the client doesn't have to compute the
+    fingerprint itself.
+    """
+    wb_id = project_memory.fingerprint(request.context)
+    state = project_memory.load(request.user_id, wb_id)
+    return {
+        "workbook_id":     wb_id,
+        "enabled":         project_memory.is_enabled(),
+        "backend":         project_memory.backend_type(),
+        "completed_count": len(state.get("completed") or []),
+        "turns_count":     len(state.get("turns") or []),
+        "completed":       state.get("completed") or [],
+        "user_locks":      state.get("user_locks") or [],
+    }
+
+
+@router.post("/project-memory/clear")
+async def pm_clear_post(request: MemoryLookupRequest):
+    """Clear memory state for the current user + workbook context.
+
+    POST-based because the taskpane's CORS config allows POST but may not
+    allow arbitrary DELETE on the /debug/* namespace.
+    """
+    wb_id = project_memory.fingerprint(request.context)
+    deleted = project_memory.clear(request.user_id, wb_id)
+    return {"workbook_id": wb_id, "deleted": deleted}
 
 
 @router.get("/debug/project-memory-supabase-probe")
@@ -1419,6 +1460,8 @@ async def chat(request: ChatRequest):
         memory_active=is_connected(),
         model_used=result.get("model_used", ""),
         cu_session_id=cu_session_id,
+        workbook_id=_pm_wb_id,
+        memory_completed_count=len((_pm_state or {}).get("completed") or []),
     )
 
 
