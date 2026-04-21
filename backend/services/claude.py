@@ -2375,35 +2375,17 @@ async def get_claude_response(message: str, context: dict,
         logger.info("[HW-INJECT] Generic SIMnet reminder injected into user message")
         homework_reminder = """
 
-PROJECT-INSTRUCTIONS MODE — READ EVERY SCREENSHOT TOP-TO-BOTTOM. NEVER SKIM.
+SIMNET GUARDRAILS (read before acting):
 
-BEFORE the execute_actions call, your text reply MUST list EVERY numbered step and sub-step you found in the images (1., 2., 3a., 3b., … through the last one). Mark each one:
-  ✓ <brief description> — will be handled by add-in action
-  → <brief description> — will be handled by computer-use action (Solver / Scenario Manager / Data Table / Analysis ToolPak / Install-Uninstall Addins)
-  ✗ SKIPPED: step N — <specific reason>
+1. NON-DESTRUCTIVE. Only edit cells the instructions explicitly name. Do NOT rename labels, append annotations like "(Gross)", or overwrite existing data rows. If a cell already holds correct data/formula, leave it alone unless the instructions tell you to change that specific cell.
 
-Then emit actions for EVERY ✓ and → step in ONE execute_actions call. Do not stop at step 3 and leave 4-13 silently undone. If a sub-step is truly not actionable (e.g. "Click Enable Editing" after the file is already open), skip it with ✗ and say why.
+2. LITERAL FORMULAS. "X per Y" means division `X/Y`. "N times X per Y" means `(X/Y)*N`. Example: "two times the price per square foot" → `=(E5/C5)*2`, NOT `=E5*0.005` or any invented rate. Never replace a stated formula with a guessed percentage.
 
-FORMULA LITERACY — translate English math LITERALLY.
-  • "two times the price per square foot" → `=(E5/C5)*2` — price DIVIDED BY sq ft, TIMES 2. NOT `=E5*0.005`, NOT `=E5*0.01`, NOT any guessed rate.
-  • "5% of total commission" → `=C14*0.05`. NOT `=C14*5`.
-  • "commission rate TIMES selling price" → `=C13*C12`.
-  • "X per Y" means DIVISION: `X / Y`. Never replace a division with a percentage constant.
-  If you don't see an exact numeric rate in the instructions, do NOT invent one. Build the formula from the cell references named in the instructions.
+3. ONE SPILLED ARRAY FORMULA. When instructions say "Select F5, type =, select E5:E26, / for division, select C5:C26, *2, Enter", emit ONE write_formula at F5 with `=(E5:E26/C5:C26)*2`. Do NOT fill_down 22 per-row formulas — SIMnet marks those wrong.
 
-ARRAY FORMULAS — a step like "Select F5, type =, select E5:E26, / for division, select C5:C26, *2, Enter" produces ONE spilled array formula at F5: `=(E5:E26/C5:C26)*2`. Emit a single write_formula at F5 with that exact formula. Do NOT emit per-row fill_down — SIMnet distinguishes them and will mark a per-row solution wrong.
+4. FULL RANGE. Use context.used_range (authoritative) not the preview. If data goes to row 26, formulas cover rows 5-26. The preview may be truncated.
 
-RANGE COVERAGE — read context.used_range (authoritative), not the preview. If a sheet's used_range goes to row 26, your formulas cover rows 5-26, not 5-20. The preview may be truncated.
-
-DATA TABLES — "Create the data table using a column input" requires a real Excel Data Table (TABLE formula entered via What-If Analysis > Data Table dialog). Emit the `create_data_table` action — it routes to computer-use. Do NOT fake it by writing individual formulas per output cell; SIMnet checks for the TABLE array formula.
-
-NAMED RANGES — "Use Create from Selection" on a block like B12:C12 with a label in B and a value in C produces a name equal to the label (spaces → underscores). Emit one `create_named_range` per row pair.
-
-SCENARIO MANAGER / SOLVER / ANALYSIS TOOLPAK / INSTALL-UNINSTALL — ALL route through computer-use. Emit `run_solver`, `save_solver_scenario`, `scenario_manager`, `scenario_summary`, `install_addins`, `uninstall_addins` as appropriate. Tell the user in your reply to start the desktop agent (`cd desktop-agent && python3 agent.py`) if they haven't.
-
-HISTOGRAMS — the bin-range cells (e.g. H13:H23 with values 400000, 450000, …, 900000) are straight write_cell entries you CAN do with add-in actions. The Analysis ToolPak histogram output routes to computer-use (`run_toolpak`). Hide the helper column with format_range having hidden=true.
-
-CHARTS — when the instruction specifies axis titles ("horizontal axis title Selling Price") or chart title, put those in the add_chart payload (title, axis_title_x, axis_title_y). When it says "delete the legend", include show_legend:false. When it says "position L4 to W16", include position with those anchors.
+5. CU-ROUTE THESE: Solver install/run/scenarios → `install_addins`, `run_solver`, `save_solver_scenario`, `scenario_manager`, `scenario_summary`. Data Table dialog → `create_data_table`. Analysis ToolPak dialog → `run_toolpak`. Uninstall → `uninstall_addins`. If the desktop agent isn't running those will fail — tell the user plainly.
 """
         user_text = user_text + homework_reminder
 
