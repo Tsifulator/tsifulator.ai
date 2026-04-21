@@ -83,6 +83,25 @@ def slug(s: str) -> str:
     return re.sub(r"[^a-z0-9-]+", "-", s.lower()).strip("-")
 
 
+def _cell_to_json(v: Any) -> Any:
+    """Coerce a cell value to something json.dumps can handle.
+
+    openpyxl returns ArrayFormula / datetime / decimal objects for some cells.
+    The Excel add-in would serialize these as display strings, so we do the same.
+    """
+    import datetime, decimal
+    if v is None or isinstance(v, (bool, int, float, str)):
+        return v
+    # openpyxl array formula
+    if hasattr(v, "text"):
+        return getattr(v, "text", str(v))
+    if isinstance(v, (datetime.datetime, datetime.date, datetime.time)):
+        return v.isoformat()
+    if isinstance(v, decimal.Decimal):
+        return float(v)
+    return str(v)
+
+
 def build_context_from_workbook(path: Path, active: str | None = None) -> dict:
     """Build a `context` dict mimicking the Excel add-in's getExcelContext()."""
     wb = load_workbook(path, data_only=False)
@@ -97,7 +116,7 @@ def build_context_from_workbook(path: Path, active: str | None = None) -> dict:
             max_row=min(preview_rows, ws.max_row or 1),
             max_col=min(26, ws.max_column or 1),
         ):
-            preview.append([c.value for c in row])
+            preview.append([_cell_to_json(c.value) for c in row])
         sheet_summaries.append({
             "name": ws.title,
             "used_range": ws.calculate_dimension() if ws.max_row else "empty",

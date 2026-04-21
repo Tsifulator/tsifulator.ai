@@ -898,7 +898,8 @@ async def debug_guards():
         "dont_truncate_ranges_rule": "Do not truncate ranges" in SYSTEM_PROMPT,
         "project_memory_available": True,
         "project_memory_enabled":   project_memory.is_enabled(),
-        "build_tag": "guards-2026-04-21e-project-memory",
+        "project_memory_backend":   project_memory.backend_type(),  # 'supabase' or 'file'
+        "build_tag": "guards-2026-04-21f-persistent-memory",
     }
 
 

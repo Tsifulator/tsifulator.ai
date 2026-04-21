@@ -1,0 +1,70 @@
+# 002-named-ranges-with-memory — captured 2026-04-21
+#
+# The defining case for project_memory. Start state (d13.xlsx) already has
+# Calculator!C18 and Sales Forecast!F5 populated from a prior turn. The
+# backend's memory injection should tell the LLM those are done, so turn 2
+# creates ONLY the 3 named ranges requested — no over-reach, no redoes.
+#
+# Before project_memory (d10.xlsx, captured earlier):
+#   Got 7 named ranges (4 hallucinated), MISSED Net_Commission, no C18/F5 awareness.
+# After project_memory (d14.xlsx, this baseline):
+#   Exactly 3 correct named ranges, C18 + F5 untouched, no extras.
+
+_project: 002-named-ranges-with-memory
+
+# ── Sheet safety ──────────────────────────────────────────────────────────
+
+allowed_sheet_targets:
+  - Calculator
+  - Price Solver
+  - Sales Forecast
+
+forbidden_sheet_targets:
+  - Transactions
+  - Transactions Stats
+  - Calorie Journal      # hallucinated in d11 run
+  - Summary
+  - Criteria
+  - Data
+  - Stats
+  - Sheet1
+
+# ── Memory doing its job: don't touch previously-completed cells ──────────
+
+must_not_overwrite:
+  - "Calculator!C18"              # completed in turn 1 (d13 state)
+  - "Sales Forecast!F5:F26"        # array formula anchor + spill range
+  - "Price Solver!B12:B17"         # labels (non-destructive rule)
+  - "Sales Forecast!A5:E26"        # data rows (d3/d4 E23 damage)
+
+# ── Scope discipline: user said "nothing else" ────────────────────────────
+
+min_action_count: 2
+# No upper cap in the rubric dsl today; named-range count is implied by the
+# must_include_action_types + sheet guards.
+
+# Reply text is optional for narrow prompts — the LLM sometimes emits only
+# actions and no chat text for focused "do this one thing" requests. The
+# correctness check is the emitted actions, not the prose.
+reply_not_empty: false
+
+must_include_action_types:
+  - create_named_range
+
+# ── The 3 named ranges (at minimum) ───────────────────────────────────────
+# The captured run navigated to Price Solver and created 3 ranges. We don't
+# assert exact cell addresses because the add-in sometimes normalizes
+# 'B12:C12' to just 'C12' (data cell) depending on how Create from Selection
+# is implemented. Counting via action_types above is sufficient.
+
+# ── Forbidden hallucinations (from prior bad runs) ────────────────────────
+
+formula_at_cell_forbids:
+  # None of these cells should be written at all — they're the "previously
+  # done" cells that memory should protect.
+  "Calculator!C18":
+    - "="                          # any formula = a new write, which = memory failure
+  "Sales Forecast!F5":
+    - "*0.01"
+    - "*0.005"
+    - "*0.02"                      # guessed-rate regressions

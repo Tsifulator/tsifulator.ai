@@ -94,8 +94,39 @@ def _empty_state(workbook_id: str) -> dict:
     }
 
 
+# ── Supabase adapter (primary) with file fallback ────────────────────────────
+# The file path is suitable for local dev but /tmp on Railway is wiped on every
+# deploy. Supabase stores the state durably. If SUPABASE_URL/KEY env vars are
+# present, use Supabase; otherwise fall back to disk so nothing breaks in dev.
+
+def _supabase_client():
+    """Return the shared Supabase client from services.memory, or None."""
+    try:
+        from services.memory import _get_client
+        return _get_client()
+    except Exception as e:
+        logger.debug("project_memory: supabase client unavailable: %s", e)
+        return None
+
+
 def load(user_id: str, workbook_id: str, state_dir: Path | None = None) -> dict:
     """Load state for (user_id, workbook_id). Returns empty template if none."""
+    client = _supabase_client()
+    if client is not None:
+        try:
+            result = client.table("project_memory_state") \
+                .select("state") \
+                .eq("user_id", user_id) \
+                .eq("workbook_id", workbook_id) \
+                .execute()
+            rows = result.data or []
+            if rows:
+                return rows[0]["state"] or _empty_state(workbook_id)
+            return _empty_state(workbook_id)
+        except Exception as e:
+            logger.warning("project_memory: supabase load failed, falling back to file: %s", e)
+
+    # File fallback
     path = _state_path(user_id, workbook_id, state_dir)
     if path.exists():
         try:
@@ -106,17 +137,31 @@ def load(user_id: str, workbook_id: str, state_dir: Path | None = None) -> dict:
 
 
 def save(user_id: str, workbook_id: str, state: dict, state_dir: Path | None = None) -> None:
-    """Persist state atomically."""
-    path = _state_path(user_id, workbook_id, state_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """Persist state. Supabase first, file fallback on error or if unconfigured."""
     state["updated_at"] = time.time()
 
-    # Bound growth
+    # Bound growth regardless of backend
     if len(state.get("completed", [])) > MAX_COMPLETED_STORED:
         state["completed"] = state["completed"][-MAX_COMPLETED_STORED:]
     if len(state.get("turns", [])) > 50:
         state["turns"] = state["turns"][-50:]
 
+    client = _supabase_client()
+    if client is not None:
+        try:
+            client.table("project_memory_state").upsert({
+                "user_id":     user_id,
+                "workbook_id": workbook_id,
+                "state":       state,
+                "updated_at":  "now()",
+            }, on_conflict="user_id,workbook_id").execute()
+            return
+        except Exception as e:
+            logger.warning("project_memory: supabase save failed, falling back to file: %s", e)
+
+    # File fallback
+    path = _state_path(user_id, workbook_id, state_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, indent=2, default=str))
     tmp.replace(path)
@@ -124,11 +169,33 @@ def save(user_id: str, workbook_id: str, state: dict, state_dir: Path | None = N
 
 def clear(user_id: str, workbook_id: str, state_dir: Path | None = None) -> bool:
     """Wipe state for a workbook. Returns True if something was deleted."""
+    deleted = False
+
+    client = _supabase_client()
+    if client is not None:
+        try:
+            result = client.table("project_memory_state") \
+                .delete() \
+                .eq("user_id", user_id) \
+                .eq("workbook_id", workbook_id) \
+                .execute()
+            if result.data:
+                deleted = True
+        except Exception as e:
+            logger.warning("project_memory: supabase clear failed, also trying file: %s", e)
+
+    # Also wipe file (harmless if Supabase already cleared it)
     path = _state_path(user_id, workbook_id, state_dir)
     if path.exists():
         path.unlink()
-        return True
-    return False
+        deleted = True
+
+    return deleted
+
+
+def backend_type() -> str:
+    """For diagnostics: returns 'supabase' or 'file' depending on what's active."""
+    return "supabase" if _supabase_client() is not None else "file"
 
 
 # ── Prompt injection ─────────────────────────────────────────────────────────

@@ -96,6 +96,27 @@ def run_case(case: dict, backend: str, timeout: int) -> dict:
             "checks": [], "elapsed_ms": 0, "actions": [], "reply": "",
         }
 
+    # Pre-flight: clear any project_memory state for this test user_id so the
+    # case starts from a deterministic blank slate. Without this, the first
+    # case to run pollutes state for the next. Silently ignores 404s — if the
+    # endpoint doesn't exist yet or state is already empty, no harm done.
+    user_id = req.get("user_id", "")
+    app_ctx = (req.get("context") or {})
+    # Compute workbook_id client-side to match backend's fingerprint() logic
+    import hashlib as _h, json as _j
+    _wb_sig = {
+        "app":    app_ctx.get("app") or "",
+        "sheets": sorted(app_ctx.get("all_sheets") or []),
+    }
+    workbook_id = _h.sha256(_j.dumps(_wb_sig, sort_keys=True).encode()).hexdigest()[:16]
+    try:
+        requests.delete(
+            f"{backend.rstrip('/')}/chat/debug/project-memory/{user_id}/{workbook_id}",
+            timeout=10,
+        )
+    except Exception:
+        pass  # pre-flight is best-effort
+
     t0 = time.time()
     try:
         resp = requests.post(f"{backend.rstrip('/')}/chat/", json=req, timeout=timeout)

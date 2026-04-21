@@ -1,6 +1,6 @@
 {
-  "user_id": "test-001-placerhills-09",
-  "message": "Complete the PlacerHills-09 SIMnet project in full. Here are the steps:\n\n1. The file is already open.\n\n2. Review formulas for commission calculations.\n   a. Select cell C14 on the Calculator worksheet. Total commission is calculated by multiplying the selling price by the commission rate.\n   b. Select cell C15. The IFS function checks the selling price (C12) to determine the buyer agent share (column D).\n\n3. Build a one-variable data table.\n   a. Select cell C18 and create a formula to multiply the total commission by the percentage in cell D7.\n   b. Create the data table using a column input (Figure 9-102). Input column is B19:B26 (percentages 25%..60%), output goes to C19:C26, column input cell is D7.\n\n4. Install the Solver Add-in and the Analysis ToolPak.\n\n5. Name cell ranges.\n   a. Click the Price Solver worksheet tab.\n   b. Select cells B12:C12, B14:C14, and B17:C17.\n   c. Use the Create from Selection command (names from the labels in column B, spaces become underscores).\n\n6. Use Solver to find target PHRE net commission amounts.\n   a. Build a Solver problem with cell C17 as the objective cell.\n   b. Set the objective to a value of 50000 by changing cell C12. Use the GRG Nonlinear solving method. Save the results as a scenario named \"$50,000\".\n   c. Restore the original values and run another Solver problem to find a selling price for a PHRE commission of 75000. Save these results as a scenario named \"$75,000\".\n   d. Restore the original values and run a third Solver problem to find a selling price for a net commission of 100000. Save these results as a scenario and restore the original values.\n\n7. Manage scenarios.\n   a. Show the $50,000 scenario in the worksheet.\n   b. Create a Scenario summary report for cells C12, C14, and C17 (Figure 9-103).\n\n8. Build an array formula.\n   a. Select the Sales Forecast sheet. A community donation equal to two times the price per square foot is made for each sale.\n   b. Select cell F5, type =, and select cells E5:E26.\n   c. Type / for division and select cells C5:C26. The sale price divided by the square footage results in a price per square foot.\n   d. Type *2 to multiply by two and press Enter.\n   e. Format the result array as Currency with no decimals.\n\n9. Create a histogram for recent sales.\n   a. Create a bin range of 10 values starting at 400000 in cell H13 with intervals of 50000, ending at 900000 in cell H23.\n   b. Use the Analysis ToolPak to create a histogram for cells E5:E26. Do not check \"include bin range in worksheet\".\n   c. Select cell I4 for the Output Range and include a chart.\n   d. Position and size the chart to span from cell L4 to cell W16.\n   e. Edit the horizontal axis title to display \"Selling Price\" and the vertical axis title to \"Number of Sales\".\n   f. Edit the chart title to display \"Sales by Price Group\".\n   g. Select and delete the legend.\n   h. Hide column H.\n\n10. Uninstall the Solver Add-in and the Analysis ToolPak.\n\n11. Save and close the workbook.\n\nPlease complete every step. For Ribbon-dialog steps (Install/Run Solver/Save Scenario/Scenario Summary/Analysis ToolPak/Uninstall) use the appropriate computer-use actions.",
+  "user_id": "test-002-named-ranges-with-memory",
+  "message": "Create named ranges on Price Solver: Selling_Price from B12:C12, Total_Commission from B14:C14, Net_Commission from B17:C17. Nothing else.",
   "context": {
     "app": "excel",
     "sheet": "Calculator",
@@ -9,7 +9,7 @@
       "Price Solver",
       "Sales Forecast"
     ],
-    "selected_cell": "A5",
+    "selected_cell": "A1",
     "selected_value": null,
     "used_range": "A1:G26",
     "sheet_data": [
@@ -169,7 +169,7 @@
       [
         null,
         null,
-        null,
+        "=C14*D7",
         null,
         null,
         null,
@@ -405,7 +405,7 @@
       [
         null,
         null,
-        null,
+        "=C14*D7",
         null,
         null,
         null,
@@ -647,7 +647,7 @@
           [
             null,
             null,
-            null,
+            "=C14*D7",
             null,
             null,
             null,
@@ -980,7 +980,7 @@
             1900,
             "=F1-90",
             650000,
-            null,
+            "=(E5:E26/C5:C26)*2",
             null,
             null,
             null
@@ -991,7 +991,7 @@
             1184,
             "=D5+7",
             575000,
-            null,
+            971.2837837837837,
             null,
             null,
             null
@@ -1002,7 +1002,7 @@
             1840,
             "=D6+7",
             485000,
-            null,
+            527.1739130434783,
             null,
             null,
             null
@@ -1013,7 +1013,7 @@
             1905,
             "=D7+7",
             615500,
-            null,
+            646.1942257217847,
             null,
             null,
             null
@@ -1024,7 +1024,7 @@
             2234,
             "=D8+7",
             725000,
-            null,
+            649.059982094897,
             null,
             null,
             null
@@ -1035,7 +1035,7 @@
             1948,
             "=D9+7",
             620000,
-            null,
+            636.5503080082135,
             null,
             null,
             null
@@ -1046,7 +1046,7 @@
             1571,
             "=D10+7",
             485000,
-            null,
+            617.4411203055379,
             null,
             null,
             null
@@ -1057,7 +1057,7 @@
             1456,
             "=D11+7",
             395900,
-            null,
+            543.8186813186813,
             null,
             null,
             null
@@ -1068,7 +1068,7 @@
             1480,
             "=D12+7",
             410000,
-            null,
+            554.0540540540541,
             null,
             null,
             null
@@ -1079,7 +1079,7 @@
             1950,
             "=D13+7",
             615000,
-            null,
+            630.7692307692307,
             null,
             null,
             null
@@ -1090,7 +1090,7 @@
             2100,
             "=D14+7",
             825000,
-            null,
+            785.7142857142857,
             null,
             null,
             null
@@ -1101,7 +1101,7 @@
             1755,
             "=D15+7",
             810000,
-            null,
+            923.0769230769231,
             null,
             null,
             null
@@ -1112,7 +1112,7 @@
             1950,
             "=D16+7",
             765000,
-            null,
+            784.6153846153846,
             null,
             null,
             null
@@ -1123,7 +1123,7 @@
             2200,
             "=D17+7",
             899000,
-            null,
+            817.2727272727273,
             null,
             null,
             null
@@ -1134,7 +1134,7 @@
             2100,
             "=D18+7",
             835000,
-            null,
+            795.2380952380952,
             null,
             null,
             null
@@ -1145,7 +1145,7 @@
             1700,
             "=D19+7",
             650000,
-            null,
+            764.7058823529412,
             null,
             null,
             null
@@ -1156,7 +1156,7 @@
             1900,
             "=D20+7",
             715000,
-            null,
+            752.6315789473684,
             null,
             null,
             null
@@ -1167,7 +1167,7 @@
             2000,
             "=D21+7",
             799900,
-            null,
+            799.9,
             null,
             null,
             null
@@ -1178,7 +1178,7 @@
             1850,
             "=D22+7",
             820000,
-            null,
+            886.4864864864865,
             null,
             null,
             null
@@ -1189,7 +1189,7 @@
             1900,
             "=D23+7",
             735900,
-            null,
+            774.6315789473684,
             null,
             null,
             null
@@ -1200,7 +1200,7 @@
             2100,
             "=D24+7",
             915000,
-            null,
+            871.4285714285714,
             null,
             null,
             null
@@ -1211,7 +1211,7 @@
             1650,
             "=D25+7",
             585000,
-            null,
+            709.0909090909091,
             null,
             null,
             null
