@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v56";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v57";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -440,6 +440,24 @@ async function renderImageToCanvas(base64Data, mediaType, maxW, maxH) {
   }
 }
 
+// ── Toast notifications ──────────────────────────────────────────────────────
+
+/** Show a tiny ephemeral toast message above the input. Auto-dismisses. */
+function showToast(text, kind = "info", durationMs = 2500) {
+  const wrap = document.getElementById("toast-wrap");
+  if (!wrap) return;
+  const el = document.createElement("div");
+  el.className = `toast toast-${kind}`;
+  el.textContent = text;
+  wrap.appendChild(el);
+  // Trigger fade-in next frame
+  requestAnimationFrame(() => el.classList.add("visible"));
+  setTimeout(() => {
+    el.classList.remove("visible");
+    setTimeout(() => el.remove(), 220);
+  }, durationMs);
+}
+
 // ── Project memory panel ─────────────────────────────────────────────────────
 
 /** Fetch memory state for the current user + workbook context and re-render. */
@@ -569,8 +587,10 @@ async function forgetMemoryCell(addr) {
       body: JSON.stringify({ user_id: CURRENT_USER.id, context: ctx, address: addr }),
     });
     await refreshMemoryPanel();
+    showToast(`Forgot ${addr}`, "warning");
   } catch (e) {
     console.warn("[tsifl] forget failed:", e);
+    showToast(`Couldn't forget ${addr}`, "error");
   }
 }
 
@@ -584,8 +604,10 @@ async function lockMemoryCell(addr) {
       body: JSON.stringify({ user_id: CURRENT_USER.id, context: ctx, address: addr }),
     });
     await refreshMemoryPanel();
+    showToast(`Locked ${addr} — tsifl won't modify this`, "success");
   } catch (e) {
     console.warn("[tsifl] lock failed:", e);
+    showToast(`Couldn't lock ${addr}`, "error");
   }
 }
 
@@ -599,8 +621,10 @@ async function unlockMemoryCell(addr) {
       body: JSON.stringify({ user_id: CURRENT_USER.id, context: ctx, address: addr }),
     });
     await refreshMemoryPanel();
+    showToast(`Unlocked ${addr}`, "info");
   } catch (e) {
     console.warn("[tsifl] unlock failed:", e);
+    showToast(`Couldn't unlock ${addr}`, "error");
   }
 }
 
@@ -630,11 +654,14 @@ async function clearMemory() {
     });
     if (!resp.ok) {
       appendMessage("assistant", "Couldn't clear memory — backend returned " + resp.status);
+      showToast("Couldn't clear memory", "error");
       return;
     }
     await refreshMemoryPanel();
+    showToast("Memory cleared for this workbook", "warning");
   } catch (e) {
     appendMessage("assistant", "Couldn't clear memory: " + (e?.message || e));
+    showToast("Couldn't clear memory", "error");
   }
 }
 
@@ -752,7 +779,15 @@ async function handleSubmit() {
           "---\n\n" +
           reply;
       }
-      appendMessage("assistant", reply);
+      // Memory chip — surfaces when memory shaped the response. Lock/phantom
+      // counts are detected from the reply text (those banners are appended
+      // server-side in chat.py). memoryCount comes from ChatResponse directly.
+      const meta = {
+        memoryCount:     data.memory_completed_count || 0,
+        lockBlocked:     (reply.match(/🔒 Refused to modify (\d+) locked/)?.[1] | 0) || 0,
+        phantomDropped:  (reply.match(/⚠️ Skipped (\d+) action/)?.[1] | 0) || 0,
+      };
+      appendMessage("assistant", reply, undefined, meta);
     }
 
     if (data.tasks_remaining >= 0) {
@@ -2640,10 +2675,23 @@ function renderMarkdown(text) {
   return html;
 }
 
-function appendMessage(role, text, images) {
+function appendMessage(role, text, images, meta) {
   const history = document.getElementById("chat-history");
   const div     = document.createElement("div");
   div.className   = `message ${role}`;
+
+  // Memory chip rendered ABOVE the assistant's text — shows that memory
+  // shaped the response (how many entries loaded, whether a lock fired, etc.).
+  if (role === "assistant" && meta && (meta.memoryCount || meta.lockBlocked || meta.phantomDropped)) {
+    const chip = document.createElement("div");
+    chip.className = "assistant-meta-chip";
+    const parts = [];
+    if (meta.lockBlocked)     parts.push(`🔒 ${meta.lockBlocked} write blocked`);
+    if (meta.phantomDropped)  parts.push(`⚠️ ${meta.phantomDropped} phantom dropped`);
+    if (meta.memoryCount)     parts.push(`🧠 memory · ${meta.memoryCount} entr${meta.memoryCount === 1 ? "y" : "ies"}`);
+    chip.textContent = parts.join("  ·  ");
+    div.appendChild(chip);
+  }
 
   // Add text — use markdown for assistant messages
   const textNode = document.createElement("span");
