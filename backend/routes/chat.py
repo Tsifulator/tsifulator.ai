@@ -943,7 +943,7 @@ async def debug_guards():
         "project_memory_available": True,
         "project_memory_enabled":   project_memory.is_enabled(),
         "project_memory_backend":   project_memory.backend_type(),  # 'supabase' or 'file'
-        "build_tag": "guards-2026-04-21g-persistence-acid-test",
+        "build_tag": "guards-2026-04-22a-memory-reconcile",
     }
 
 

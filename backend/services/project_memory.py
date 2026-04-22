@@ -25,6 +25,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -52,16 +53,28 @@ def is_enabled() -> bool:
 # ── Workbook fingerprinting ──────────────────────────────────────────────────
 
 def fingerprint(context: dict) -> str:
-    """Stable short id for a workbook across turns.
+    """Primary (stable) workbook id.
 
-    Based on app + sorted sheet names. This is intentionally coarse — it
-    groups turns against the SAME workbook structure together. If the user
-    renames sheets or switches to a different workbook, the fingerprint
-    changes and state is independent.
+    Prefers `workbook_name` if the client sent it — that's the actual filename
+    and survives sheet additions/renames. Falls back to sorted-sheets hash for
+    older clients or when the workbook name isn't available (e.g. unsaved
+    "Book1" before first save — Office.js returns "" in that case, we fall
+    back to the sheets hash).
+    """
+    ctx = context or {}
+    app = ctx.get("app") or ""
+    name = (ctx.get("workbook_name") or "").strip()
+    if name:
+        sig: dict[str, Any] = {"app": app, "workbook": name}
+    else:
+        sig = {"app": app, "sheets": sorted(ctx.get("all_sheets") or [])}
+    raw = json.dumps(sig, sort_keys=True).encode()
+    return hashlib.sha256(raw).hexdigest()[:16]
 
-    A more precise fingerprint (e.g. including first-N-cells-per-sheet) would
-    guard against false matches but risk state loss on small edits. Start
-    simple; tighten if collisions show up.
+
+def fingerprint_legacy(context: dict) -> str:
+    """Secondary (pre-workbook_name) workbook id. Used as a fallback lookup
+    target so state written before the `workbook_name` upgrade isn't orphaned.
     """
     sig: dict[str, Any] = {
         "app":    (context or {}).get("app") or "",
@@ -203,11 +216,60 @@ def backend_type() -> str:
 
 # ── Prompt injection ─────────────────────────────────────────────────────────
 
-def build_prompt_injection(state: dict) -> str:
+_A1_RE = re.compile(r"^\$?([A-Z]+)\$?(\d+)$")
+
+
+def _col_to_idx(col: str) -> int:
+    """A → 0, B → 1, ... AA → 26"""
+    n = 0
+    for ch in col:
+        n = n * 26 + (ord(ch.upper()) - 64)
+    return n - 1
+
+
+def _cell_is_present_in_context(addr: str, context: dict) -> bool | None:
+    """Check whether `Sheet!Cell` is non-empty in the live workbook preview.
+
+    Returns:
+      True   — the cell has a value/formula in preview (memory entry still valid)
+      False  — the cell is in preview range but empty (memory entry is stale)
+      None   — unknown (cell outside preview, sheet missing, no context) —
+               caller should treat as "keep" to avoid false invalidation.
+    """
+    if not addr or "!" not in addr or not context:
+        return None
+    sheet, cell = addr.split("!", 1)
+    sheet = sheet.strip().strip("'")
+    cell = cell.strip()
+
+    # Only A1 single-cell addresses for now — ranges are too ambiguous to reconcile
+    m = _A1_RE.match(cell)
+    if not m:
+        return None
+    col_idx = _col_to_idx(m.group(1))
+    row_idx = int(m.group(2)) - 1
+
+    summaries = context.get("sheet_summaries") or []
+    for s in summaries:
+        if (s.get("name") or "").casefold() == sheet.casefold():
+            preview = s.get("preview") or []
+            if row_idx >= len(preview):
+                return None  # outside preview rows — unknown
+            row = preview[row_idx] or []
+            if col_idx >= len(row):
+                return None  # outside preview cols — unknown
+            val = row[col_idx]
+            return val is not None and val != ""
+    return None  # sheet not in context
+
+
+def build_prompt_injection(state: dict, context: dict | None = None) -> str:
     """Format state as a prefix to inject into the user message.
 
-    Empty string if there's nothing useful to say. Keeps it tight — the
-    LLM context window is precious.
+    If `context` is provided, each completed entry is reconciled against the
+    live workbook preview — stale entries (cell claimed done but live cell is
+    empty) are flagged so the LLM is warned about the drift rather than being
+    told to trust stale memory. Empty string if there's nothing useful to say.
     """
     completed = (state.get("completed") or [])[-MAX_COMPLETED_IN_PROMPT:]
     locks     = state.get("user_locks") or []
@@ -216,23 +278,49 @@ def build_prompt_injection(state: dict) -> str:
     if not completed and not locks:
         return ""
 
+    # Partition completed entries by reconciliation status
+    live: list[dict] = []
+    stale: list[dict] = []
+    unknown: list[dict] = []
+    for item in completed:
+        addr = item.get("cell") or ""
+        status = _cell_is_present_in_context(addr, context or {})
+        if status is True:
+            live.append(item)
+        elif status is False:
+            stale.append(item)
+        else:
+            unknown.append(item)
+
     lines = [
         "## WORKBOOK STATE FROM PRIOR TURNS",
         "",
         f"You have worked on this same workbook across {turn_count} prior turn(s). "
-        "The cells below already hold correct content. Do NOT overwrite them "
-        "unless the user explicitly asks. Focus on what's NOT yet done.",
+        "The cells below were already written in prior turns. Use this to avoid "
+        "redoing work — focus on what's NOT yet done.",
         "",
     ]
 
-    if completed:
-        lines.append("### Already written (leave these alone):")
-        for item in completed:
+    if live or unknown:
+        lines.append("### Already written (leave alone unless asked):")
+        for item in live + unknown:
             addr = item.get("cell") or item.get("range") or "?"
             tag  = item.get("type") or ""
             body = item.get("formula") or item.get("note") or item.get("name") or ""
             body = str(body)[:80]
             lines.append(f"- {addr}  ({tag})  {body}")
+        lines.append("")
+
+    if stale:
+        # Memory claims these cells have content but the live workbook disagrees.
+        # Most likely cause: user opened a fresh template or copied the file.
+        # Tell the LLM so it doesn't "skip" a cell that actually needs writing.
+        lines.append("### Memory drift detected (memory says done, live cell is empty — you may need to RE-EMIT these):")
+        for item in stale:
+            addr = item.get("cell") or "?"
+            body = item.get("formula") or item.get("note") or item.get("name") or ""
+            body = str(body)[:80]
+            lines.append(f"- {addr}  was {body}")
         lines.append("")
 
     if locks:
@@ -244,8 +332,8 @@ def build_prompt_injection(state: dict) -> str:
         lines.append("")
 
     lines.append(
-        "If you believe a cell needs to change despite being in the list above, "
-        "explain why in your reply and ask the user to confirm before acting."
+        "If you believe a cell needs to change despite being in the 'Already "
+        "written' list, explain why in your reply and ask the user to confirm."
     )
     lines.append("")
     return "\n".join(lines)
@@ -359,14 +447,36 @@ def remove_lock(state: dict, rng: str) -> dict:
 def inject_and_load(user_id: str, context: dict, message: str) -> tuple[str, str, dict]:
     """Convenience: fingerprint → load → build injection → prepend to message.
 
-    Returns (new_message, workbook_id, state). If memory disabled or no state,
-    returns (message, workbook_id, empty_state) so caller can still record.
+    Uses the primary fingerprint (workbook_name-based if available). If that
+    returns empty state AND the legacy fingerprint (sheets-hash) has state,
+    migrate it to the primary key so future turns find it directly.
+
+    Returns (new_message, workbook_id, state).
     """
     wb_id = fingerprint(context)
     state = load(user_id, wb_id)
+
+    # Migrate legacy state to the new primary fingerprint on first hit.
+    if not (state.get("completed") or state.get("user_locks")):
+        legacy_id = fingerprint_legacy(context)
+        if legacy_id != wb_id:
+            legacy_state = load(user_id, legacy_id)
+            if legacy_state.get("completed") or legacy_state.get("user_locks"):
+                logger.info(
+                    "project_memory: migrating legacy state %s → %s for user %s",
+                    legacy_id, wb_id, user_id,
+                )
+                legacy_state["workbook_id"] = wb_id
+                try:
+                    save(user_id, wb_id, legacy_state)
+                    clear(user_id, legacy_id)
+                    state = legacy_state
+                except Exception as e:
+                    logger.warning("project_memory: legacy migration failed: %s", e)
+
     if not is_enabled():
         return message, wb_id, state
-    injection = build_prompt_injection(state)
+    injection = build_prompt_injection(state, context=context)
     if not injection:
         return message, wb_id, state
     return f"{injection}\n---\n\n{message}", wb_id, state

@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v54";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v55";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -1003,6 +1003,9 @@ async function getExcelContext() {
       const wb     = ctx.workbook;
       const sheets = wb.worksheets;
       sheets.load("items/name");
+      // Workbook name gives us a stable identity across sheet additions/renames,
+      // so project_memory doesn't orphan state when tsifl adds a new sheet.
+      wb.load("name");
       await ctx.sync();
 
       // Load used ranges for ALL sheets in one batch
@@ -1075,6 +1078,7 @@ async function getExcelContext() {
       resolve({
         app:              "excel",
         sheet:            activeName,
+        workbook_name:    (wb.name || "").toString(),  // stable id — survives add_sheet
         all_sheets:       sheets.items.map(s => s.name),
         selected_cell:    selected.address,
         selected_value:   selected.values?.[0]?.[0] ?? null,
