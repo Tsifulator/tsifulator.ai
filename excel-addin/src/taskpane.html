@@ -35,6 +35,18 @@
         Session expires soon <button id="refresh-session-btn" style="background:#D97706;color:white;border:none;border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;margin-left:6px;">Refresh</button>
       </div>
 
+      <!-- Backend unreachable banner — shown when health probe fails -->
+      <div id="backend-banner" style="display:none;">
+        <div id="backend-banner-inner">
+          <span id="backend-banner-icon">⚠︎</span>
+          <div id="backend-banner-body">
+            <div id="backend-banner-title">Can't reach tsifl backend</div>
+            <div id="backend-banner-detail"></div>
+          </div>
+          <button id="backend-banner-retry">Retry</button>
+        </div>
+      </div>
+
       <div id="header">
         <img id="logo-img" src="/assets/tsifl-wordmark.png" alt="tsifl" />
         <div id="header-right">

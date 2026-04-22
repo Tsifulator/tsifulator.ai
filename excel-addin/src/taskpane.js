@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v58";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v59";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -158,6 +158,13 @@ function showChatScreen(user) {
 
   // Initial memory state load (runs after a short delay so Excel context is ready)
   setTimeout(() => { refreshMemoryPanel(); }, 800);
+
+  // Backend health check on boot + wire the retry button
+  wireBackendBanner();
+  checkBackendHealth();
+
+  // First-run welcome (only shows once per browser profile)
+  setTimeout(() => { maybeShowWelcome(); }, 400);
 
   // Auto-resize textarea
   const input = document.getElementById("user-input");
@@ -438,6 +445,99 @@ async function renderImageToCanvas(base64Data, mediaType, maxW, maxH) {
     console.warn("renderImageToCanvas failed:", e);
     return null;
   }
+}
+
+// ── Backend health banner ────────────────────────────────────────────────────
+// Checks /chat/debug/guards on boot and after any chat fetch failure. When
+// the backend is unreachable, a red banner appears at the top of the taskpane
+// with a Retry button. Hidden once health check passes.
+
+async function checkBackendHealth() {
+  const banner = document.getElementById("backend-banner");
+  const detail = document.getElementById("backend-banner-detail");
+  if (!banner) return;
+  try {
+    const r = await fetch(`${BACKEND_URL}/chat/debug/guards`, {
+      method: "GET",
+      signal: AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined,
+    });
+    if (!r.ok) {
+      banner.style.display = "block";
+      detail.textContent = `Got HTTP ${r.status} from ${BACKEND_URL}. Will retry when you click below.`;
+      return false;
+    }
+    banner.style.display = "none";
+    return true;
+  } catch (e) {
+    banner.style.display = "block";
+    const msg = e?.name === "AbortError" || e?.name === "TimeoutError"
+      ? "Request timed out after 8s — backend may be down or waking from sleep."
+      : `Network error: ${e?.message || e}`;
+    detail.textContent = msg;
+    return false;
+  }
+}
+
+function wireBackendBanner() {
+  const retry = document.getElementById("backend-banner-retry");
+  if (retry && !retry._wired) {
+    retry._wired = true;
+    retry.addEventListener("click", async () => {
+      retry.textContent = "Checking...";
+      retry.disabled = true;
+      const ok = await checkBackendHealth();
+      retry.textContent = "Retry";
+      retry.disabled = false;
+      if (ok) showToast("Backend reachable", "success");
+    });
+  }
+}
+
+// ── First-run welcome card ───────────────────────────────────────────────────
+// Shown once to each user. Dismissed permanently by click. Stored in
+// localStorage so we don't nag the user on every session.
+
+const WELCOME_SEEN_KEY = "tsifl_welcome_seen_v1";
+
+function maybeShowWelcome() {
+  if (localStorage.getItem(WELCOME_SEEN_KEY) === "1") return;
+  const history = document.getElementById("chat-history");
+  if (!history) return;
+  const card = document.createElement("div");
+  card.className = "welcome-card";
+  card.innerHTML = `
+    <div class="welcome-card-title">Welcome to tsifl</div>
+    <div class="welcome-card-body">
+      I'm a cross-app agent for financial analysts. I can read your workbook,
+      write formulas, build models, and work with R / PowerPoint / Word if you
+      ask. I remember what I've done across turns — hover the <b>Memory</b>
+      panel above to inspect or lock cells.
+    </div>
+    <div class="welcome-examples">
+      <button class="welcome-example">Add the formula =C14*D7 to Calculator C18. Nothing else.</button>
+      <button class="welcome-example">Build an array formula at Sales Forecast F5 as =(E5:E26/C5:C26)*2.</button>
+      <button class="welcome-example">Summarize what this workbook is trying to model.</button>
+    </div>
+    <button class="welcome-card-dismiss">Hide this</button>
+  `;
+  history.appendChild(card);
+
+  // Clicking an example prefills the input
+  card.querySelectorAll(".welcome-example").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const input = document.getElementById("user-input");
+      if (input) {
+        input.value = btn.textContent.trim();
+        input.focus();
+      }
+    });
+  });
+
+  // Dismiss handler
+  card.querySelector(".welcome-card-dismiss").addEventListener("click", () => {
+    localStorage.setItem(WELCOME_SEEN_KEY, "1");
+    card.remove();
+  });
 }
 
 // ── Toast notifications ──────────────────────────────────────────────────────
@@ -1132,6 +1232,8 @@ async function handleSubmit() {
     console.error("[tsifl] handleSubmit error:", err);
     appendMessage("assistant", `Could not reach tsifl backend.\n${err?.name || ""}: ${err?.message || err}`);
     setStatus("Disconnected");
+    // Surface the backend banner so the user has a clear retry path
+    checkBackendHealth();
   } finally {
     setSubmitEnabled(true);
     // Refresh memory panel (fire-and-forget) so the user sees what just got tracked
