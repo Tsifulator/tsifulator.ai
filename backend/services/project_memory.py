@@ -444,19 +444,16 @@ def remove_lock(state: dict, rng: str) -> dict:
 
 # ── Orchestration helpers (used by chat.py) ──────────────────────────────────
 
-def inject_and_load(user_id: str, context: dict, message: str) -> tuple[str, str, dict]:
-    """Convenience: fingerprint → load → build injection → prepend to message.
+def load_with_migration(user_id: str, context: dict) -> tuple[str, dict]:
+    """Load state under the primary fingerprint; if empty, migrate from the
+    legacy (sheets-hash) fingerprint. Returns (workbook_id, state).
 
-    Uses the primary fingerprint (workbook_name-based if available). If that
-    returns empty state AND the legacy fingerprint (sheets-hash) has state,
-    migrate it to the primary key so future turns find it directly.
-
-    Returns (new_message, workbook_id, state).
+    Called by inject_and_load (on every chat turn) AND by the memory-panel
+    lookup endpoint, so the panel shows migrated state on boot.
     """
     wb_id = fingerprint(context)
     state = load(user_id, wb_id)
 
-    # Migrate legacy state to the new primary fingerprint on first hit.
     if not (state.get("completed") or state.get("user_locks")):
         legacy_id = fingerprint_legacy(context)
         if legacy_id != wb_id:
@@ -474,6 +471,15 @@ def inject_and_load(user_id: str, context: dict, message: str) -> tuple[str, str
                 except Exception as e:
                     logger.warning("project_memory: legacy migration failed: %s", e)
 
+    return wb_id, state
+
+
+def inject_and_load(user_id: str, context: dict, message: str) -> tuple[str, str, dict]:
+    """Convenience: fingerprint → load (with migration) → build injection → prepend.
+
+    Returns (new_message, workbook_id, state).
+    """
+    wb_id, state = load_with_migration(user_id, context)
     if not is_enabled():
         return message, wb_id, state
     injection = build_prompt_injection(state, context=context)

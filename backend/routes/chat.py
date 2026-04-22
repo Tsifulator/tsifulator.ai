@@ -993,9 +993,13 @@ async def pm_lookup(request: MemoryLookupRequest):
     user's first chat turn) and after each chat turn (to refresh the panel).
     Returns the workbook_id so the client doesn't have to compute the
     fingerprint itself.
+
+    Triggers legacy → primary migration if the primary key is empty but the
+    legacy sheets-hash key has state. Without this, state written by pre-v55
+    turns would only surface on the next chat turn, leaving the panel
+    misleadingly empty on initial page load.
     """
-    wb_id = project_memory.fingerprint(request.context)
-    state = project_memory.load(request.user_id, wb_id)
+    wb_id, state = project_memory.load_with_migration(request.user_id, request.context)
     return {
         "workbook_id":     wb_id,
         "enabled":         project_memory.is_enabled(),
