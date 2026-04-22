@@ -99,9 +99,14 @@ async def log_requests(request: Request, call_next):
 async def global_exception_handler(request: Request, exc: Exception):
     global _last_error_time
     _last_error_time = datetime.utcnow().isoformat()
+    # Always include the exception class + message in the response so we can
+    # diagnose 500s in production. The stack trace is still kept out.
     return JSONResponse(
         status_code=500,
-        content={"error": "Internal server error", "detail": str(exc) if os.getenv("ENV") == "development" else ""}
+        content={
+            "error":  "Internal server error",
+            "detail": f"{type(exc).__name__}: {exc}"[:500],
+        },
     )
 
 # Startup: auto-create Supabase tables if missing (Improvement 1)
