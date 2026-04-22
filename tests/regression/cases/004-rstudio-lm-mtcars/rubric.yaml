@@ -1,0 +1,34 @@
+# 004-rstudio-lm-mtcars — captured 2026-04-22
+#
+# Simplest-possible R regression test: given "run lm(mpg ~ hp) on mtcars",
+# tsifl should emit ONE run_r_code action with code that calls lm() on
+# mtcars with mpg and hp, and summary() on the result. Catches two specific
+# regression classes:
+#
+#   1. The LLM splitting R code across multiple run_r_code actions (banned
+#      per SYSTEM_PROMPT — causes RStudio add-in errors).
+#   2. The LLM using the wrong function family (e.g., glm instead of lm)
+#      or hallucinating a different dataset.
+
+_project: RStudio — linear regression on mtcars
+
+min_action_count: 1
+max_action_count: 2
+exactly_one_run_r_code: true
+
+must_include_action_types:
+  - run_r_code
+
+reply_not_empty: false
+
+code_contains:
+  - mtcars
+  - lm(
+  - summary
+
+code_contains_regex:
+  - "lm\\(\\s*(mpg\\s*~\\s*hp|hp\\s*~\\s*mpg)"
+
+code_forbids:
+  - "glm("
+  - "iris"

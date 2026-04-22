@@ -29,17 +29,18 @@ import yaml
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from rubrics import excel as excel_rubric  # noqa: E402
+from rubrics import excel   as excel_rubric    # noqa: E402
+from rubrics import rstudio as rstudio_rubric  # noqa: E402
 
 DEFAULT_BACKEND = "https://focused-solace-production-6839.up.railway.app"
 CASES_DIR = HERE / "cases"
 REPORT_DIR = HERE / "_reports"
 
 APP_RUBRICS = {
-    "excel": excel_rubric.evaluate,
+    "excel":   excel_rubric.evaluate,
+    "rstudio": rstudio_rubric.evaluate,
     # "word":       word_rubric.evaluate,
     # "powerpoint": powerpoint_rubric.evaluate,
-    # "rstudio":    rstudio_rubric.evaluate,
 }
 
 

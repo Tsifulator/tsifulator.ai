@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v57";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v58";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -779,13 +779,16 @@ async function handleSubmit() {
           "---\n\n" +
           reply;
       }
-      // Memory chip — surfaces when memory shaped the response. Lock/phantom
-      // counts are detected from the reply text (those banners are appended
-      // server-side in chat.py). memoryCount comes from ChatResponse directly.
+      // Memory chip — surfaces when memory shaped the response.
+      //   memoryCount:  total entries tracked at turn time
+      //   memoryOverrides: entries the LLM chose to overwrite (non-locked)
+      //   lockBlocked:  writes the server guard dropped (locked cells)
+      //   phantomDropped: writes the server guard dropped (phantom sheets)
       const meta = {
-        memoryCount:     data.memory_completed_count || 0,
-        lockBlocked:     (reply.match(/🔒 Refused to modify (\d+) locked/)?.[1] | 0) || 0,
-        phantomDropped:  (reply.match(/⚠️ Skipped (\d+) action/)?.[1] | 0) || 0,
+        memoryCount:      data.memory_completed_count || 0,
+        memoryOverrides:  data.memory_overrides_count || 0,
+        lockBlocked:      (reply.match(/🔒 Refused to modify (\d+) locked/)?.[1] | 0) || 0,
+        phantomDropped:   (reply.match(/⚠️ Skipped (\d+) action/)?.[1] | 0) || 0,
       };
       appendMessage("assistant", reply, undefined, meta);
     }
@@ -2680,17 +2683,30 @@ function appendMessage(role, text, images, meta) {
   const div     = document.createElement("div");
   div.className   = `message ${role}`;
 
-  // Memory chip rendered ABOVE the assistant's text — shows that memory
-  // shaped the response (how many entries loaded, whether a lock fired, etc.).
-  if (role === "assistant" && meta && (meta.memoryCount || meta.lockBlocked || meta.phantomDropped)) {
-    const chip = document.createElement("div");
-    chip.className = "assistant-meta-chip";
+  // Memory chip rendered ABOVE the assistant's text — surfaces when memory
+  // actually shaped the response. Truthful wording:
+  //   memory respected → LLM honored every prior entry without overwriting
+  //   N overridden     → LLM chose to rewrite N cells that were in memory
+  //   lock blocked     → server guard stopped writes to locked cells
+  //   phantom dropped  → server guard stopped writes to made-up sheets
+  if (role === "assistant" && meta) {
     const parts = [];
-    if (meta.lockBlocked)     parts.push(`🔒 ${meta.lockBlocked} write blocked`);
+    if (meta.lockBlocked)     parts.push(`🔒 ${meta.lockBlocked} blocked by lock`);
     if (meta.phantomDropped)  parts.push(`⚠️ ${meta.phantomDropped} phantom dropped`);
-    if (meta.memoryCount)     parts.push(`🧠 memory · ${meta.memoryCount} entr${meta.memoryCount === 1 ? "y" : "ies"}`);
-    chip.textContent = parts.join("  ·  ");
-    div.appendChild(chip);
+    if (meta.memoryCount) {
+      const n = meta.memoryCount;
+      const over = meta.memoryOverrides || 0;
+      const label = over > 0
+        ? `🧠 memory · ${n} entr${n === 1 ? "y" : "ies"} · ${over} overridden`
+        : `🧠 memory · ${n} entr${n === 1 ? "y" : "ies"} respected`;
+      parts.push(label);
+    }
+    if (parts.length) {
+      const chip = document.createElement("div");
+      chip.className = "assistant-meta-chip";
+      chip.textContent = parts.join("  ·  ");
+      div.appendChild(chip);
+    }
   }
 
   // Add text — use markdown for assistant messages

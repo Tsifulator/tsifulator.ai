@@ -919,8 +919,9 @@ class ChatResponse(BaseModel):
     tasks_remaining: int = -1
     memory_active: bool = False
     model_used: str = ""
-    workbook_id: str = ""          # project_memory fingerprint for this turn
-    memory_completed_count: int = 0 # how many cells are tracked in memory
+    workbook_id: str = ""           # project_memory fingerprint for this turn
+    memory_completed_count: int = 0  # how many cells were tracked in memory at request time
+    memory_overrides_count: int = 0  # how many emitted writes targeted a memory cell (excl. locked)
     cu_session_id: str | None = None  # Computer use session ID (if any actions need GUI)
 
 @router.get("/debug/postprocess-version")
@@ -943,7 +944,7 @@ async def debug_guards():
         "project_memory_available": True,
         "project_memory_enabled":   project_memory.is_enabled(),
         "project_memory_backend":   project_memory.backend_type(),  # 'supabase' or 'file'
-        "build_tag": "guards-2026-04-22b-lock-enforcement",
+        "build_tag": "guards-2026-04-22c-memory-chip-truth",
     }
 
 
@@ -1630,16 +1631,39 @@ async def chat(request: ChatRequest):
     except Exception as e:
         logger.warning(f"[project_memory] save failed (non-fatal): {e}")
 
+    # Count how many of the emitted writes targeted a cell already in memory.
+    # Locked cells are already blocked server-side, so these are legitimate
+    # "LLM chose to change something it previously wrote" cases — useful for
+    # the taskpane's memory chip wording (respected vs overridden).
+    _pm_override_count = 0
+    if _pm_state:
+        _pm_memory_addrs = set()
+        for item in (_pm_state.get("completed") or []):
+            addr = item.get("cell") or item.get("range")
+            if addr:
+                _pm_memory_addrs.add(str(addr).casefold())
+        for a in (addin_actions or []) + (cu_actions or []):
+            t = a.get("type", "")
+            if t not in ("write_cell", "write_formula", "write_range"):
+                continue
+            p = a.get("payload") or {}
+            s = p.get("sheet") or ""
+            cell = p.get("cell") or p.get("address") or p.get("range") or ""
+            addr = f"{s}!{cell}".casefold() if s and cell else (cell or "").casefold()
+            if addr in _pm_memory_addrs:
+                _pm_override_count += 1
+
     return ChatResponse(
         reply=result["reply"],
         action=result.get("action", {}),
-        actions=addin_actions,  # Only send add-in actions to the add-in
+        actions=addin_actions,
         tasks_remaining=-1,
         memory_active=is_connected(),
         model_used=result.get("model_used", ""),
         cu_session_id=cu_session_id,
         workbook_id=_pm_wb_id,
         memory_completed_count=len((_pm_state or {}).get("completed") or []),
+        memory_overrides_count=_pm_override_count,
     )
 
 

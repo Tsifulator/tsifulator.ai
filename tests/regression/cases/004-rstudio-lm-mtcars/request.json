@@ -1,0 +1,7 @@
+{
+  "user_id": "test-004-rstudio-lm-mtcars",
+  "message": "Run a linear regression of mpg on hp using the mtcars dataset and print the summary.",
+  "context": {
+    "app": "rstudio"
+  }
+}
