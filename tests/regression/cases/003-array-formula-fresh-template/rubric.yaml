@@ -1,0 +1,53 @@
+# 003-array-formula-fresh-template — captured 2026-04-22
+#
+# Narrow "build the array formula" request on a FRESH template (no prior
+# memory state). Assertion intent:
+#
+#   1. F5 must be the one correct formula token — (E5:E26/C5:C26)*2.
+#   2. No guessed-rate hallucination (=E5*0.005 etc) — d2..d9 bug.
+#   3. Phantom sheets still blocked (re-validates the guards post-change).
+#   4. Non-destructive: existing template labels + data rows stay intact.
+#   5. Scope: small batch — user said "nothing else", don't build the
+#      whole 13-step project.
+
+_project: PlacerHills-09 array formula (focused)
+
+allowed_sheet_targets:
+  - Calculator
+  - Price Solver
+  - Sales Forecast
+
+forbidden_sheet_targets:
+  - Transactions
+  - Transactions Stats
+  - Calorie Journal
+  - Summary
+  - Criteria
+  - Data
+  - Stats
+  - Sheet1
+
+must_not_overwrite:
+  - "Price Solver!B12:B17"
+  - "Sales Forecast!A5:E26"
+
+min_action_count: 1
+reply_not_empty: false
+
+must_include_action_types:
+  - write_formula
+
+must_reference_cells:
+  - "Sales Forecast!F5"
+
+formula_at_cell_contains:
+  "Sales Forecast!F5":
+    - "E5:E26"
+    - "C5:C26"
+    - "*2"
+
+formula_at_cell_forbids:
+  "Sales Forecast!F5":
+    - "*0.01"
+    - "*0.005"
+    - "*0.02"
