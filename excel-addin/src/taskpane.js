@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v59";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v60";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -501,8 +501,13 @@ const WELCOME_SEEN_KEY = "tsifl_welcome_seen_v1";
 
 function maybeShowWelcome() {
   if (localStorage.getItem(WELCOME_SEEN_KEY) === "1") return;
+  if (document.querySelector(".welcome-card")) return;   // already rendered this session
   const history = document.getElementById("chat-history");
   if (!history) return;
+  // Mark as seen the moment we render, not only on explicit dismiss —
+  // otherwise a second showChatScreen() call during auth produces a
+  // duplicate card before the user has a chance to dismiss the first.
+  localStorage.setItem(WELCOME_SEEN_KEY, "1");
   const card = document.createElement("div");
   card.className = "welcome-card";
   card.innerHTML = `
