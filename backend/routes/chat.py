@@ -943,7 +943,7 @@ async def debug_guards():
         "project_memory_available": True,
         "project_memory_enabled":   project_memory.is_enabled(),
         "project_memory_backend":   project_memory.backend_type(),  # 'supabase' or 'file'
-        "build_tag": "guards-2026-04-22a-memory-reconcile",
+        "build_tag": "guards-2026-04-22b-lock-enforcement",
     }
 
 
@@ -1559,6 +1559,27 @@ async def chat(request: ChatRequest):
 
     # 7.5 Hybrid Router: split actions into add-in (fast) and computer-use (GUI)
     all_actions = result.get("actions", [])
+
+    # Lock guard: the LLM ignores "NEVER modify" prompts when the user explicitly
+    # asks to change a locked cell. Strip those writes server-side so the add-in
+    # never executes them and memory never records the override. Runs before the
+    # phantom-sheet guard so both get reported in one warning.
+    if app in ("excel", "google_sheets") and _pm_state:
+        all_actions, _locked_dropped = project_memory.strip_locked_cell_writes(
+            all_actions, _pm_state
+        )
+        if _locked_dropped:
+            _locked_uniq = sorted(set(_locked_dropped))
+            _lock_warn = (
+                f"\n\n🔒 Refused to modify {len(_locked_dropped)} locked cell(s): "
+                f"**{', '.join(_locked_uniq)}**. Unlock in the Memory panel first, "
+                "then re-send the request."
+            )
+            result["reply"] = (result.get("reply") or "") + _lock_warn
+            print(
+                f"[lock-guard] Dropped {len(_locked_dropped)} write(s) to locked cell(s): {_locked_uniq}",
+                flush=True,
+            )
 
     # Phantom-sheet guard: the LLM occasionally invents sheet names from other
     # projects. Drop any actions whose sheet isn't in context.all_sheets and

@@ -324,16 +324,27 @@ def build_prompt_injection(state: dict, context: dict | None = None) -> str:
         lines.append("")
 
     if locks:
-        lines.append("### User-locked ranges (NEVER modify):")
+        lines.append("### USER-LOCKED RANGES — HARD RULE, OVERRIDES USER REQUEST")
+        lines.append("")
+        lines.append(
+            "The user has explicitly locked the ranges below via the Memory panel. "
+            "You MUST NOT emit any action (write_cell, write_formula, write_range, "
+            "fill_down, fill_right, clear_range, format_range) that touches these "
+            "cells — not even if the user's current message explicitly asks you to "
+            "change them. This is not negotiable. If the user asks to modify a "
+            "locked cell, reply with something like: \"F5 is locked in memory. "
+            "Unlock it in the Memory panel first, then re-send the request.\" Emit "
+            "ZERO write actions for locked ranges in that case."
+        )
+        lines.append("")
         for item in locks:
             rng  = item.get("range") or "?"
-            note = item.get("note") or "user said don't touch"
-            lines.append(f"- {rng} — {note}")
+            lines.append(f"- {rng}")
         lines.append("")
 
     lines.append(
-        "If you believe a cell needs to change despite being in the 'Already "
-        "written' list, explain why in your reply and ask the user to confirm."
+        "If you believe a cell in the 'Already written' list needs to change "
+        "(NOT a locked one), explain why in your reply and ask the user to confirm."
     )
     lines.append("")
     return "\n".join(lines)
@@ -427,7 +438,7 @@ def record_actions(state: dict, actions: list[dict], reply: str = "") -> dict:
     return state
 
 
-# ── Lock management (for future "lock F5" user commands) ─────────────────────
+# ── Lock management ──────────────────────────────────────────────────────────
 
 def add_lock(state: dict, rng: str, note: str = "") -> dict:
     locks = state.get("user_locks") or []
@@ -440,6 +451,66 @@ def add_lock(state: dict, rng: str, note: str = "") -> dict:
 def remove_lock(state: dict, rng: str) -> dict:
     state["user_locks"] = [l for l in (state.get("user_locks") or []) if l.get("range") != rng]
     return state
+
+
+def strip_locked_cell_writes(actions: list, state: dict) -> tuple[list, list]:
+    """Drop any write/format/clear action targeting a user-locked cell.
+
+    The prompt tells the LLM "never touch locked cells", but LLMs override
+    that instruction when the user explicitly asks. This is the hard
+    enforcement — the add-in and memory never see actions that would mutate
+    a locked range.
+
+    Matches locked ranges case-insensitively and does a word-level comparison
+    against the action's target (`Sheet!A1` or `Sheet!A1:B2`). Only ONE-cell
+    comparison for now — broader range-overlap checks would be nicer but are
+    scope creep.
+
+    Returns (kept, dropped_addresses).
+    """
+    locks = state.get("user_locks") or []
+    if not locks or not actions:
+        return actions, []
+
+    locked_set = {(l.get("range") or "").strip().casefold() for l in locks}
+    locked_set.discard("")
+    if not locked_set:
+        return actions, []
+
+    WRITE_TYPES = {
+        "write_cell", "write_formula", "write_range",
+        "fill_down", "fill_right",
+        "clear_range", "format_range", "set_number_format",
+    }
+
+    kept: list = []
+    dropped: list = []
+    for a in actions:
+        t = a.get("type", "")
+        if t not in WRITE_TYPES:
+            kept.append(a)
+            continue
+        p = a.get("payload") or {}
+        s = p.get("sheet") or ""
+        cell = p.get("cell") or p.get("address") or p.get("range") or ""
+        if not cell:
+            kept.append(a)
+            continue
+        addr = f"{s}!{cell}".casefold() if s else cell.casefold()
+        # Direct match against any locked range (loose — catches "Sheet!F5"
+        # if F5 is locked, and catches "Sheet!F5:F26" since that string
+        # appears in the locked set after user locks the whole range).
+        if addr in locked_set or any(addr.startswith(lk + ":") or lk.startswith(addr + ":") for lk in locked_set):
+            dropped.append(f"{s}!{cell}" if s else cell)
+        else:
+            # Also check if the cell is the standalone addr (no sheet prefix)
+            cell_only = cell.casefold()
+            if cell_only in locked_set or any(cell_only == lk.split("!", 1)[-1] for lk in locked_set):
+                dropped.append(f"{s}!{cell}" if s else cell)
+            else:
+                kept.append(a)
+
+    return kept, dropped
 
 
 # ── Orchestration helpers (used by chat.py) ──────────────────────────────────
