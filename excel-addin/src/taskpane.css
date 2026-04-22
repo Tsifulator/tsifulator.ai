@@ -278,15 +278,16 @@ body {
   color: var(--text-dim);
 }
 #memory-list .memory-row {
-  padding: 2px 0;
+  padding: 3px 0;
   border-bottom: 1px dashed var(--border);
   display: flex;
-  justify-content: space-between;
+  align-items: center;
   gap: 8px;
   white-space: nowrap;
   overflow: hidden;
 }
 #memory-list .memory-row:last-child { border-bottom: none; }
+#memory-list .memory-row:hover { background: rgba(13, 94, 175, 0.04); }
 #memory-list .memory-cell {
   color: var(--text-muted);
   flex-shrink: 0;
@@ -299,6 +300,37 @@ body {
   flex: 1;
   text-align: right;
 }
+
+/* Per-row action buttons (forget / lock / unlock) */
+#memory-list .memory-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  opacity: 0;               /* hidden until hover to keep panel clean */
+  transition: opacity 0.12s;
+}
+#memory-list .memory-row:hover .memory-actions { opacity: 1; }
+#memory-list .memory-row-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  line-height: 1.4;
+  transition: all 0.1s;
+}
+#memory-list .memory-row-btn:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+#memory-list .memory-forget-btn { font-size: 11px; padding: 0 6px; }
+#memory-list .memory-forget-btn:hover { color: var(--red); border-color: var(--red); }
+#memory-list .memory-lock-btn:hover { color: #0D5EAF; border-color: #0D5EAF; }
+#memory-list .memory-unlock-btn:hover { color: var(--red); border-color: var(--red); }
 #memory-list .memory-empty {
   color: var(--text-dim);
   font-style: italic;

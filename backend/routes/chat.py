@@ -1023,6 +1023,81 @@ async def pm_clear_post(request: MemoryLookupRequest):
     return {"workbook_id": wb_id, "deleted": deleted}
 
 
+class MemoryCellRequest(BaseModel):
+    user_id: str
+    context: dict
+    address: str   # "Sheet!Cell" or "Sheet!Range" — matches a `cell` or `range` field
+
+
+@router.post("/project-memory/forget")
+async def pm_forget(request: MemoryCellRequest):
+    """Drop a single completed entry from memory by address.
+
+    Matches case-insensitively against `cell` or `range` in state.completed.
+    Returns the number of removed entries (typically 0 or 1; >1 if duplicates).
+    """
+    wb_id = project_memory.fingerprint(request.context)
+    state = project_memory.load(request.user_id, wb_id)
+    target = (request.address or "").strip().casefold()
+    if not target:
+        return {"ok": False, "error": "address required"}
+
+    kept, removed = [], []
+    for item in state.get("completed") or []:
+        addr = (item.get("cell") or item.get("range") or "").strip().casefold()
+        if addr == target:
+            removed.append(item)
+        else:
+            kept.append(item)
+    state["completed"] = kept
+    project_memory.save(request.user_id, wb_id, state)
+    return {
+        "ok": True,
+        "workbook_id": wb_id,
+        "removed": len(removed),
+        "remaining": len(kept),
+    }
+
+
+@router.post("/project-memory/lock")
+async def pm_lock(request: MemoryCellRequest):
+    """Add a user-initiated lock on a range.
+
+    User_locks never get auto-removed — the LLM is told NEVER to touch them
+    regardless of what the user's current message says. Reset-panel or the
+    /unlock endpoint is the only way to remove them.
+    """
+    wb_id = project_memory.fingerprint(request.context)
+    state = project_memory.load(request.user_id, wb_id)
+    rng = (request.address or "").strip()
+    if not rng:
+        return {"ok": False, "error": "address required"}
+    state = project_memory.add_lock(state, rng, note="user locked from memory panel")
+    project_memory.save(request.user_id, wb_id, state)
+    return {
+        "ok": True,
+        "workbook_id": wb_id,
+        "locks": len(state.get("user_locks") or []),
+    }
+
+
+@router.post("/project-memory/unlock")
+async def pm_unlock(request: MemoryCellRequest):
+    """Remove a user-initiated lock on a range."""
+    wb_id = project_memory.fingerprint(request.context)
+    state = project_memory.load(request.user_id, wb_id)
+    rng = (request.address or "").strip()
+    if not rng:
+        return {"ok": False, "error": "address required"}
+    state = project_memory.remove_lock(state, rng)
+    project_memory.save(request.user_id, wb_id, state)
+    return {
+        "ok": True,
+        "workbook_id": wb_id,
+        "locks": len(state.get("user_locks") or []),
+    }
+
+
 class MemoryCopyRequest(BaseModel):
     user_id: str
     from_workbook_id: str

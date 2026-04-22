@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v55";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v56";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -475,27 +475,133 @@ function renderMemoryPanel(data) {
   }
 
   const items = data.completed || [];
+  const locks = data.user_locks || [];
   const n = items.length;
+  const lockedAddrs = new Set(locks.map(l => (l.range || "").toLowerCase()));
 
   panel.style.display = "block";
-  countEl.textContent = n === 0 ? "empty" : `${n} cell${n === 1 ? "" : "s"} remembered`;
-  clearBtn.style.display = n > 0 ? "inline-block" : "none";
+  const lockSuffix = locks.length ? `, ${locks.length} locked` : "";
+  countEl.textContent = n === 0 && locks.length === 0
+    ? "empty"
+    : `${n} cell${n === 1 ? "" : "s"} remembered${lockSuffix}`;
+  clearBtn.style.display = (n > 0 || locks.length > 0) ? "inline-block" : "none";
 
-  if (n === 0) {
+  if (n === 0 && locks.length === 0) {
     listEl.innerHTML = `<div class="memory-empty">nothing tracked yet — memory populates as you work</div>`;
     return;
   }
 
-  // Render each tracked cell. Dedup already done server-side.
-  const rows = items.slice(-50).reverse().map(item => {
+  // Sort: user-locked rows first (they're most important to see), then by recency
+  const sortedItems = [...items].sort((a, b) => (b.at || 0) - (a.at || 0));
+
+  const completedRows = sortedItems.slice(0, 50).map(item => {
     const cell = (item.cell || item.range || "?");
     const body = item.formula ? escapeHtml(String(item.formula)) :
                  item.note    ? escapeHtml(String(item.note)) :
                  item.name    ? `named: ${escapeHtml(String(item.name))}` :
                                 escapeHtml(item.type || "");
-    return `<div class="memory-row"><span class="memory-cell">${escapeHtml(cell)}</span><span class="memory-body">${body}</span></div>`;
+    const isLocked = lockedAddrs.has(String(cell).toLowerCase());
+    const lockIcon = isLocked ? "🔒" : "";
+    return `
+      <div class="memory-row" data-cell="${escapeHtml(cell)}">
+        <span class="memory-cell">${lockIcon}${escapeHtml(cell)}</span>
+        <span class="memory-body">${body}</span>
+        <span class="memory-actions">
+          ${isLocked
+            ? `<button class="memory-row-btn memory-unlock-btn" title="Unlock — let tsifl modify again">unlock</button>`
+            : `<button class="memory-row-btn memory-lock-btn" title="Lock — never let tsifl modify this">lock</button>`}
+          <button class="memory-row-btn memory-forget-btn" title="Forget this entry only">×</button>
+        </span>
+      </div>`;
   }).join("");
-  listEl.innerHTML = rows;
+
+  // Render pure-locks (locks that have no completed entry alongside)
+  const completedAddrs = new Set(items.map(i => String(i.cell || i.range || "").toLowerCase()));
+  const orphanLocks = locks.filter(l => !completedAddrs.has(String(l.range || "").toLowerCase()));
+  const orphanRows = orphanLocks.map(l => {
+    const rng = l.range || "?";
+    return `
+      <div class="memory-row" data-cell="${escapeHtml(rng)}">
+        <span class="memory-cell">🔒${escapeHtml(rng)}</span>
+        <span class="memory-body">${escapeHtml(l.note || "locked")}</span>
+        <span class="memory-actions">
+          <button class="memory-row-btn memory-unlock-btn" title="Unlock">unlock</button>
+        </span>
+      </div>`;
+  }).join("");
+
+  listEl.innerHTML = orphanRows + completedRows;
+
+  // Wire per-row button handlers
+  listEl.querySelectorAll(".memory-forget-btn").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const row = btn.closest(".memory-row");
+      const addr = row?.getAttribute("data-cell");
+      if (addr) forgetMemoryCell(addr);
+    });
+  });
+  listEl.querySelectorAll(".memory-lock-btn").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const row = btn.closest(".memory-row");
+      const addr = row?.getAttribute("data-cell");
+      if (addr) lockMemoryCell(addr);
+    });
+  });
+  listEl.querySelectorAll(".memory-unlock-btn").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const row = btn.closest(".memory-row");
+      const addr = row?.getAttribute("data-cell");
+      if (addr) unlockMemoryCell(addr);
+    });
+  });
+}
+
+async function forgetMemoryCell(addr) {
+  if (!CURRENT_USER) return;
+  try {
+    const ctx = await getExcelContext();
+    await fetch(`${BACKEND_URL}/chat/project-memory/forget`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: CURRENT_USER.id, context: ctx, address: addr }),
+    });
+    await refreshMemoryPanel();
+  } catch (e) {
+    console.warn("[tsifl] forget failed:", e);
+  }
+}
+
+async function lockMemoryCell(addr) {
+  if (!CURRENT_USER) return;
+  try {
+    const ctx = await getExcelContext();
+    await fetch(`${BACKEND_URL}/chat/project-memory/lock`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: CURRENT_USER.id, context: ctx, address: addr }),
+    });
+    await refreshMemoryPanel();
+  } catch (e) {
+    console.warn("[tsifl] lock failed:", e);
+  }
+}
+
+async function unlockMemoryCell(addr) {
+  if (!CURRENT_USER) return;
+  try {
+    const ctx = await getExcelContext();
+    await fetch(`${BACKEND_URL}/chat/project-memory/unlock`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: CURRENT_USER.id, context: ctx, address: addr }),
+    });
+    await refreshMemoryPanel();
+  } catch (e) {
+    console.warn("[tsifl] unlock failed:", e);
+  }
 }
 
 function escapeHtml(s) {
