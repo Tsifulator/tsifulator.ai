@@ -74,42 +74,84 @@ def _set_cached_response(key: str, data: dict):
 
 # ── Post-processing: drop actions targeting phantom sheets ────────────────────
 
-def _strip_phantom_sheet_actions(actions: list, context: dict) -> tuple[list, list]:
+# Sheet names the LLM is allowed to create *without* the user asking. Keep
+# short — these should only be names the LLM legitimately produces as part
+# of well-known SIMnet flows (Scenario Summary is the Scenario Manager output).
+_ADD_SHEET_ALLOWLIST = {
+    "scenario summary",          # Scenario Manager summary report
+    "scenario summary report",
+}
+
+
+def _name_mentioned(name: str, message: str) -> bool:
+    """True if `name` appears as a whole-phrase substring of `message`, case-insensitive."""
+    if not name or not message:
+        return False
+    pattern = r"\b" + re.escape(name.strip()) + r"\b"
+    return re.search(pattern, message, flags=re.IGNORECASE) is not None
+
+
+def _strip_phantom_sheet_actions(
+    actions: list, context: dict, user_message: str = ""
+) -> tuple[list, list]:
     """Drop actions whose target sheet isn't in context.all_sheets.
 
-    The LLM sometimes invents sheet names ("Transactions", "Summary") from
-    other SIMnet projects. Rather than let those silently fail client-side,
-    drop them here and surface a clear message.
+    The LLM sometimes invents sheet names ("Transactions", "Summary", "Calorie
+    Journal") from other SIMnet projects. Rather than let those silently fail
+    client-side, drop them here and surface a clear message.
+
+    `add_sheet` actions get tighter scrutiny: we only allow them if the new
+    sheet name (a) already exists in the workbook, (b) is mentioned in the
+    user's message as a whole phrase, or (c) is on a small allowlist of
+    names the LLM legitimately produces (e.g. "Scenario Summary"). This
+    closes the loophole where a hallucinated add_sheet was previously
+    self-whitelisting writes to the same phantom sheet.
 
     Returns (kept_actions, dropped_sheet_names). Matches case-insensitively
-    and normalizes the canonical casing on kept actions. Any `add_sheet`
-    action in this same batch counts as "will exist" for later actions.
+    and normalizes the canonical casing on kept actions.
     """
     existing = {
         s.casefold(): s
         for s in (context or {}).get("all_sheets") or []
         if isinstance(s, str)
     }
-    # Sheets about to be created in this batch count as existing
-    for a in actions:
-        if a.get("type") == "add_sheet":
-            name = (a.get("payload") or {}).get("name")
-            if isinstance(name, str):
-                existing.setdefault(name.casefold(), name)
 
-    # No context info → can't validate, pass everything through
-    if not existing:
+    # Vet add_sheet actions FIRST so their names only enter `existing` if accepted.
+    kept_add_sheets: list[dict] = []
+    dropped_add_sheet_names: list[str] = []
+    non_add_actions: list[dict] = []
+
+    for a in actions:
+        if a.get("type") != "add_sheet":
+            non_add_actions.append(a)
+            continue
+        name = ((a.get("payload") or {}).get("name") or "").strip()
+        if not name:
+            continue  # silently drop empty add_sheet
+        key = name.casefold()
+
+        if key in existing:
+            # Already exists — harmless no-op, keep but don't re-whitelist
+            kept_add_sheets.append(a)
+        elif _name_mentioned(name, user_message):
+            kept_add_sheets.append(a)
+            existing.setdefault(key, name)
+        elif key in _ADD_SHEET_ALLOWLIST:
+            kept_add_sheets.append(a)
+            existing.setdefault(key, name)
+        else:
+            # Phantom sheet creation — drop and report.
+            dropped_add_sheet_names.append(name)
+
+    # If we have no context AND no user message, we can't validate — pass through.
+    if not existing and not user_message:
         return actions, []
 
-    kept: list = []
-    dropped: list = []
-    for a in actions:
+    kept: list = kept_add_sheets[:]
+    dropped: list = dropped_add_sheet_names[:]
+    for a in non_add_actions:
         t = a.get("type", "")
         p = a.get("payload") or {}
-
-        if t == "add_sheet":
-            kept.append(a)
-            continue
 
         target = None
         if t == "create_named_range":
@@ -1136,7 +1178,15 @@ async def chat(request: ChatRequest):
         r"^(yes|yeah|sure|ok|okay|do|build|try|execute|run|make|go|please|lets|let's|can you|could you)\b.*?(\d|\bthem\b|\ball\b|\bboth\b)",
         request.message.strip(), re.IGNORECASE
     )
-    if not request.images and not is_followup and not _is_short_contextual:
+    # Heavy-action apps (excel, rstudio, powerpoint, google_sheets) must run
+    # through the full pipeline every turn — phantom-sheet guard, split_actions
+    # for CU routing, project_memory load/inject/save, and cu_session_id
+    # creation. The old early-return cache path bypassed all of those, so a
+    # cached response with CU-type actions (run_solver, install_addins, etc.)
+    # would leak to the add-in and fail client-side. Cache remains populated
+    # on the write side so related requests (/debug, /stream) can still use it.
+    _cacheable_app = app not in ("excel", "rstudio", "powerpoint", "google_sheets")
+    if _cacheable_app and not request.images and not is_followup and not _is_short_contextual:
         cached = _get_cached_response(cache_k)
         if cached:
             return ChatResponse(
@@ -1409,7 +1459,7 @@ async def chat(request: ChatRequest):
     # sheet name. Runs for Excel/Sheets only (other apps lack all_sheets).
     if app in ("excel", "google_sheets"):
         all_actions, _dropped_sheets = _strip_phantom_sheet_actions(
-            all_actions, request.context
+            all_actions, request.context, user_message=request.message
         )
         if _dropped_sheets:
             _real = request.context.get("all_sheets") or []
