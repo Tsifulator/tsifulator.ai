@@ -1023,6 +1023,34 @@ async def pm_clear_post(request: MemoryLookupRequest):
     return {"workbook_id": wb_id, "deleted": deleted}
 
 
+class MemoryCopyRequest(BaseModel):
+    user_id: str
+    from_workbook_id: str
+    to_workbook_id: str
+
+
+@router.post("/debug/project-memory-copy")
+async def pm_copy(request: MemoryCopyRequest):
+    """Manually copy state from one workbook_id to another for the same user.
+
+    Recovery tool for when a bad fingerprint or buggy migration leaves state
+    under the wrong key. Idempotent — safe to re-run. Does NOT delete the
+    source; use DELETE endpoint for that afterward if you want.
+    """
+    src = project_memory.load(request.user_id, request.from_workbook_id)
+    if not (src.get("completed") or src.get("user_locks")):
+        return {"ok": False, "error": "source has no state to copy",
+                "from": request.from_workbook_id}
+    src["workbook_id"] = request.to_workbook_id
+    project_memory.save(request.user_id, request.to_workbook_id, src)
+    return {
+        "ok": True,
+        "from": request.from_workbook_id,
+        "to":   request.to_workbook_id,
+        "completed_count": len(src.get("completed") or []),
+    }
+
+
 @router.get("/debug/project-memory-supabase-probe")
 async def pm_supabase_probe():
     """Direct write/read/delete against the Supabase table so we can see
