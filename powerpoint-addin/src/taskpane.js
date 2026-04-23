@@ -9,7 +9,7 @@ import { supabase, getCurrentUser, signIn, signUp, signOut, resetPassword, syncS
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const BACKEND_URL = "https://focused-solace-production-6839.up.railway.app";
-const BUILD_VERSION = "v3";
+const BUILD_VERSION = "v4";
 const PREFS_KEY = "tsifl_ppt_preferences";
 
 let CURRENT_USER = null;
@@ -28,7 +28,72 @@ Office.onReady(async (info) => {
   } else {
     showLoginScreen();
   }
+
+  // ── Auto-poll for cross-app plot transfers every 4s ───────────────────────
+  // Mirrors the Excel add-in's polling pattern. When an R add-in (or server-
+  // side plot service) produces an image destined for PowerPoint via
+  // /transfer/store with to_app="powerpoint", we pick it up here and insert
+  // it into the current slide. Enables the "Excel data → R chart → PPT slide"
+  // flow without the user manually triggering an import_image action.
+  const seenTransferIds = new Set();
+  setInterval(async () => {
+    if (!CURRENT_USER) return;
+    try {
+      const resp = await fetch(`${BACKEND_URL}/transfer/pending/powerpoint`);
+      if (!resp.ok) return;
+      const { pending = [] } = await resp.json();
+      const images = pending.filter(
+        p => p.data_type === "image" && !seenTransferIds.has(p.transfer_id)
+      );
+      for (const item of images) {
+        seenTransferIds.add(item.transfer_id);
+        try {
+          const tResp = await fetch(`${BACKEND_URL}/transfer/${item.transfer_id}`);
+          if (!tResp.ok) continue;
+          const transfer = await tResp.json();
+          const cleanBase64 = String(transfer.data || "")
+            .replace(/^data:image\/[a-z+]+;base64,/, "");
+          if (!cleanBase64.startsWith("iVBOR") && !cleanBase64.startsWith("/9j/")) continue;
+          await insertImageIntoCurrentSlide(cleanBase64, {
+            title: (transfer.metadata || {}).title || "Chart",
+            from_app: transfer.from_app || "external",
+          });
+          appendMessage(
+            "assistant",
+            `📊 Chart from ${transfer.from_app || "another app"} inserted into current slide.`
+          );
+        } catch (e) {
+          console.warn("[tsifl] PowerPoint auto-import failed:", e);
+        }
+      }
+    } catch (_) { /* polling is best-effort */ }
+  }, 4000);
 });
+
+/** Insert a base64 image into the currently-active slide (or slide 0 if none active). */
+async function insertImageIntoCurrentSlide(base64, opts = {}) {
+  await PowerPoint.run(async (ctx) => {
+    const slides = ctx.presentation.slides;
+    slides.load("items");
+    await ctx.sync();
+    if (!slides.items.length) return;
+
+    // PowerPoint JS API doesn't cleanly expose "current slide" selection, so
+    // drop the image on the last slide (where the user was likely editing)
+    // unless opts.slide_index is provided.
+    const idx = opts.slide_index != null
+      ? Math.min(opts.slide_index, slides.items.length - 1)
+      : slides.items.length - 1;
+    const slide = slides.items[idx];
+    const image = slide.shapes.addImage(base64);
+    image.left   = opts.left   ?? 50;
+    image.top    = opts.top    ?? 100;
+    image.width  = opts.width  ?? 600;
+    image.height = opts.height ?? 400;
+    if (opts.title) image.name = String(opts.title).substring(0, 60);
+    await ctx.sync();
+  });
+}
 
 // ── Auth Screens ────────────────────────────────────────────────────────────
 
@@ -695,28 +760,79 @@ async function executeAction(action) {
       break;
 
     case "add_image":
+    case "import_image": {
+      // Resolve the image bytes. Three sources supported, in this order:
+      //   1. payload.image_data — explicit base64 (from server-side plot_service)
+      //   2. payload.transfer_id — fetch from /transfer/<id>, used by cross-app
+      //   3. payload.image_url   — URL (http/https or data: URI)
+      // If NONE is provided, try /transfer/pending/powerpoint (one-shot claim).
+      let base64 = null;
+      let urlForAddImage = null;
+      let titleFromTransfer = null;
+
+      if (payload.image_data) {
+        base64 = String(payload.image_data).replace(/^data:image\/[a-z+]+;base64,/, "");
+      } else if (payload.transfer_id) {
+        try {
+          const tResp = await fetch(`${BACKEND_URL}/transfer/${payload.transfer_id}`);
+          if (tResp.ok) {
+            const transfer = await tResp.json();
+            base64 = String(transfer.data || "").replace(/^data:image\/[a-z+]+;base64,/, "");
+            titleFromTransfer = (transfer.metadata || {}).title || null;
+          }
+        } catch (e) {
+          console.warn("[tsifl] transfer fetch failed:", e);
+        }
+      } else if (payload.image_url) {
+        urlForAddImage = payload.image_url;
+      } else {
+        // No explicit source — claim the next pending image for PowerPoint
+        try {
+          const pResp = await fetch(`${BACKEND_URL}/transfer/pending/powerpoint`);
+          if (pResp.ok) {
+            const { pending = [] } = await pResp.json();
+            const first = pending.find(p => p.data_type === "image");
+            if (first) {
+              const tResp = await fetch(`${BACKEND_URL}/transfer/${first.transfer_id}`);
+              if (tResp.ok) {
+                const transfer = await tResp.json();
+                base64 = String(transfer.data || "").replace(/^data:image\/[a-z+]+;base64,/, "");
+                titleFromTransfer = (transfer.metadata || {}).title || null;
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("[tsifl] pending-transfer lookup failed:", e);
+        }
+      }
+
+      if (!base64 && !urlForAddImage) {
+        console.warn("[tsifl] add_image/import_image: no image source available");
+        break;
+      }
+
       await PowerPoint.run(async (ctx) => {
         const slides = ctx.presentation.slides;
         slides.load("items");
         await ctx.sync();
+        if (!slides.items.length) return;
 
-        const idx = payload.slide_index || 0;
-        if (idx >= slides.items.length) return;
+        const idx = payload.slide_index != null
+          ? Math.min(payload.slide_index, slides.items.length - 1)
+          : slides.items.length - 1;  // default = last slide (where analyst is likely working)
         const slide = slides.items[idx];
-
-        if (payload.image_url) {
-          // For base64 images or URLs
-          const options = {
-            left: payload.left || 50,
-            top: payload.top || 50,
-            width: payload.width || 400,
-            height: payload.height || 300,
-          };
-          slide.shapes.addImage(payload.image_url, options);
-          await ctx.sync();
-        }
+        const src = base64 || urlForAddImage;
+        const image = slide.shapes.addImage(src);
+        image.left   = payload.left   ?? 50;
+        image.top    = payload.top    ?? 100;
+        image.width  = payload.width  ?? 600;
+        image.height = payload.height ?? 400;
+        const title = payload.title || titleFromTransfer;
+        if (title) image.name = String(title).substring(0, 60);
+        await ctx.sync();
       });
       break;
+    }
 
     case "add_table":
       await PowerPoint.run(async (ctx) => {

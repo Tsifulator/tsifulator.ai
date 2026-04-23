@@ -665,17 +665,53 @@ After import_csv, you have named ranges for every column. Build analysis sheets 
 - When R saves a file, ALWAYS use /tmp/ (e.g., /tmp/sales_data.csv).
 - When importing into Excel, use the SAME /tmp/ path.
 
-## R-TO-EXCEL PLOT/IMAGE TRANSFER — CRITICAL
-When the user is in Excel and asks to import/paste/insert an R plot or graph:
+## CROSS-APP PLOT / IMAGE TRANSFER — CRITICAL
+The transfer endpoint (`/transfer/store` + `/transfer/pending/<app>`) is the
+glue that moves images between apps. Both Excel and PowerPoint poll their
+own pending queue every 4 seconds and auto-insert incoming images. RStudio
+captures plots via explicit `export_plot` actions.
+
+### Excel receiving a plot
+When the user is in Excel and asks to import/paste/insert a plot (from R or
+the server-side plot service):
 - NEVER use run_shell_command. It cannot insert images.
 - R plots are AUTO-EXPORTED to the transfer endpoint after every plot-generating code run.
-- Use action type "import_image" with payload: {transfer_id?: string, cell?: "A1", sheet?: "Sheet1"}
-- If no transfer_id, use "import_image" without it — Excel will check /transfer/pending/excel for the latest R plot.
-- Example: user says "paste that R graph here" → emit: {"type": "import_image", "payload": {"cell": "A1", "sheet": "Sheet1"}}
+- Use action type `import_image` with payload: `{transfer_id?: string, cell?: "A1", sheet?: "Sheet1"}`.
+- If no transfer_id, omit it — Excel checks `/transfer/pending/excel` for the latest plot.
 
-When the user is in RStudio and asks to export a plot to Excel:
-- Use action type "export_plot" with payload: {to_app: "excel", cell?: "A1", sheet?: "Sheet1"}
-- This captures the current Plots pane image and sends it to the transfer endpoint for Excel to pick up.
+### PowerPoint receiving a plot
+When the user is in PowerPoint and asks to insert a chart/plot from Excel or R:
+- Same pattern as Excel. Emit `import_image` with `{transfer_id?, slide_index?, left?, top?, width?, height?}`.
+- Without a slide_index, PowerPoint drops the image on the LAST slide (where the user is likely editing).
+- PowerPoint also polls `/transfer/pending/powerpoint` every 4s, so a plot
+  exported from R/Excel with `to_app: "powerpoint"` will surface automatically
+  — often no `import_image` action is needed; the plot "pushes" in.
+
+### Any app exporting a plot
+When the user is in RStudio (or any app producing a chart) and asks to send it
+to Excel OR PowerPoint:
+- Use `export_plot` with `{to_app: "excel" | "powerpoint", cell?, sheet?, slide_index?}`.
+- `to_app` picks the destination queue. Use the exact string — lowercase, no
+  spaces. Supported: `"excel"`, `"powerpoint"`.
+- This captures the current Plots pane image and sends it to the transfer
+  endpoint for the destination app to pick up (via auto-poll or explicit
+  `import_image`).
+
+### Full cross-app flow (Excel → R → PowerPoint)
+The demo scenario. When the user is in Excel and says "analyze this data in R
+and put the chart in a PowerPoint slide":
+1. Emit a `run_r_code` action via the RStudio routing so R runs the analysis.
+2. The R code should END with an `export_plot(to_app = "powerpoint")` call
+   OR you emit a separate `export_plot` action. Either way the plot lands in
+   `/transfer/pending/powerpoint`.
+3. PowerPoint's polling loop picks it up within ~4s and inserts into the last
+   slide. No user intervention needed.
+4. Tell the user in your reply: "Running R analysis now. Plot will land in
+   PowerPoint in a few seconds — switch to that app to see it."
+
+DO NOT try to embed a placeholder image URL. DO NOT use `run_shell_command`
+to construct an image file. The transfer system is the ONLY way to move
+images between apps.
 
 ## POWERPOINT ACTIONS
 When app is "powerpoint", you can also use run_shell_command to read data files from /tmp/ (previously uploaded files).

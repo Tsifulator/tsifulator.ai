@@ -1056,7 +1056,7 @@ async def debug_guards():
         "project_memory_available": True,
         "project_memory_enabled":   project_memory.is_enabled(),
         "project_memory_backend":   project_memory.backend_type(),  # 'supabase' or 'file'
-        "build_tag": "guards-2026-04-23c-memory-stale-when-sheet-deleted",
+        "build_tag": "guards-2026-04-23d-cross-app-powerpoint",
     }
 
 
@@ -1627,14 +1627,26 @@ async def chat(request: ChatRequest):
                     options=p.get("options", {}),
                 )
                 if plot_result.get("success") and plot_result.get("image_base64"):
-                    # Store in transfer system
+                    # Store in transfer system.
+                    # `to_app` honors a per-action override when the LLM explicitly
+                    # targets a different surface (e.g. create_plot targeted at
+                    # PowerPoint from an Excel chat). Default: route to the app
+                    # that issued the request. Excel and PowerPoint both auto-poll
+                    # their pending queues, so either works transparently.
+                    _plot_target = (
+                        p.get("to_app")
+                        or (request.context or {}).get("app")
+                        or "excel"
+                    ).lower()
+                    if _plot_target not in ("excel", "powerpoint"):
+                        _plot_target = "excel"
                     import uuid as _uuid
                     import time as _time
                     from routes.transfer import _transfer_store, _save_store
                     transfer_id = str(_uuid.uuid4())[:8]
                     _transfer_store[transfer_id] = {
                         "from_app": "server_plot",
-                        "to_app": "excel",
+                        "to_app": _plot_target,
                         "data_type": "image",
                         "data": plot_result["image_base64"],
                         "metadata": {"title": p.get("title", "Chart"), "mime_type": "image/png"},
