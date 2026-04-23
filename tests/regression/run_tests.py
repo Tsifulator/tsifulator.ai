@@ -172,13 +172,10 @@ def run_case(case: dict, backend: str, timeout: int,
     actions = data.get("actions") or []
     reply = data.get("reply") or ""
 
-    # Save the live response so --cached can replay it later. Preserves the
-    # full blob (including workbook_id, memory counts, cu_session_id).
-    if case_dir is not None:
-        try:
-            (case_dir / "response.json").write_text(json.dumps(data, indent=2))
-        except Exception:
-            pass  # best-effort; never break the test on a disk write
+    # DO NOT overwrite response.json here. That file is the "golden" response
+    # for --cached mode, captured once via capture_case.py. If we saved every
+    # live run we'd defeat the purpose of --cached (it would always reflect
+    # the most recent live run, including flaky ones).
 
     check_results = evaluator(rubric, actions, reply, cu_session_id=data.get("cu_session_id"))
     all_ok = all(ok for ok, _, _ in check_results)
