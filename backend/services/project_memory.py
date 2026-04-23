@@ -232,8 +232,9 @@ def _cell_is_present_in_context(addr: str, context: dict) -> bool | None:
 
     Returns:
       True   — the cell has a value/formula in preview (memory entry still valid)
-      False  — the cell is in preview range but empty (memory entry is stale)
-      None   — unknown (cell outside preview, sheet missing, no context) —
+      False  — the cell is genuinely stale: either in-range but empty, OR the
+               sheet itself doesn't exist in the workbook anymore
+      None   — unknown (cell outside preview but sheet exists, no context) —
                caller should treat as "keep" to avoid false invalidation.
     """
     if not addr or "!" not in addr or not context:
@@ -249,6 +250,20 @@ def _cell_is_present_in_context(addr: str, context: dict) -> bool | None:
     col_idx = _col_to_idx(m.group(1))
     row_idx = int(m.group(2)) - 1
 
+    # If `all_sheets` is authoritative (Excel add-in always sends it), a sheet
+    # missing from it means the workbook no longer has that tab — memory is
+    # stale. Without this check the caller would treat it as "unknown" and the
+    # LLM would trust the memory claim, leading to silent no-ops like "the
+    # Dashboard is already done" when the Dashboard sheet has been deleted.
+    all_sheets = context.get("all_sheets") or []
+    if all_sheets:
+        sheet_exists = any(
+            isinstance(s, str) and s.casefold() == sheet.casefold()
+            for s in all_sheets
+        )
+        if not sheet_exists:
+            return False
+
     summaries = context.get("sheet_summaries") or []
     for s in summaries:
         if (s.get("name") or "").casefold() == sheet.casefold():
@@ -260,7 +275,7 @@ def _cell_is_present_in_context(addr: str, context: dict) -> bool | None:
                 return None  # outside preview cols — unknown
             val = row[col_idx]
             return val is not None and val != ""
-    return None  # sheet not in context
+    return None  # sheet in all_sheets but no summary (rare) — unknown
 
 
 def build_prompt_injection(state: dict, context: dict | None = None) -> str:
