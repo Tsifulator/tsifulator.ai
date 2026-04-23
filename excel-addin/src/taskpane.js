@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v61";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v62";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -618,13 +618,27 @@ const _DISCUSS_RE = new RegExp(
   "i"
 );
 
+// If any of these phrases appear, the question is ABOUT the user's workbook
+// and needs real context — don't route to the local model (which doesn't see
+// the spreadsheet). Keep Claude for those.
+const _CONTEXTUAL_RE = new RegExp(
+  [
+    "\\bthis (workbook|sheet|spreadsheet|file|tab|cell|formula|model|data|table|range|chart)\\b",
+    "\\bthese (cells|rows|columns|values|numbers|formulas|data)\\b",
+    "\\bmy (workbook|sheet|spreadsheet|file|model|data)\\b",
+    "\\bthe (current|active|selected|attached) (workbook|sheet|cell|range|data)\\b",
+  ].join("|"),
+  "i"
+);
+
 function isDiscussMode(message) {
   const m = (message || "").trim();
   if (!m) return false;
-  if (m.length > 600) return false;   // long messages usually carry context/instructions
-  // If the message references a specific cell ("F5", "A1:B10") it's probably
-  // a write task, not discuss.
+  if (m.length > 600) return false;
+  // Cell references ("F5", "A1:B10") → it's a write task, not discuss.
   if (/\b[A-Z]{1,3}\d+(?::[A-Z]{1,3}\d+)?\b/.test(m)) return false;
+  // "this workbook", "my model", etc. → needs context, route to Claude.
+  if (_CONTEXTUAL_RE.test(m)) return false;
   return _DISCUSS_RE.test(m);
 }
 
@@ -951,17 +965,23 @@ async function handleSubmit() {
     showTypingIndicator("thinking");
 
     // Ollama short-circuit: for discuss-mode messages (no images, no cell refs,
-    // short enough), try the local model first. Saves Claude credits entirely.
-    // Fails through to /chat on any miss (Ollama down, wrong response, etc).
+    // no contextual pronouns, short enough), try the local model first.
+    // Contextual questions ("what do you think about this workbook?") do NOT
+    // route here — they need Claude because only Claude sees the live data.
     const discussMode = _ollamaUserEnabled && images.length === 0 && isDiscussMode(message);
     if (discussMode && await checkOllamaAvailable()) {
       setStatus("Thinking... (local)");
-      const localReply = await askOllama(
-        message,
-        "You are tsifl, a concise AI assistant for financial analysts using Excel. " +
-        "Answer the user in 2-5 sentences. Do not emit code or tool calls. " +
-        "If the user needs you to modify the spreadsheet, tell them to rephrase as a direct instruction."
-      );
+      // Tight, opinionated system prompt for the local model. gemma3 tends
+      // toward verbose / evasive replies without firm instruction.
+      const sysHint =
+        "You are tsifl, a concise AI assistant for financial analysts using " +
+        ((excelContext?.app) || "an office app") + ". " +
+        "The user is asking a general conceptual or educational question that " +
+        "does NOT require seeing their live workbook. Answer directly in " +
+        "2-5 sentences. Do NOT ask for additional information about their " +
+        "workbook. Do NOT emit code, formulas, or tool calls. Be specific and " +
+        "practical, not generic.";
+      const localReply = await askOllama(message, sysHint);
       if (localReply) {
         hideTypingIndicator();
         appendMessage("assistant", localReply, undefined, {
