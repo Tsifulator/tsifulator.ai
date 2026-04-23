@@ -196,7 +196,8 @@ def _auto_inject_add_sheets(
 
 
 def _strip_phantom_sheet_actions(
-    actions: list, context: dict, user_message: str = ""
+    actions: list, context: dict, user_message: str = "",
+    pre_approved: set[str] | None = None,
 ) -> tuple[list, list]:
     """Drop actions whose target sheet isn't in context.all_sheets.
 
@@ -219,6 +220,9 @@ def _strip_phantom_sheet_actions(
         for s in (context or {}).get("all_sheets") or []
         if isinstance(s, str)
     }
+    # Names the caller has already vetted (e.g. auto-injected add_sheets that
+    # passed intent-overlap checks) — treat as if they were in context.all_sheets.
+    pre_approved_keys = {s.casefold() for s in (pre_approved or set())}
 
     # Vet add_sheet actions FIRST so their names only enter `existing` if accepted.
     kept_add_sheets: list[dict] = []
@@ -237,6 +241,10 @@ def _strip_phantom_sheet_actions(
         if key in existing:
             # Already exists — harmless no-op, keep but don't re-whitelist
             kept_add_sheets.append(a)
+        elif key in pre_approved_keys:
+            # Caller pre-approved this name (auto-injection). Keep it.
+            kept_add_sheets.append(a)
+            existing.setdefault(key, name)
         elif _name_mentioned(name, user_message):
             kept_add_sheets.append(a)
             existing.setdefault(key, name)
@@ -1048,7 +1056,7 @@ async def debug_guards():
         "project_memory_available": True,
         "project_memory_enabled":   project_memory.is_enabled(),
         "project_memory_backend":   project_memory.backend_type(),  # 'supabase' or 'file'
-        "build_tag": "guards-2026-04-23a-auto-inject-add-sheet",
+        "build_tag": "guards-2026-04-23b-auto-inject-passthrough",
     }
 
 
@@ -1670,6 +1678,7 @@ async def chat(request: ChatRequest):
     # auto-create sheets, unlike Google Sheets). Rather than drop all the
     # writes in the phantom-sheet guard, detect the "build-me-a-dashboard"
     # pattern and prepend the missing add_sheet. Runs before both guards.
+    _injected_sheets: list[str] = []
     if app in ("excel", "google_sheets"):
         all_actions, _injected_sheets = _auto_inject_add_sheets(
             all_actions, request.context, user_message=request.message,
@@ -1712,7 +1721,8 @@ async def chat(request: ChatRequest):
     # sheet name. Runs for Excel/Sheets only (other apps lack all_sheets).
     if app in ("excel", "google_sheets"):
         all_actions, _dropped_sheets = _strip_phantom_sheet_actions(
-            all_actions, request.context, user_message=request.message
+            all_actions, request.context, user_message=request.message,
+            pre_approved=set(_injected_sheets),
         )
         if _dropped_sheets:
             _real = request.context.get("all_sheets") or []
