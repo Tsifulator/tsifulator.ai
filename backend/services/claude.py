@@ -153,6 +153,21 @@ def _select_model(message: str, context: dict, has_attachments: bool = False) ->
     msg = message.strip()
     app = context.get("app", "")
 
+    # Explicit override — used by the regression suite (--cheap) and by any
+    # path that wants a specific tier regardless of heuristics. Accepts:
+    #   "haiku" / "fast"       → MODEL_FAST
+    #   "sonnet" / "standard"  → MODEL_STANDARD
+    #   "opus" / "heavy"       → MODEL_HEAVY
+    #   full model ID (e.g. "claude-sonnet-4-20250514") → used as-is
+    forced = (context or {}).get("force_model")
+    if isinstance(forced, str) and forced.strip():
+        key = forced.strip().lower()
+        if key in ("haiku", "fast"):     return MODEL_FAST
+        if key in ("sonnet", "standard"): return MODEL_STANDARD
+        if key in ("opus", "heavy"):     return MODEL_HEAVY
+        # Treat anything else as a literal model ID — caller takes responsibility
+        return forced.strip()
+
     # RStudio + images = homework/analysis screenshots → always use Opus
     if has_attachments and app == "rstudio":
         return MODEL_HEAVY

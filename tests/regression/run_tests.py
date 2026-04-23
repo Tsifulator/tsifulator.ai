@@ -83,7 +83,9 @@ def load_case(case_dir: Path) -> dict:
 
 # ── Runner ──────────────────────────────────────────────────────────────────
 
-def run_case(case: dict, backend: str, timeout: int) -> dict:
+def run_case(case: dict, backend: str, timeout: int,
+             cheap: bool = False, cached: bool = False,
+             case_dir: Path | None = None) -> dict:
     name = case["name"]
     req = case["request"]
     rubric = case["rubric"]
@@ -96,6 +98,34 @@ def run_case(case: dict, backend: str, timeout: int) -> dict:
             "error": f"no rubric evaluator for app={app!r}",
             "checks": [], "elapsed_ms": 0, "actions": [], "reply": "",
         }
+
+    # --cached: skip the live call entirely and replay the stored response.
+    # Useful when iterating on rubric assertions — the evaluator logic runs
+    # fully, the LLM does not. Captured by capture_case.py on the first run.
+    if cached and case_dir is not None:
+        resp_path = case_dir / "response.json"
+        if resp_path.exists():
+            data = json.loads(resp_path.read_text())
+            actions = data.get("actions") or []
+            reply = data.get("reply") or ""
+            check_results = evaluator(rubric, actions, reply, cu_session_id=data.get("cu_session_id"))
+            all_ok = all(ok for ok, _, _ in check_results)
+            return {
+                "name": name, "ok": all_ok, "error": None,
+                "checks": [{"pass": ok, "name": n, "detail": d} for ok, n, d in check_results],
+                "elapsed_ms": 0, "actions": actions, "reply": reply,
+                "cu_session_id": data.get("cu_session_id"),
+                "cached": True,
+            }
+        # Fall through to live call if no cached response exists yet
+
+    # --cheap: force every case to use MODEL_FAST (Haiku). Cuts regression
+    # suite spend ~10×. Keep the pipeline (guards, routing, memory) exercised
+    # without burning full-model tokens on every CI run.
+    if cheap:
+        req = dict(req)
+        req["context"] = dict(req.get("context") or {})
+        req["context"]["force_model"] = "haiku"
 
     # Pre-flight: clear any project_memory state for this test user_id so the
     # case starts from a deterministic blank slate. Without this, the first
@@ -142,6 +172,14 @@ def run_case(case: dict, backend: str, timeout: int) -> dict:
     actions = data.get("actions") or []
     reply = data.get("reply") or ""
 
+    # Save the live response so --cached can replay it later. Preserves the
+    # full blob (including workbook_id, memory counts, cu_session_id).
+    if case_dir is not None:
+        try:
+            (case_dir / "response.json").write_text(json.dumps(data, indent=2))
+        except Exception:
+            pass  # best-effort; never break the test on a disk write
+
     check_results = evaluator(rubric, actions, reply, cu_session_id=data.get("cu_session_id"))
     all_ok = all(ok for ok, _, _ in check_results)
 
@@ -151,6 +189,7 @@ def run_case(case: dict, backend: str, timeout: int) -> dict:
         "elapsed_ms": elapsed_ms,
         "actions": actions, "reply": reply,
         "cu_session_id": data.get("cu_session_id"),
+        "cached": False,
     }
 
 
@@ -161,7 +200,8 @@ def print_case_result(result: dict):
         return
 
     status = c_green("PASS") if result["ok"] else c_red("FAIL")
-    meta = c_dim(f"({result['elapsed_ms']}ms, {len(result['actions'])} actions)")
+    source = "cached" if result.get("cached") else f"{result['elapsed_ms']}ms"
+    meta = c_dim(f"({source}, {len(result['actions'])} actions)")
     print(f"  {status}  {c_bold(name)}  {meta}")
     for chk in result["checks"]:
         mark = c_green("✓") if chk["pass"] else c_red("✗")
@@ -175,6 +215,14 @@ def main():
     ap.add_argument("--timeout", type=int, default=120)
     ap.add_argument("--json", action="store_true", help="emit JSON-only output")
     ap.add_argument("--save-report", action="store_true", help="write full report JSON to _reports/")
+    ap.add_argument("--cheap", action="store_true",
+                    help="Force Haiku on every case. ~10x cheaper than default Sonnet. "
+                         "Exercises guards + routing + memory without burning full-model tokens. "
+                         "Still makes a live API call — use --cached to skip API entirely.")
+    ap.add_argument("--cached", action="store_true",
+                    help="Skip the live /chat call and replay each case's saved response.json. "
+                         "Falls back to live if no response is saved. $0 cost; use when iterating "
+                         "on rubric assertions, not when validating backend changes.")
     args = ap.parse_args()
 
     if not CASES_DIR.exists():
@@ -200,7 +248,8 @@ def main():
             results.append({"name": d.name, "ok": False, "error": f"load failed: {e}",
                             "checks": [], "elapsed_ms": 0, "actions": [], "reply": ""})
             continue
-        r = run_case(case, args.backend, args.timeout)
+        r = run_case(case, args.backend, args.timeout,
+                     cheap=args.cheap, cached=args.cached, case_dir=d)
         results.append(r)
         if not args.json:
             print_case_result(r)
