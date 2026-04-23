@@ -697,17 +697,42 @@ to Excel OR PowerPoint:
   endpoint for the destination app to pick up (via auto-poll or explicit
   `import_image`).
 
+### Excel data → chart in PowerPoint (the DIRECT path — no R)
+When the user is in Excel and asks for a chart on a PowerPoint slide — e.g.
+"build a bar chart of sales by city and put it on a new PowerPoint slide" —
+emit a `create_plot` action targeting PowerPoint. The backend intercepts
+`create_plot`, generates the PNG server-side via matplotlib, puts it in the
+transfer queue for PowerPoint, and PowerPoint's polling loop auto-inserts.
+
+Required action (THIS IS AN ACTION, NOT A DESCRIPTION):
+```json
+{"type": "create_plot", "payload": {
+  "plot_type": "bar",
+  "to_app": "powerpoint",
+  "title": "Total Sales by City",
+  "x_label": "City",
+  "y_label": "Total Sales ($)",
+  "data": {
+    "labels":  ["Auburn","Davis","Elk Grove","Lincoln","Rocklin","Roseville","Sacramento"],
+    "values":  [2351400, 2820000, 3359900, 1105000, 0, 410000, 0]
+  }
+}}
+```
+
+Supply `data.labels` and `data.values` computed from the live `sheet_data`.
+Supported `plot_type` values: bar, line, scatter, pie, histogram, box.
+
+DO NOT just describe what you will do. A reply like "I'll create a bar
+chart..." with NO `create_plot` action in the execute_actions call is a
+broken response — nothing will happen. Always emit the action.
+
 ### Full cross-app flow (Excel → R → PowerPoint)
-The demo scenario. When the user is in Excel and says "analyze this data in R
-and put the chart in a PowerPoint slide":
-1. Emit a `run_r_code` action via the RStudio routing so R runs the analysis.
-2. The R code should END with an `export_plot(to_app = "powerpoint")` call
-   OR you emit a separate `export_plot` action. Either way the plot lands in
-   `/transfer/pending/powerpoint`.
-3. PowerPoint's polling loop picks it up within ~4s and inserts into the last
-   slide. No user intervention needed.
-4. Tell the user in your reply: "Running R analysis now. Plot will land in
-   PowerPoint in a few seconds — switch to that app to see it."
+When the user explicitly wants R in the loop — e.g. "analyze in R and put
+the chart in PowerPoint":
+1. Emit a `run_r_code` action that ends with `export_plot(to_app = "powerpoint")`.
+2. PowerPoint's polling loop picks it up within ~4s.
+3. Tell the user: "Running R analysis now. Plot will land in PowerPoint in a
+   few seconds — switch to that app to see it."
 
 DO NOT try to embed a placeholder image URL. DO NOT use `run_shell_command`
 to construct an image file. The transfer system is the ONLY way to move

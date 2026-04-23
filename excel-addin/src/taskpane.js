@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v62";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v63";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -903,13 +903,19 @@ function claimsActionCompletion(text) {
   if (!text) return false;
   const t = text.toLowerCase();
   const patterns = [
-    /\bi['']?ve (written|added|created|updated|inserted|applied|imported|formatted|filled|set up|placed|put|made|built|generated|populated|entered)/,
-    /\bi have (written|added|created|updated|inserted|applied|imported|formatted|filled|placed|populated|entered)/,
+    // Past-tense "I've done it" claims
+    /\bi['']?ve (written|added|created|updated|inserted|applied|imported|formatted|filled|set up|placed|put|made|built|generated|populated|entered|sent|placed)/,
+    /\bi have (written|added|created|updated|inserted|applied|imported|formatted|filled|placed|populated|entered|sent)/,
     /\ball set\b/,
     /\bdone[\s\.\!—–-]/,
-    /\b(data|formulas?|chart|values|cells?|table|rows?|columns?) (have been|has been|were|was) (written|added|imported|created|inserted|populated|entered|formatted|applied)/,
-    /\b(written|added|created|updated|inserted|imported|formatted|populated) (the |your )?(data|formulas?|values|cells?|range|chart|table)/,
-    /\bsuccessfully (wrote|added|created|inserted|imported|formatted|populated)/,
+    /\b(data|formulas?|chart|values|cells?|table|rows?|columns?|slide) (have been|has been|were|was) (written|added|imported|created|inserted|populated|entered|formatted|applied|placed|sent)/,
+    /\b(written|added|created|updated|inserted|imported|formatted|populated) (the |your )?(data|formulas?|values|cells?|range|chart|table|slide)/,
+    /\bsuccessfully (wrote|added|created|inserted|imported|formatted|populated|placed|sent)/,
+    // Future-tense "I'll do it" claims — just as broken when no action is emitted
+    /\bi['']?ll (create|build|make|add|insert|write|place|put|send|generate|produce|populate|draw|chart|plot|fill)\b/,
+    /\bi will (create|build|make|add|insert|write|place|put|send|generate|produce|populate)\b/,
+    /\blet me (create|build|add|insert|write|make|place|send|generate)\b/,
+    /\bgoing to (create|build|add|insert|write|make|place|send|generate)\b/,
   ];
   return patterns.some(rx => rx.test(t));
 }
