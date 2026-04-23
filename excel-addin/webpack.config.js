@@ -45,11 +45,25 @@ module.exports = {
       },
     },
     headers: { "Access-Control-Allow-Origin": "*" },
-    proxy: [{
-      context: ["/local-api"],
-      target: "http://localhost:8000",
-      pathRewrite: { "^/local-api": "" },
-      secure: false,
-    }],
+    proxy: [
+      {
+        context: ["/local-api"],
+        target: "http://localhost:8000",
+        pathRewrite: { "^/local-api": "" },
+        secure: false,
+      },
+      {
+        // Ollama local model server — the add-in is served over HTTPS and
+        // can't reach http://localhost:11434 directly (mixed content).
+        // Webpack proxies /local-ollama/* → localhost:11434/* so the
+        // add-in can treat Ollama as a same-origin resource in dev.
+        context: ["/local-ollama"],
+        target: "http://localhost:11434",
+        pathRewrite: { "^/local-ollama": "" },
+        secure: false,
+        // Ollama responses can be large (model output); no bodyParser limit
+        changeOrigin: true,
+      },
+    ],
   },
 };

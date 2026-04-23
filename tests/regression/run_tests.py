@@ -85,6 +85,7 @@ def load_case(case_dir: Path) -> dict:
 
 def run_case(case: dict, backend: str, timeout: int,
              cheap: bool = False, cached: bool = False,
+             refresh_golden: bool = False,
              case_dir: Path | None = None) -> dict:
     name = case["name"]
     req = case["request"]
@@ -172,10 +173,14 @@ def run_case(case: dict, backend: str, timeout: int,
     actions = data.get("actions") or []
     reply = data.get("reply") or ""
 
-    # DO NOT overwrite response.json here. That file is the "golden" response
-    # for --cached mode, captured once via capture_case.py. If we saved every
-    # live run we'd defeat the purpose of --cached (it would always reflect
-    # the most recent live run, including flaky ones).
+    # response.json is the "golden" response used by --cached. Default live
+    # runs MUST NOT touch it (flaky LLM output could silently poison the
+    # golden). Only overwrite when --refresh-golden is explicitly set.
+    if refresh_golden and case_dir is not None:
+        try:
+            (case_dir / "response.json").write_text(json.dumps(data, indent=2))
+        except Exception:
+            pass
 
     check_results = evaluator(rubric, actions, reply, cu_session_id=data.get("cu_session_id"))
     all_ok = all(ok for ok, _, _ in check_results)
@@ -220,6 +225,11 @@ def main():
                     help="Skip the live /chat call and replay each case's saved response.json. "
                          "Falls back to live if no response is saved. $0 cost; use when iterating "
                          "on rubric assertions, not when validating backend changes.")
+    ap.add_argument("--refresh-golden", action="store_true",
+                    help="DESTRUCTIVE: after each live run, overwrite the case's response.json "
+                         "with the fresh response. Use ONLY when you intentionally want to update "
+                         "the golden (e.g. LLM behavior drifted legitimately). Default behavior "
+                         "never touches response.json.")
     args = ap.parse_args()
 
     if not CASES_DIR.exists():
@@ -246,7 +256,8 @@ def main():
                             "checks": [], "elapsed_ms": 0, "actions": [], "reply": ""})
             continue
         r = run_case(case, args.backend, args.timeout,
-                     cheap=args.cheap, cached=args.cached, case_dir=d)
+                     cheap=args.cheap, cached=args.cached,
+                     refresh_golden=args.refresh_golden, case_dir=d)
         results.append(r)
         if not args.json:
             print_case_result(r)

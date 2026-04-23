@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v60";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v61";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -162,6 +162,12 @@ function showChatScreen(user) {
   // Backend health check on boot + wire the retry button
   wireBackendBanner();
   checkBackendHealth();
+
+  // Ollama local model probe — fire-and-forget; result cached for 30s.
+  // If reachable, discuss-mode messages will route there without user action.
+  checkOllamaAvailable().then(ok => {
+    if (ok) console.info(`[tsifl] Ollama available: ${_ollamaHealth.model}`);
+  });
 
   // First-run welcome (only shows once per browser profile)
   setTimeout(() => { maybeShowWelcome(); }, 400);
@@ -545,6 +551,111 @@ function maybeShowWelcome() {
   });
 }
 
+// ── Ollama local model routing ───────────────────────────────────────────────
+// Discuss-mode and simple chat-only requests get routed to a local Ollama
+// instance (if reachable) instead of burning Claude credits. Webpack proxies
+// /local-ollama/* → http://localhost:11434/* so the HTTPS taskpane can reach
+// the local HTTP API without mixed-content errors.
+//
+// Flow:
+//   1. On boot, probe /local-ollama/api/tags to see if Ollama is running.
+//   2. On each chat turn, if the message looks like discuss-mode AND Ollama
+//      is reachable, route there. Otherwise fall through to /chat (Claude).
+//   3. Reply renders with a "local · ollama · <model>" chip so the user
+//      sees when local routing fired.
+//
+// This is dev-mode only right now — webpack proxy doesn't exist in prod
+// distribution. When we ship, a desktop-agent HTTPS shim or similar will
+// replace the proxy.
+
+const OLLAMA_URL            = "/local-ollama";
+const OLLAMA_DEFAULT_MODEL  = "llama3.2";       // fast, good enough for discuss
+const OLLAMA_HEALTHCHECK_TTL_MS = 30_000;
+
+let _ollamaHealth = { available: false, model: null, checkedAt: 0 };
+let _ollamaUserEnabled = true;   // user-controlled toggle (future UI)
+
+/** Check whether Ollama is reachable. Cached for 30s to avoid probing each turn. */
+async function checkOllamaAvailable() {
+  const now = Date.now();
+  if (now - _ollamaHealth.checkedAt < OLLAMA_HEALTHCHECK_TTL_MS) {
+    return _ollamaHealth.available;
+  }
+  try {
+    const r = await fetch(`${OLLAMA_URL}/api/tags`, {
+      method: "GET",
+      signal: AbortSignal.timeout ? AbortSignal.timeout(1500) : undefined,
+    });
+    if (!r.ok) {
+      _ollamaHealth = { available: false, model: null, checkedAt: now };
+      return false;
+    }
+    const data = await r.json();
+    const models = (data?.models || []).map(m => m.name || m.model).filter(Boolean);
+    // Pick: explicit default if installed, else whatever llama/qwen is available, else first
+    let chosen = models.find(m => m.startsWith(OLLAMA_DEFAULT_MODEL));
+    if (!chosen) chosen = models.find(m => /llama|qwen|mistral/i.test(m));
+    if (!chosen) chosen = models[0] || null;
+    _ollamaHealth = { available: !!chosen, model: chosen, checkedAt: now };
+    return !!chosen;
+  } catch (e) {
+    _ollamaHealth = { available: false, model: null, checkedAt: now };
+    return false;
+  }
+}
+
+// Patterns that indicate the user wants conversational / explanatory replies,
+// NOT structured actions against the spreadsheet. Mirrors the backend's
+// _DISCUSS_PATTERNS regex in services/claude.py, trimmed to the core cases.
+const _DISCUSS_RE = new RegExp(
+  [
+    "^(what|why|how|when|where|who)\\b",
+    "\\b(what do you think|what['']?s your (take|opinion|view))\\b",
+    "\\b(explain|summari[sz]e|describe|tell me about|walk me through)\\b",
+    "\\b(any (recommendation|suggestion|idea|advice|thought|tip|pointer))\\b",
+    "\\b(should i|can you explain|help me understand)\\b",
+  ].join("|"),
+  "i"
+);
+
+function isDiscussMode(message) {
+  const m = (message || "").trim();
+  if (!m) return false;
+  if (m.length > 600) return false;   // long messages usually carry context/instructions
+  // If the message references a specific cell ("F5", "A1:B10") it's probably
+  // a write task, not discuss.
+  if (/\b[A-Z]{1,3}\d+(?::[A-Z]{1,3}\d+)?\b/.test(m)) return false;
+  return _DISCUSS_RE.test(m);
+}
+
+/** Send a chat message to local Ollama. Returns the reply string or null on failure. */
+async function askOllama(message, systemHint = "") {
+  if (!_ollamaHealth.available || !_ollamaHealth.model) return null;
+  const body = {
+    model: _ollamaHealth.model,
+    messages: [
+      systemHint ? { role: "system", content: systemHint } : null,
+      { role: "user", content: message },
+    ].filter(Boolean),
+    stream: false,
+  };
+  try {
+    const r = await fetch(`${OLLAMA_URL}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      // Ollama on a local Mac takes up to ~30s for a response depending on model
+      signal: AbortSignal.timeout ? AbortSignal.timeout(45000) : undefined,
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    return data?.message?.content || null;
+  } catch (e) {
+    console.warn("[tsifl] Ollama request failed:", e?.message || e);
+    return null;
+  }
+}
+
 // ── Toast notifications ──────────────────────────────────────────────────────
 
 /** Show a tiny ephemeral toast message above the input. Auto-dismisses. */
@@ -838,6 +949,35 @@ async function handleSubmit() {
     const excelContext = await getExcelContext();
     setStatus("Thinking...");
     showTypingIndicator("thinking");
+
+    // Ollama short-circuit: for discuss-mode messages (no images, no cell refs,
+    // short enough), try the local model first. Saves Claude credits entirely.
+    // Fails through to /chat on any miss (Ollama down, wrong response, etc).
+    const discussMode = _ollamaUserEnabled && images.length === 0 && isDiscussMode(message);
+    if (discussMode && await checkOllamaAvailable()) {
+      setStatus("Thinking... (local)");
+      const localReply = await askOllama(
+        message,
+        "You are tsifl, a concise AI assistant for financial analysts using Excel. " +
+        "Answer the user in 2-5 sentences. Do not emit code or tool calls. " +
+        "If the user needs you to modify the spreadsheet, tell them to rephrase as a direct instruction."
+      );
+      if (localReply) {
+        hideTypingIndicator();
+        appendMessage("assistant", localReply, undefined, {
+          memoryCount: 0,
+          memoryOverrides: 0,
+          lockBlocked: 0,
+          phantomDropped: 0,
+          ollama: _ollamaHealth.model,    // renders "local · ollama · llama3.2"
+        });
+        setStatus("Ready");
+        setSubmitEnabled(true);
+        return;
+      }
+      // Local failed — fall through to Claude
+      setStatus("Thinking...");
+    }
 
     const response = await fetch(`${BACKEND_URL}/chat/`, {
       method:  "POST",
@@ -2791,13 +2931,15 @@ function appendMessage(role, text, images, meta) {
   div.className   = `message ${role}`;
 
   // Memory chip rendered ABOVE the assistant's text — surfaces when memory
-  // actually shaped the response. Truthful wording:
+  // actually shaped the response, or when the reply came from local Ollama.
   //   memory respected → LLM honored every prior entry without overwriting
   //   N overridden     → LLM chose to rewrite N cells that were in memory
   //   lock blocked     → server guard stopped writes to locked cells
   //   phantom dropped  → server guard stopped writes to made-up sheets
+  //   local · ollama   → reply came from local model, zero API cost
   if (role === "assistant" && meta) {
     const parts = [];
+    if (meta.ollama)          parts.push(`💻 local · ollama · ${meta.ollama}`);
     if (meta.lockBlocked)     parts.push(`🔒 ${meta.lockBlocked} blocked by lock`);
     if (meta.phantomDropped)  parts.push(`⚠️ ${meta.phantomDropped} phantom dropped`);
     if (meta.memoryCount) {
