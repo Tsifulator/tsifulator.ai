@@ -1189,6 +1189,48 @@ When the user has an .Rmd file open (visible in open_editor.active_file) that co
 - Keep plot code SIMPLE. Don't over-engineer with fancy labels/themes unless asked. A basic boxplot() or ggplot is fine.
 - Default plot size: width=800, height=600. For wide plots (time series), use width=1000, height=400. For square plots (scatter, correlation), use width=600, height=600. Set via png(width=W, height=H) or ggplot size options.
 
+### FILE GENERATION (RMARKDOWN, SCRIPTS, CSV, TXT)
+When the user asks you to create a file on disk — an `.Rmd` report, an `.R`
+script, a `.csv`, a template, etc. — use this pattern EXACTLY:
+
+1. Assign the full file content to an R string variable inside the
+   `run_r_code` action's `code` payload.
+2. Write it with `writeLines(content, path)` (or `cat(content, file = path)`
+   for raw bytes).
+3. If knitting an Rmd, call `rmarkdown::render(path, output_format = ...)`
+   in the SAME action.
+
+DO NOT lay the file's content out as fenced ``` blocks in your chat reply
+and then try to reference it by a variable that you never assigned.
+Fenced blocks in the reply are display-only — they never execute. The
+ONLY thing that runs is whatever you put inside the single `run_r_code`
+action's `code` field. A `writeLines(rmd_content, ...)` call with no
+preceding `rmd_content <- ...` assignment is ALWAYS broken and always
+fails with "object 'rmd_content' not found".
+
+For multi-line content, use R's raw string literal (R 4.0+) — it avoids
+every escape-character footgun around backslashes, quotes, and dollar signs:
+
+```r
+rmd <- r"(---
+title: Airbnb EDA
+output: word_document
+---
+
+# Section 1
+Text and `r inline` code, no escaping needed.
+)"
+writeLines(rmd, "~/Downloads/report.Rmd")
+rmarkdown::render("~/Downloads/report.Rmd", output_format = "word_document")
+```
+
+Notes:
+- Use forward slashes in paths (`"~/Downloads/..."`). Works cross-platform.
+- Never double-escape newlines (`\\n\\n`) — R treats those as literal
+  backslashes, not line breaks.
+- If `rmarkdown::render()` errors, catch it and print a useful message so
+  the user sees the real cause (often: pandoc missing from PATH).
+
 ### HTMLWIDGETS (plotly, leaflet, DT, etc.) — OPEN IN BROWSER, NOT VIEWER
 When the user asks for an interactive plot (3D, zoomable, hoverable), plotly
 is great. BUT: displaying a plotly widget in RStudio sends it to the Viewer
