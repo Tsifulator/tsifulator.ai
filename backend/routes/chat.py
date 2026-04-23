@@ -91,6 +91,110 @@ def _name_mentioned(name: str, message: str) -> bool:
     return re.search(pattern, message, flags=re.IGNORECASE) is not None
 
 
+# Intent keywords: if the user's message contains any of these AND the LLM's
+# proposed (non-existent) sheet name also contains one, we treat it as a
+# legitimate new-sheet request even if the user didn't name it exactly.
+_NEW_SHEET_INTENT = {
+    "dashboard", "summary", "analysis", "report", "overview",
+    "pivot", "chart", "graph", "tracker", "log",
+    "schedule", "breakdown", "comparison", "scorecard",
+}
+
+
+def _has_new_sheet_intent(name: str, message: str) -> bool:
+    """True if `name` and `message` share an intent keyword (case-insensitive)."""
+    if not name or not message:
+        return False
+    nlow = name.lower()
+    mlow = message.lower()
+    return any(kw in nlow and kw in mlow for kw in _NEW_SHEET_INTENT)
+
+
+_WRITE_TYPES_FOR_INTENT = {
+    "write_cell", "write_formula", "write_range",
+    "fill_down", "fill_right",
+    "clear_range", "format_range", "set_number_format",
+    "add_chart", "create_named_range",
+}
+
+
+def _auto_inject_add_sheets(
+    actions: list, context: dict, user_message: str = "",
+    min_writes_for_intent: int = 3,
+) -> tuple[list, list]:
+    """Auto-prepend add_sheet actions when the LLM writes to a new sheet without
+    explicitly creating it first. Runs BEFORE `_strip_phantom_sheet_actions`.
+
+    Qualification (any one triggers auto-creation):
+      1. The sheet name appears as a phrase in the user message.
+      2. The sheet name is on the allowlist.
+      3. Intent-keyword overlap: both the user message and the sheet name
+         contain a keyword like "dashboard"/"summary"/"analysis"/"report"
+         AND there are at least `min_writes_for_intent` writes targeting
+         that sheet (genuine populate-the-sheet intent, not a single-cell
+         hallucination).
+
+    Returns (actions_with_prepended_add_sheets, injected_canonical_names).
+    Idempotent — if an add_sheet for the target is already in the batch,
+    does nothing for that name.
+    """
+    existing = {
+        s.casefold(): s
+        for s in (context or {}).get("all_sheets") or []
+        if isinstance(s, str)
+    }
+    pending = set()
+    for a in actions or []:
+        if a.get("type") == "add_sheet":
+            name = ((a.get("payload") or {}).get("name") or "").strip()
+            if name:
+                pending.add(name.casefold())
+
+    # Count writes per non-existent sheet name
+    sheet_writes: dict[str, list] = {}
+    for a in actions or []:
+        t = a.get("type", "")
+        if t not in _WRITE_TYPES_FOR_INTENT:
+            continue
+        p = a.get("payload") or {}
+        if t == "create_named_range":
+            ref = p.get("reference") or ""
+            if "!" in ref:
+                sheet = ref.split("!", 1)[0].strip().strip("'")
+            else:
+                continue
+        else:
+            sheet = (p.get("sheet") or "").strip()
+        if not sheet:
+            continue
+        key = sheet.casefold()
+        if key in existing or key in pending:
+            continue
+        entry = sheet_writes.setdefault(key, [sheet, 0])
+        entry[1] += 1
+
+    if not sheet_writes:
+        return actions, []
+
+    injections: list = []
+    injected_names: list = []
+    for key, (canonical, count) in sheet_writes.items():
+        qualifies = (
+            _name_mentioned(canonical, user_message)
+            or key in _ADD_SHEET_ALLOWLIST
+            or (count >= min_writes_for_intent
+                and _has_new_sheet_intent(canonical, user_message))
+        )
+        if qualifies:
+            injections.append({"type": "add_sheet", "payload": {"name": canonical}})
+            injected_names.append(canonical)
+
+    if not injections:
+        return actions, []
+
+    return injections + list(actions or []), injected_names
+
+
 def _strip_phantom_sheet_actions(
     actions: list, context: dict, user_message: str = ""
 ) -> tuple[list, list]:
@@ -944,7 +1048,7 @@ async def debug_guards():
         "project_memory_available": True,
         "project_memory_enabled":   project_memory.is_enabled(),
         "project_memory_backend":   project_memory.backend_type(),  # 'supabase' or 'file'
-        "build_tag": "guards-2026-04-22c-memory-chip-truth",
+        "build_tag": "guards-2026-04-23a-auto-inject-add-sheet",
     }
 
 
@@ -1560,6 +1664,26 @@ async def chat(request: ChatRequest):
 
     # 7.5 Hybrid Router: split actions into add-in (fast) and computer-use (GUI)
     all_actions = result.get("actions", [])
+
+    # Auto-inject add_sheet: the LLM often emits write_cell/write_formula to a
+    # new sheet without remembering to add_sheet first (Office.js doesn't
+    # auto-create sheets, unlike Google Sheets). Rather than drop all the
+    # writes in the phantom-sheet guard, detect the "build-me-a-dashboard"
+    # pattern and prepend the missing add_sheet. Runs before both guards.
+    if app in ("excel", "google_sheets"):
+        all_actions, _injected_sheets = _auto_inject_add_sheets(
+            all_actions, request.context, user_message=request.message,
+        )
+        if _injected_sheets:
+            _inj_warn = (
+                f"\n\n✨ Auto-created {len(_injected_sheets)} new sheet(s) so your "
+                f"writes could land: **{', '.join(_injected_sheets)}**."
+            )
+            result["reply"] = (result.get("reply") or "") + _inj_warn
+            print(
+                f"[auto-inject] Prepended add_sheet for: {_injected_sheets}",
+                flush=True,
+            )
 
     # Lock guard: the LLM ignores "NEVER modify" prompts when the user explicitly
     # asks to change a locked cell. Strip those writes server-side so the add-in
