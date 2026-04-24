@@ -1056,7 +1056,7 @@ async def debug_guards():
         "project_memory_available": True,
         "project_memory_enabled":   project_memory.is_enabled(),
         "project_memory_backend":   project_memory.backend_type(),  # 'supabase' or 'file'
-        "build_tag": "guards-2026-04-23e-cross-app-force-action",
+        "build_tag": "guards-2026-04-24a-r-file-gen-guard",
     }
 
 
@@ -1684,6 +1684,47 @@ async def chat(request: ChatRequest):
 
     # 7.5 Hybrid Router: split actions into add-in (fast) and computer-use (GUI)
     all_actions = result.get("actions", [])
+
+    # RStudio file-generation guard: catch the "LLM shows the Rmd as chat
+    # fences but never actually writes or knits it" failure. Pattern: user
+    # asked for a report/Rmd/knittable doc, reply contains ```{r or ```r
+    # fences with Rmd-shaped content, but no run_r_code action calls both
+    # writeLines AND rmarkdown::render. If so, prepend a ⚠️ banner so the
+    # user sees the broken state immediately instead of opening Downloads
+    # and finding nothing.
+    if app == "rstudio":
+        _user_wants_report = bool(re.search(
+            r"\b(rmd|knit|knittable|consulting report|word doc|docx|"
+            r"pdf report|html report|report (like|similar|based on))\b",
+            request.message, flags=re.IGNORECASE,
+        ))
+        if _user_wants_report:
+            _code_combined = ""
+            for _a in result.get("actions") or []:
+                if _a.get("type") == "run_r_code":
+                    _code_combined += (_a.get("payload") or {}).get("code") or ""
+                    _code_combined += "\n"
+            _has_writelines = "writeLines" in _code_combined or "writeLines(" in _code_combined
+            _has_render     = "rmarkdown::render" in _code_combined or "render(" in _code_combined
+            _reply_has_fences = bool(re.search(
+                r"```\s*\{?r\b", result.get("reply") or "", flags=re.IGNORECASE,
+            ))
+            if _reply_has_fences and not (_has_writelines and _has_render):
+                _warn = (
+                    "\n\n⚠️ **Report was NOT generated on disk.** I showed R code "
+                    "in chat but didn't emit a single `run_r_code` action that "
+                    "calls both `writeLines(...)` and `rmarkdown::render(...)`. "
+                    "Fenced code blocks in chat are display-only — they never "
+                    "execute. Re-ask: *\"Actually generate the Rmd file and knit "
+                    "it in ONE run_r_code action — do not just show me the code.\"*"
+                )
+                result["reply"] = (result.get("reply") or "") + _warn
+                print(
+                    "[r-file-gen-guard] User asked for report but run_r_code "
+                    f"lacks writeLines+render (writeLines={_has_writelines}, "
+                    f"render={_has_render}, fences_in_reply={_reply_has_fences})",
+                    flush=True,
+                )
 
     # Auto-inject add_sheet: the LLM often emits write_cell/write_formula to a
     # new sheet without remembering to add_sheet first (Office.js doesn't
