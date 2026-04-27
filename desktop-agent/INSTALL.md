@@ -59,16 +59,25 @@ Open Excel with any workbook. In the tsifl panel, send:
 
 You should see Excel briefly take focus, the cells update, and the panel reply *"Goal Seek converged: C2 changed from X to Y..."*. No Terminal involvement at any point.
 
+## Using the global shortcut (`⌘⇧T`)
+
+The helper registers a global hotkey: **Cmd + Shift + T** anywhere on your Mac. Press it and a small prompt panel pops up — type a request, hit Send, the helper figures out what app you're focused on (Excel, R, Word, etc.) and routes the request appropriately.
+
+Example: you're reading a spec in Chrome, see a number that needs to go in your model. Hit `⌘⇧T` → type *"in cell B5 of Sheet1, set the value to 1.4 million and format as currency"* → tsifl switches focus to Excel and does it.
+
+If the hotkey doesn't trigger anything: you probably haven't granted Input Monitoring permission yet (see below).
+
 ## Permissions
 
-On first run, macOS will ask for two permissions. Grant both:
+On first run, macOS will ask for three permissions. Grant all:
 
 | Permission | Why | Where to grant |
 |---|---|---|
 | **Automation** (System Events / Microsoft Excel) | Lets the helper send AppleScript commands to Excel | Auto-prompted on first action |
 | **Login Items** management | Lets the helper register itself for auto-start | Auto-prompted on first launch dialog |
+| **Input Monitoring** | Lets the helper listen for the global ⌘⇧T hotkey | System Settings → Privacy & Security → Input Monitoring → enable `tsifl Helper` |
 
-If you accidentally deny: System Settings → Privacy & Security → fix individually.
+If you accidentally deny any: System Settings → Privacy & Security → fix individually. After granting Input Monitoring you must **quit and relaunch tsifl Helper** for the listener to attach.
 
 ## Troubleshooting
 

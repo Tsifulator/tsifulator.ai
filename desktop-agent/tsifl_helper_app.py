@@ -17,6 +17,7 @@ This is the user-facing wrapper — all the actual work happens in
 agent.py + excel_applescript.py, untouched.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -26,6 +27,26 @@ import webbrowser
 from pathlib import Path
 
 import rumps  # type: ignore[import-untyped]
+
+# pynput is used for the global Cmd+Shift+T hotkey. Imported lazily so that
+# a missing install doesn't kill the menu bar on startup — the hotkey just
+# becomes unavailable with a one-time warning. macOS requires Input
+# Monitoring permission for global key listening; users grant once in
+# System Settings → Privacy & Security → Input Monitoring.
+try:
+    from pynput import keyboard as _kb  # type: ignore[import-untyped]
+    _PYNPUT_AVAILABLE = True
+except Exception:
+    _kb = None  # type: ignore[assignment]
+    _PYNPUT_AVAILABLE = False
+
+# httpx for the panel → backend /chat round-trip
+try:
+    import httpx as _httpx  # type: ignore[import-untyped]
+    _HTTPX_AVAILABLE = True
+except Exception:
+    _httpx = None  # type: ignore[assignment]
+    _HTTPX_AVAILABLE = False
 
 
 # ── First-launch + Login Item registration ──────────────────────────────────
@@ -185,6 +206,191 @@ def _start_agent_thread():
     _agent_started_at = time.time()
 
 
+# ── Global shortcut (Cmd+Shift+T) → floating prompt panel ───────────────────
+# Pressing Cmd+Shift+T anywhere on the user's Mac pops a small modal panel
+# that takes a free-text prompt, sends it to the backend's /chat endpoint
+# (with the currently-frontmost app's context), and shows the reply.
+#
+# This is the v1 differentiator: tsifl is everywhere on your Mac, not just
+# in the Excel side panel. Cmd+Shift+T from Word, from Finder, from your
+# browser — all routes to the same agent.
+#
+# Permission requirement: pynput's global key listener requires Input
+# Monitoring permission on macOS Sonoma+. First launch triggers the
+# system prompt; once granted it sticks across reboots.
+
+# Ref to the rumps app — set by TsiflHelperApp.__init__ — so the hotkey
+# callback (which fires on a pynput thread) can dispatch UI to main thread.
+_app_ref: "TsiflHelperApp | None" = None
+
+
+def _detect_frontmost_app() -> str:
+    """Return the name of the macOS frontmost application via AppleScript.
+
+    Used to add context to the chat request so tsifl knows whether the user
+    is in Excel, Word, RStudio, etc. — and routes appropriately.
+    """
+    try:
+        result = subprocess.run(
+            ["osascript", "-e",
+             'tell application "System Events" to get name of first process whose frontmost is true'],
+            capture_output=True, text=True, timeout=3,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return "unknown"
+
+
+def _send_to_backend(message: str, frontmost_app: str) -> dict:
+    """POST the user's prompt to the backend /chat endpoint. Synchronous —
+    called from the main UI thread after the panel collects input. Returns
+    the parsed JSON response or an error-shaped dict."""
+    if not _HTTPX_AVAILABLE:
+        return {"reply": "Helper is missing httpx; reinstall the bundle.",
+                "actions": []}
+
+    backend = os.getenv(
+        "BACKEND_URL",
+        "https://focused-solace-production-6839.up.railway.app",
+    )
+    # Map macOS frontmost app names to backend's `app` field. Default to
+    # excel since that's the most common case; the addin handles routing.
+    app_map = {
+        "Microsoft Excel": "excel",
+        "RStudio": "rstudio",
+        "Microsoft PowerPoint": "powerpoint",
+        "Microsoft Word": "word",
+    }
+    app = app_map.get(frontmost_app, "shortcut")
+
+    body = {
+        "user_id": "shortcut-anon",  # TODO: thread real user_id once auth lands
+        "message": message,
+        "context": {
+            "app": app,
+            "source": "global-shortcut",
+            "frontmost_app": frontmost_app,
+        },
+    }
+    try:
+        with _httpx.Client(timeout=60) as client:
+            r = client.post(f"{backend.rstrip('/')}/chat/", json=body)
+            if r.status_code == 200:
+                return r.json()
+            return {"reply": f"Backend error ({r.status_code}): {r.text[:200]}",
+                    "actions": []}
+    except Exception as e:
+        return {"reply": f"Could not reach tsifl: {e}", "actions": []}
+
+
+def _show_shortcut_panel():
+    """Pop a modal input panel, capture the user's prompt, send to backend,
+    show the reply. Called on the rumps main thread (dispatched from the
+    pynput hotkey callback).
+
+    Uses rumps.Window — a native macOS NSAlert-style dialog. Modal, but
+    that's fine for a one-shot shortcut. Future polish: replace with a
+    non-modal NSPanel for that Spotlight-style float.
+    """
+    frontmost = _detect_frontmost_app()
+    prompt_label = f"Working in {frontmost}" if frontmost not in ("unknown",) else "What can tsifl do?"
+
+    win = rumps.Window(
+        title="tsifl",
+        message=prompt_label,
+        ok="Send",
+        cancel="Cancel",
+        dimensions=(440, 80),
+    )
+    response = win.run()
+    if not response.clicked or not response.text.strip():
+        return
+
+    # Show a brief "working" indicator, then make the call. Doing this on
+    # the UI thread keeps it simple — the user already paused for the
+    # modal so a few-second sync request is acceptable.
+    try:
+        result = _send_to_backend(response.text.strip(), frontmost)
+    except Exception as e:
+        result = {"reply": f"Request failed: {e}", "actions": []}
+
+    reply_text = result.get("reply") or "(no reply)"
+    actions = result.get("actions") or []
+    cu_session = result.get("cu_session_id")
+
+    # Build the response window message. If actions were emitted, mention
+    # they're queued; the addin or agent will execute them.
+    parts = [reply_text]
+    if actions:
+        types = ", ".join(sorted({a.get("type", "?") for a in actions}))
+        parts.append(f"\n\n→ {len(actions)} action(s) queued: {types}")
+    if cu_session:
+        parts.append(f"\n\n→ Helper session: {cu_session}")
+    final = "\n".join(parts)
+
+    rumps.alert(
+        title="tsifl",
+        message=final[:1500],  # macOS alerts truncate hard, keep it sane
+        ok="OK",
+    )
+
+
+def _on_shortcut_pressed():
+    """pynput callback for Cmd+Shift+T. Runs on a pynput thread; dispatches
+    the panel UI to the rumps main thread via NSObject.performSelector."""
+    if _app_ref is None:
+        return
+    try:
+        # rumps timers are the cleanest way to bounce work onto the main
+        # thread from an arbitrary background thread. We schedule a one-shot
+        # timer that fires immediately, runs the panel, then cancels itself.
+        timer_holder: list = [None]
+        def _run_once(timer):
+            timer.stop()
+            try:
+                _show_shortcut_panel()
+            except Exception as e:
+                sys.stderr.write(f"[tsifl-helper] shortcut panel error: {e}\n")
+        t = rumps.Timer(_run_once, 0.05)
+        timer_holder[0] = t
+        t.start()
+    except Exception as e:
+        sys.stderr.write(f"[tsifl-helper] shortcut dispatch failed: {e}\n")
+
+
+_hotkey_listener: "object | None" = None
+
+
+def _start_hotkey_listener() -> bool:
+    """Spawn the pynput global hotkey listener. Returns True on success.
+
+    Failure modes (all non-fatal):
+      - pynput not installed → returns False, logs warning
+      - Input Monitoring permission missing → listener fails silently; user
+        sees nothing happen on Cmd+Shift+T. They'll need to grant it in
+        System Settings then relaunch.
+    """
+    global _hotkey_listener
+    if not _PYNPUT_AVAILABLE:
+        sys.stderr.write("[tsifl-helper] pynput not available, hotkey disabled\n")
+        return False
+    try:
+        # GlobalHotKeys takes a dict {keycombo_str: callback}. The string
+        # form '<cmd>+<shift>+t' works on macOS — pynput maps <cmd> to the
+        # Command key automatically.
+        listener = _kb.GlobalHotKeys({
+            "<cmd>+<shift>+t": _on_shortcut_pressed,
+        })
+        listener.start()
+        _hotkey_listener = listener
+        return True
+    except Exception as e:
+        sys.stderr.write(f"[tsifl-helper] hotkey listener failed to start: {e}\n")
+        return False
+
+
 # ── rumps menu bar app ──────────────────────────────────────────────────────
 
 class TsiflHelperApp(rumps.App):
@@ -217,6 +423,7 @@ class TsiflHelperApp(rumps.App):
         self.menu = [
             rumps.MenuItem("Status: starting...", callback=None),
             None,  # separator
+            rumps.MenuItem("Open with ⌘⇧T", callback=self.on_open_shortcut),
             rumps.MenuItem("Open Logs", callback=self.on_open_logs),
             rumps.MenuItem("Anthropic Console", callback=self.on_open_console),
             None,
@@ -225,6 +432,19 @@ class TsiflHelperApp(rumps.App):
 
         # Kick off the agent right after the menu bar app is up
         _start_agent_thread()
+
+        # Register the global Cmd+Shift+T hotkey. Failure is non-fatal —
+        # the rest of the app still works, the user just doesn't get the
+        # global shortcut until they grant Input Monitoring permission and
+        # relaunch.
+        global _app_ref
+        _app_ref = self
+        _hotkey_ok = _start_hotkey_listener()
+        if not _hotkey_ok:
+            sys.stderr.write(
+                "[tsifl-helper] global ⌘⇧T disabled. Grant Input Monitoring "
+                "in System Settings → Privacy & Security and relaunch.\n"
+            )
 
     @staticmethod
     def _resolve_icon_path() -> str | None:
@@ -274,6 +494,15 @@ class TsiflHelperApp(rumps.App):
             sys.stderr.write(f"[tsifl-helper] onboarding dialog failed: {e}\n")
 
     # ── Menu callbacks ──────────────────────────────────────────────────────
+
+    def on_open_shortcut(self, _):
+        """Open the prompt panel from the menu (mirror of Cmd+Shift+T).
+        Useful as a fallback when the global hotkey isn't working yet
+        (Input Monitoring permission not granted, etc)."""
+        try:
+            _show_shortcut_panel()
+        except Exception as e:
+            rumps.alert(title="tsifl", message=f"Couldn't open panel: {e}")
 
     def on_open_logs(self, _):
         """Open the agent's rotating log file in the user's default app."""

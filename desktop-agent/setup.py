@@ -67,6 +67,13 @@ OPTIONS = {
             "needs to interact with Excel's UI directly. Most operations "
             "use AppleScript and don't require this."
         ),
+        # Required for the Cmd+Shift+T global hotkey. macOS Sonoma+ shows
+        # this string when prompting the user to grant Input Monitoring.
+        "NSInputMonitoringUsageDescription": (
+            "tsifl Helper listens for Cmd+Shift+T anywhere on your Mac so "
+            "you can summon the prompt panel from any app. The listener "
+            "ignores all other keystrokes and never reads what you type."
+        ),
         # Minimum macOS version. py2app handles the actual SDK check.
         "LSMinimumSystemVersion":  "12.0",
     },
@@ -80,6 +87,7 @@ OPTIONS = {
         "xlwings",
         "PIL",
         "appscript",     # xlwings's Mac backend
+        "pynput",        # global Cmd+Shift+T hotkey
     ],
     # Modules we explicitly include even if py2app doesn't auto-detect them.
     "includes": [
