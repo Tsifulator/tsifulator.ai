@@ -241,7 +241,18 @@ def _get_xlwings():
 
 
 def do_goal_seek(set_cell: str, to_value, changing_cell: str, sheet: str = ""):
-    """Goal Seek via xlwings — no GUI interaction."""
+    """Goal Seek via xlwings — no GUI interaction.
+
+    Hardening:
+      1. DisplayAlerts=False during Goal Seek so VBA error dialogs don't
+         pop up 100+ times when iterations hit DIV/0 or type mismatches.
+         Restored in a finally block. This was the '300 popups' bug.
+      2. Validate changing_cell — must contain a number, not a formula
+         (Goal Seek silently skips formula cells on Mac), and must not
+         be the same as set_cell.
+      3. Capture before/after values so we can report what changed.
+      4. EnableEvents=False to skip on-change handlers during iteration.
+    """
     steps = []
 
     app, wb, ws = _get_xlwings()
@@ -253,24 +264,130 @@ def do_goal_seek(set_cell: str, to_value, changing_cell: str, sheet: str = ""):
 
     check_stop()
 
+    # ── Validate inputs before touching the workbook ────────────────────────
+    if not set_cell or not changing_cell:
+        return {"status": "failed",
+                "error": "Both set_cell and changing_cell are required"}
+
+    if set_cell.replace("$", "").upper() == changing_cell.replace("$", "").upper():
+        return {"status": "failed",
+                "error": f"set_cell ({set_cell}) and changing_cell ({changing_cell}) are the same — Goal Seek requires distinct cells"}
+
     try:
         goal_val = float(to_value)
     except (ValueError, TypeError):
-        goal_val = to_value
+        return {"status": "failed",
+                "error": f"to_value must be numeric, got {to_value!r}"}
+
+    # The changing_cell must hold a NUMBER, not a formula. Excel for Mac's
+    # Goal Seek silently no-ops on a formula cell, which leaves the user
+    # confused about why nothing happened.
+    try:
+        chg_range = ws.range(changing_cell)
+        chg_formula = chg_range.formula
+        if isinstance(chg_formula, str) and chg_formula.startswith("="):
+            return {
+                "status": "failed",
+                "error": (f"changing_cell {changing_cell} contains a formula "
+                          f"({chg_formula!r}). Goal Seek requires a numeric "
+                          f"input cell, not a calculated cell. Pick the cell "
+                          f"that holds the input value (e.g. an interest rate "
+                          f"or quantity), not the result."),
+            }
+        before_val = chg_range.value
+    except Exception as e:
+        return {"status": "failed",
+                "error": f"Could not read changing_cell {changing_cell}: {e}"}
+
+    # Read the target cell's current value too — useful for the success report
+    try:
+        set_before = ws.range(set_cell).value
+    except Exception:
+        set_before = None
+
+    # ── Suppress VBA dialogs + recalc events during iteration ──────────────
+    # This is the fix for the '300 type-mismatch popups' bug. When Goal Seek
+    # iterates through extreme values, formula cells can transiently produce
+    # #DIV/0! or other errors that VBA pops up as modal dialogs. Setting
+    # DisplayAlerts=False routes those to silent logged failures instead.
+    prev_display_alerts = None
+    prev_enable_events = None
+    try:
+        prev_display_alerts = app.api.display_alerts
+        app.api.display_alerts = False
+    except Exception:
+        pass
+    try:
+        prev_enable_events = app.api.enable_events
+        app.api.enable_events = False
+    except Exception:
+        pass
 
     try:
-        result = ws.range(set_cell).api.goal_seek(
-            goal=goal_val,
-            changing_cell=ws.range(changing_cell).api,
-        )
-        steps.append(f"Goal Seek: {set_cell}={to_value} by changing {changing_cell}")
-        new_val = ws.range(set_cell).value
-        steps.append(f"Result: {set_cell} = {new_val}")
-    except Exception as e:
-        steps.append(f"FAILED: {e}")
-        return {"status": "failed", "error": str(e), "steps": steps}
+        check_stop()
+        try:
+            ws.range(set_cell).api.goal_seek(
+                goal=goal_val,
+                changing_cell=ws.range(changing_cell).api,
+            )
+        except Exception as e:
+            return {
+                "status": "failed",
+                "error": f"Goal Seek call failed: {e}",
+                "steps": steps,
+            }
 
-    return {"status": "completed", "steps": steps}
+        # Capture results
+        try:
+            chg_after = ws.range(changing_cell).value
+            set_after = ws.range(set_cell).value
+        except Exception:
+            chg_after = None
+            set_after = None
+
+        # Sanity check: did the changing_cell actually move? If before==after,
+        # Goal Seek silently failed (non-convergent or hit a NaN). Report
+        # cleanly instead of leaving the user confused.
+        moved = (
+            isinstance(before_val, (int, float))
+            and isinstance(chg_after, (int, float))
+            and abs(before_val - chg_after) > 1e-9
+        )
+        if not moved:
+            return {
+                "status": "failed",
+                "error": (f"Goal Seek did not converge. {changing_cell} stayed "
+                          f"at {before_val!r}. Check that {set_cell}'s formula "
+                          f"actually depends on {changing_cell}, and that the "
+                          f"target value ({goal_val}) is reachable."),
+                "steps": steps,
+            }
+
+        steps.append(
+            f"Goal Seek: {set_cell}: {set_before} → {set_after} "
+            f"by changing {changing_cell}: {before_val} → {chg_after}"
+        )
+        return {
+            "status": "completed",
+            "message": (f"Goal Seek converged: {changing_cell} changed from "
+                        f"{before_val} to {chg_after}, so {set_cell} = {set_after} "
+                        f"(target was {goal_val})"),
+            "steps": steps,
+        }
+
+    finally:
+        # ALWAYS restore Excel's display/event settings, even on exception —
+        # otherwise the user is stuck with no dialogs the rest of the session
+        try:
+            if prev_display_alerts is not None:
+                app.api.display_alerts = prev_display_alerts
+        except Exception:
+            pass
+        try:
+            if prev_enable_events is not None:
+                app.api.enable_events = prev_enable_events
+        except Exception:
+            pass
 
 
 def do_scenario_manager(name: str, changing_cells: str, values: list = None,

@@ -49,6 +49,14 @@ COMPUTER_USE_ACTIONS = {
     "smartart_diagram",          # Process/cycle/list flow diagrams
     "pivot_table",               # PivotTable creation with rows/cols/values
     "conditional_format_advanced",  # Color scales, data bars, icon sets, top-N
+    # goal_seek routed here as of 2026-04-26: SimNet practice workbooks have
+    # VBA Worksheet_Change handlers that fire on every iteration of the addin's
+    # JS binary search → 100+ "Type mismatch" dialog popups per Goal Seek.
+    # Office.js can't disable VBA events. xlwings CAN (EnableEvents=False),
+    # so the desktop agent is the reliable path for any Goal Seek on a
+    # macro-enabled workbook. Brief Excel focus during the call — better
+    # than 300 popups.
+    "goal_seek",
 }
 
 # Actions handled by the Office.js add-in (fast path)
@@ -60,7 +68,6 @@ ADDIN_ACTIONS = {
     "add_sheet", "clear_range", "freeze_panes",
     "add_chart", "add_data_validation", "add_conditional_format",
     "import_csv", "save_workbook",
-    "goal_seek",             # Iterative solver in JavaScript
     "run_toolpak",           # Descriptive stats via formulas
 }
 
