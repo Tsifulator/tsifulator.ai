@@ -222,11 +222,21 @@ def _strip_phantom_sheet_actions(
     Returns (kept_actions, dropped_sheet_names). Matches case-insensitively
     and normalizes the canonical casing on kept actions.
     """
-    existing = {
-        s.casefold(): s
-        for s in (context or {}).get("all_sheets") or []
-        if isinstance(s, str)
-    }
+    # Build the truth-set of existing sheet names. Primary source is
+    # context.all_sheets; if that's empty (frontend race / context-build bug),
+    # fall back to names from sheet_summaries so we don't false-positive-drop
+    # the user's actions over our own context glitch.
+    _ctx = context or {}
+    _names_seq: list[str] = []
+    _all = _ctx.get("all_sheets") or []
+    if isinstance(_all, list):
+        _names_seq.extend(s for s in _all if isinstance(s, str))
+    if not _names_seq:
+        for _ss in (_ctx.get("sheet_summaries") or []):
+            if isinstance(_ss, dict) and isinstance(_ss.get("name"), str):
+                _names_seq.append(_ss["name"])
+
+    existing = {s.casefold(): s for s in _names_seq if s}
     # Names the caller has already vetted (e.g. auto-injected add_sheets that
     # passed intent-overlap checks) — treat as if they were in context.all_sheets.
     pre_approved_keys = {s.casefold() for s in (pre_approved or set())}
@@ -262,9 +272,21 @@ def _strip_phantom_sheet_actions(
             # Phantom sheet creation — drop and report.
             dropped_add_sheet_names.append(name)
 
-    # If we have no context AND no user message, we can't validate — pass through.
-    if not existing and not user_message:
-        return actions, []
+    # Fail-safe: if we have NO sheet truth-set (no all_sheets, no
+    # sheet_summaries), we cannot validate. Dropping the actions punishes
+    # the user for OUR context-detection failure — instead, pass non-add-sheet
+    # actions through and let the addin try to execute. If a sheet is genuinely
+    # missing, Office.js raises a clean error per-action that we surface
+    # individually. Add-sheets that we already vetted via user_message /
+    # allowlist stay kept; phantom add_sheets stay dropped.
+    if not existing:
+        print(
+            f"[phantom-sheet] no all_sheets/sheet_summaries in context — "
+            f"passing {len(non_add_actions)} non-add-sheet action(s) through. "
+            f"Context keys: {list(_ctx.keys()) if _ctx else []}",
+            flush=True,
+        )
+        return kept_add_sheets + non_add_actions, dropped_add_sheet_names
 
     kept: list = kept_add_sheets[:]
     dropped: list = dropped_add_sheet_names[:]
@@ -1063,7 +1085,7 @@ async def debug_guards():
         "project_memory_available": True,
         "project_memory_enabled":   project_memory.is_enabled(),
         "project_memory_backend":   project_memory.backend_type(),  # 'supabase' or 'file'
-        "build_tag": "guards-2026-04-26b-no-two-phase",
+        "build_tag": "guards-2026-04-26c-failsafe-phantom-deemoji",
     }
 
 
@@ -1718,7 +1740,7 @@ async def chat(request: ChatRequest):
             ))
             if _reply_has_fences and not (_has_writelines and _has_render):
                 _warn = (
-                    "\n\n⚠️ **Report was NOT generated on disk.** I showed R code "
+                    "\n\nNote: the report was NOT generated on disk. I showed R code "
                     "in chat but didn't emit a single `run_r_code` action that "
                     "calls both `writeLines(...)` and `rmarkdown::render(...)`. "
                     "Fenced code blocks in chat are display-only — they never "
@@ -1745,7 +1767,7 @@ async def chat(request: ChatRequest):
         )
         if _injected_sheets:
             _inj_warn = (
-                f"\n\n✨ Auto-created {len(_injected_sheets)} new sheet(s) so your "
+                f"\n\nAuto-created {len(_injected_sheets)} new sheet(s) so your "
                 f"writes could land: **{', '.join(_injected_sheets)}**."
             )
             result["reply"] = (result.get("reply") or "") + _inj_warn
@@ -1765,7 +1787,7 @@ async def chat(request: ChatRequest):
         if _locked_dropped:
             _locked_uniq = sorted(set(_locked_dropped))
             _lock_warn = (
-                f"\n\n🔒 Refused to modify {len(_locked_dropped)} locked cell(s): "
+                f"\n\nRefused to modify {len(_locked_dropped)} locked cell(s): "
                 f"**{', '.join(_locked_uniq)}**. Unlock in the Memory panel first, "
                 "then re-send the request."
             )
@@ -1786,23 +1808,29 @@ async def chat(request: ChatRequest):
         )
         if _dropped_sheets:
             _real = request.context.get("all_sheets") or []
+            # Fall back to sheet_summaries names if all_sheets is empty (matches
+            # the truth-set we build inside _strip_phantom_sheet_actions).
+            if not _real:
+                _real = [
+                    ss["name"]
+                    for ss in (request.context.get("sheet_summaries") or [])
+                    if isinstance(ss, dict) and isinstance(ss.get("name"), str)
+                ]
             _dropped_uniq = sorted(set(_dropped_sheets))
             if _real:
                 # Normal case — we know the workbook tabs, list them so the
                 # user can rephrase against a real one.
                 _warn = (
-                    f"\n\nSkipped {len(_dropped_sheets)} action(s) targeting sheets "
+                    f"\n\nNote: skipped {len(_dropped_sheets)} action(s) targeting sheets "
                     f"that don't exist in this workbook: {', '.join(_dropped_uniq)}. "
                     f"Your actual tabs are: {', '.join(_real)}. "
                     "Rephrase using one of those, or ask me to create the missing tab first."
                 )
             else:
                 # Context-build failed — we don't know the workbook structure.
-                # Saying "(none detected)" reads as broken; give the user a real
-                # next step instead.
                 _warn = (
-                    f"\n\nSkipped {len(_dropped_sheets)} action(s) targeting sheets "
-                    f"I couldn't verify exist: {', '.join(_dropped_uniq)}. "
+                    f"\n\nNote: skipped {len(_dropped_sheets)} action(s) for sheet(s) "
+                    f"I couldn't verify: {', '.join(_dropped_uniq)}. "
                     "Refresh the taskpane (right-click the panel → Reload) so I can "
                     "re-read your workbook tabs, then resend."
                 )
@@ -1810,7 +1838,10 @@ async def chat(request: ChatRequest):
             result["actions"] = all_actions
             print(
                 f"[phantom-sheet] Dropped {len(_dropped_sheets)} action(s) "
-                f"for non-existent sheet(s): {_dropped_uniq}",
+                f"for non-existent sheet(s): {_dropped_uniq}. "
+                f"all_sheets={request.context.get('all_sheets')!r}, "
+                f"sheet_summaries names="
+                f"{[ss.get('name') for ss in (request.context.get('sheet_summaries') or []) if isinstance(ss, dict)]!r}",
                 flush=True,
             )
 

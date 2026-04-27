@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v69";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v70";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -1080,7 +1080,7 @@ async function handleSubmit() {
         try { detail = await response.text(); } catch (_2) {}
       }
       hideTypingIndicator();
-      appendMessage("assistant", `⚠️ ${detail}`);
+      appendMessage("assistant", `Error: ${detail}`);
       setStatus("Error");
       return;
     }
@@ -1095,9 +1095,16 @@ async function handleSubmit() {
 
     if (data.reply && data.reply.trim()) {
       let reply = data.reply;
-      if (!willExecute && claimsActionCompletion(reply)) {
+      // Don't double-warn: if the server already appended a phantom-sheet,
+      // locked-cell, or "report not generated" note, that's a more specific
+      // explanation than the generic hallucination banner — skip the banner.
+      const serverAlreadyExplained =
+        /Note: skipped \d+ action/.test(reply) ||
+        /Refused to modify \d+ locked/.test(reply) ||
+        /Note: the report was NOT generated/.test(reply);
+      if (!willExecute && claimsActionCompletion(reply) && !serverAlreadyExplained) {
         reply =
-          "⚠️ **Nothing was actually changed in the spreadsheet.** " +
+          "**Note: nothing was actually changed in the spreadsheet.** " +
           "The assistant claimed to have done something, but no action was executed. " +
           "Try rephrasing your request with specifics (cell range, sheet name, exact values), " +
           "or if you asked for something that needs the desktop agent, start it with:\n\n" +
@@ -1113,8 +1120,8 @@ async function handleSubmit() {
       const meta = {
         memoryCount:      data.memory_completed_count || 0,
         memoryOverrides:  data.memory_overrides_count || 0,
-        lockBlocked:      (reply.match(/🔒 Refused to modify (\d+) locked/)?.[1] | 0) || 0,
-        phantomDropped:   (reply.match(/⚠️ Skipped (\d+) action/)?.[1] | 0) || 0,
+        lockBlocked:      (reply.match(/Refused to modify (\d+) locked/)?.[1] | 0) || 0,
+        phantomDropped:   (reply.match(/Note: skipped (\d+) action/)?.[1] | 0) || 0,
       };
       appendMessage("assistant", reply, undefined, meta);
     }
@@ -3020,15 +3027,15 @@ function appendMessage(role, text, images, meta) {
   //   local · ollama   → reply came from local model, zero API cost
   if (role === "assistant" && meta) {
     const parts = [];
-    if (meta.ollama)          parts.push(`💻 local · ollama · ${meta.ollama}`);
-    if (meta.lockBlocked)     parts.push(`🔒 ${meta.lockBlocked} blocked by lock`);
-    if (meta.phantomDropped)  parts.push(`⚠️ ${meta.phantomDropped} phantom dropped`);
+    if (meta.ollama)          parts.push(`local · ollama · ${meta.ollama}`);
+    if (meta.lockBlocked)     parts.push(`${meta.lockBlocked} blocked by lock`);
+    if (meta.phantomDropped)  parts.push(`${meta.phantomDropped} phantom dropped`);
     if (meta.memoryCount) {
       const n = meta.memoryCount;
       const over = meta.memoryOverrides || 0;
       const label = over > 0
-        ? `🧠 memory · ${n} entr${n === 1 ? "y" : "ies"} · ${over} overridden`
-        : `🧠 memory · ${n} entr${n === 1 ? "y" : "ies"} respected`;
+        ? `memory · ${n} entr${n === 1 ? "y" : "ies"} · ${over} overridden`
+        : `memory · ${n} entr${n === 1 ? "y" : "ies"} respected`;
       parts.push(label);
     }
     if (parts.length) {
