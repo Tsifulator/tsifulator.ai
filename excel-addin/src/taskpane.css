@@ -804,7 +804,53 @@ body {
   padding: 0;
 }
 
-/* Image badge in chat messages */
+/* Compact attach-chip row inside chat messages — replaces the previous
+   inline 280×180 thumbnail. Each attachment shows as a tiny preview +
+   filename in a chip; clicking opens the full image in an overlay modal.
+   Designed to keep the chat scannable in the side panel. */
+.attach-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 4px;
+  background: var(--surface-2, #F8FAFC);
+  border: 1px solid var(--border, #E2E8F0);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  max-width: 220px;
+}
+
+.attach-chip:hover {
+  background: var(--blue-dim, #E6F0FA);
+  border-color: var(--blue, #0D5EAF);
+}
+
+.attach-thumb {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.attach-label {
+  font-size: 11px;
+  color: var(--ink-soft, #475467);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
+/* Image badge in chat messages — kept as a fallback when canvas rendering fails */
 .image-badge {
   display: inline-block;
   background: var(--blue-dim);

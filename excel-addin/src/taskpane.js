@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v78";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v79";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -3149,7 +3149,13 @@ function appendMessage(role, text, images, meta) {
   //   local · ollama   → reply came from local model, zero API cost
   if (role === "assistant" && meta) {
     const parts = [];
-    if (meta.ollama)          parts.push(`local · ollama · ${meta.ollama}`);
+    // Note: the previous `local · ollama · gemma3:latest` chip was removed
+    // — it looked unprofessional in the chat UI. Backend model selection
+    // is an implementation detail the user shouldn't see. We still log
+    // ollama usage to the browser console for dev debugging.
+    if (meta.ollama) {
+      try { console.info(`[tsifl] reply via local ollama (${meta.ollama})`); } catch (_) {}
+    }
     if (meta.lockBlocked)     parts.push(`${meta.lockBlocked} blocked by lock`);
     if (meta.phantomDropped)  parts.push(`${meta.phantomDropped} phantom dropped`);
     if (meta.memoryCount) {
@@ -3177,14 +3183,62 @@ function appendMessage(role, text, images, meta) {
   }
   div.appendChild(textNode);
 
-  // Show image thumbnails in user messages (like Claude's inline preview)
+  // Show image attachments in user messages — compact line with a small
+  // thumbnail + filename, click to expand to full size in a modal.
+  // Previous version rendered a 280×180 thumbnail directly inline, which
+  // dominated the side panel. The compact form keeps the chat scannable.
   if (images && images.length > 0) {
+    const attachRow = document.createElement("div");
+    attachRow.className = "attach-row";  // styled in CSS
+    div.appendChild(attachRow);
+
+    for (const img of images) {
+      const isImage = (img.media_type || "").startsWith("image/");
+      const filename = img.file_name || (isImage ? "Image" : "File");
+
+      const chip = document.createElement("div");
+      chip.className = "attach-chip";
+      chip.title = "Click to view full size";
+
+      // Tiny preview: 32x32 for images, file-extension badge for docs
+      const thumb = document.createElement("div");
+      thumb.className = "attach-thumb";
+
+      if (isImage) {
+        renderImageToCanvas(img.data, img.media_type, 32, 32).then(canvas => {
+          if (canvas) {
+            canvas.style.cssText = "display:block;width:100%;height:100%;border-radius:3px;";
+            thumb.appendChild(canvas);
+          } else {
+            thumb.textContent = "IMG";
+          }
+        });
+        // Click to expand — opens the full image in a centered modal overlay
+        chip.addEventListener("click", () => _openImageModal(img));
+      } else {
+        const ext = filename.includes(".") ? filename.split(".").pop().toUpperCase() : "FILE";
+        thumb.textContent = ext;
+        thumb.style.cssText += "display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#0D5EAF;background:#F1F5F9;";
+      }
+
+      const label = document.createElement("span");
+      label.className = "attach-label";
+      label.textContent = filename;
+
+      chip.appendChild(thumb);
+      chip.appendChild(label);
+      attachRow.appendChild(chip);
+    }
+  }
+
+  // Skip the legacy inline-thumbnail loop below — replaced by the compact
+  // row above. The original code is kept intact for the catch block which
+  // we no longer reach, but if reached, falls back to badge.
+  if (false && images && images.length > 0) {
     for (const img of images) {
       const container = document.createElement("div");
       container.style.cssText = "margin-top:8px;";
       div.appendChild(container);
-
-      // Render to canvas (bypasses CSP restrictions on img src in Office.js webview)
       renderImageToCanvas(img.data, img.media_type, 280, 180).then(canvas => {
         if (canvas) {
           canvas.style.borderRadius = "8px";
@@ -3194,10 +3248,9 @@ function appendMessage(role, text, images, meta) {
           canvas.style.boxShadow = "0 1px 3px rgba(0,0,0,0.08)";
           container.appendChild(canvas);
         } else {
-          // Fallback: show badge if canvas fails
           const badge = document.createElement("div");
           badge.className = "image-badge";
-          badge.textContent = `📷 Image attached`;
+          badge.textContent = `Image attached`;
           container.appendChild(badge);
         }
       }).catch(() => {
@@ -3211,6 +3264,47 @@ function appendMessage(role, text, images, meta) {
   history.appendChild(div);
   history.scrollTop = history.scrollHeight;
 }
+
+// ── Image modal viewer ──────────────────────────────────────────────────────
+// Click on a compact attach-chip → full-size image in a centered overlay.
+// Keeps the chat scannable while letting the user inspect attachments.
+
+function _openImageModal(img) {
+  // Don't stack overlays — close any existing one first
+  const existing = document.getElementById("image-modal-overlay");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "image-modal-overlay";
+  overlay.style.cssText = (
+    "position:fixed;inset:0;background:rgba(0,0,0,0.65);" +
+    "display:flex;align-items:center;justify-content:center;" +
+    "z-index:300;cursor:zoom-out;"
+  );
+
+  // Render the full image to a canvas — same CSP-safe path we use elsewhere
+  renderImageToCanvas(img.data, img.media_type, 1600, 1200).then(canvas => {
+    if (!canvas) return;
+    canvas.style.cssText = (
+      "max-width:90vw;max-height:85vh;border-radius:8px;" +
+      "box-shadow:0 12px 32px rgba(0,0,0,0.5);background:#FFF;"
+    );
+    overlay.appendChild(canvas);
+  });
+
+  // Close on click anywhere or Escape
+  overlay.addEventListener("click", () => overlay.remove());
+  const escHandler = (e) => {
+    if (e.key === "Escape") {
+      overlay.remove();
+      document.removeEventListener("keydown", escHandler);
+    }
+  };
+  document.addEventListener("keydown", escHandler);
+
+  document.body.appendChild(overlay);
+}
+
 
 // ── Thinking bubble with rotating punchlines ─────────────────────────────────
 const _thinkingMessages = {
