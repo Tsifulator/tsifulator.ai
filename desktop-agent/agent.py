@@ -32,6 +32,8 @@ import sys
 import subprocess
 import tempfile
 import threading
+import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -47,6 +49,44 @@ CU_MODEL = "claude-sonnet-4-20250514"
 # Safety: disable pyautogui failsafe (move mouse to corner to abort)
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE = 0.3  # small delay between actions
+
+# ── Persistent logging ──────────────────────────────────────────────────────
+# Writes to both stdout (preserves existing "[agent] ..." UX) AND a rotating
+# log file at ~/Library/Logs/tsifl-agent.log so we have post-hoc debug trails
+# when the agent is bundled as a .app and stdout disappears.
+LOG_DIR = Path.home() / "Library" / "Logs"
+try:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_FILE = LOG_DIR / "tsifl-agent.log"
+except Exception:
+    # Fallback if home dir isn't writable for some weird reason
+    LOG_FILE = Path(tempfile.gettempdir()) / "tsifl-agent.log"
+
+logger = logging.getLogger("tsifl-agent")
+logger.setLevel(logging.INFO)
+logger.propagate = False
+if not logger.handlers:  # idempotent — survive double-import
+    _console = logging.StreamHandler(sys.stdout)
+    _console.setFormatter(logging.Formatter("[agent] %(message)s"))
+    logger.addHandler(_console)
+
+    try:
+        _file = RotatingFileHandler(
+            LOG_FILE, maxBytes=2_000_000, backupCount=3, encoding="utf-8"
+        )
+        _file.setFormatter(logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        ))
+        logger.addHandler(_file)
+    except Exception as _log_err:
+        # Don't crash the agent if the file logger can't open — console is enough
+        print(f"[agent] WARN: could not open {LOG_FILE}: {_log_err}", file=sys.stderr)
+
+
+def _log(msg: str, level: str = "info") -> None:
+    """Single entry point for agent logging. Use this instead of print()."""
+    getattr(logger, level, logger.info)(msg)
 
 # Screen dimensions (will be detected)
 SCREEN_W = 0
@@ -68,7 +108,7 @@ def take_screenshot() -> str:
         )
         img = Image.open(tmp)
     except Exception as e:
-        print(f"[agent] screencapture failed: {e}, trying pyautogui...")
+        _log(f"screencapture failed: {e}, trying pyautogui...")
         img = pyautogui.screenshot()
     finally:
         try:
@@ -91,7 +131,7 @@ def take_screenshot() -> str:
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=70)
     data = buf.getvalue()
-    print(f"[agent] Screenshot: {img.width}x{img.height}, {len(data)//1024}KB")
+    _log(f"Screenshot: {img.width}x{img.height}, {len(data)//1024}KB")
     return base64.standard_b64encode(data).decode("utf-8")
 
 
@@ -105,7 +145,7 @@ def get_screen_size():
     except Exception:
         SCREEN_W = 1920
         SCREEN_H = 1080
-    print(f"[agent] Screen size: {SCREEN_W}x{SCREEN_H}")
+    _log(f"Screen size: {SCREEN_W}x{SCREEN_H}")
 
 
 def _scale_coord(coord, img_w, img_h):
@@ -207,38 +247,116 @@ def execute_computer_action(action: str, input_data: dict) -> str:
             return "Waited"
 
         else:
-            print(f"[agent] Unknown action: {action}")
+            _log(f"Unknown action: {action}")
             return f"Unknown action: {action}"
 
     except Exception as e:
-        print(f"[agent] Action '{action}' failed: {e}")
+        _log(f"Action '{action}' failed: {e}")
         return f"Action failed: {e}"
 
 
-def run_computer_use_loop(instructions: str, session_id: str):
+# ── CU loop tuning constants ────────────────────────────────────────────────
+# Lowered from 50 → 12. Stuck tasks now fail in ~2 minutes instead of 10+,
+# saving ~$6 per stuck task. The vast majority of legitimate Excel ribbon
+# tasks finish in 4-8 iterations; 12 leaves headroom without burning money.
+CU_MAX_ITERATIONS = 12
+
+# Wall-clock timeout per CU task. The model can take 5-15 seconds per
+# iteration, so 90s ≈ 6-12 iterations. Combined with CU_MAX_ITERATIONS this
+# gives a hard upper bound regardless of which limit fires first.
+CU_TASK_TIMEOUT_SECONDS = 90
+
+# When Claude clicks the same coordinate (within ±10px) this many times in a
+# row with no resolution, we abort. This is the smoking gun for "model is
+# confused and looping" — it almost never recovers from that state.
+CU_REPEATED_CLICK_LIMIT = 3
+
+# System prompt sent ALONGSIDE the user's instructions. Anthropic's CU model
+# accepts a system prompt; previously we sent none, so the model defaulted to
+# "click anything that looks plausible". This prompt enforces fail-fast.
+_CU_SYSTEM_PROMPT = """You are tsifl's desktop helper, controlling a Mac with Microsoft Excel for an analyst.
+
+OPERATING RULES — these supersede general computer-use intuition:
+
+1. COORDINATES ARE EXACT PIXEL VALUES. Click precisely on the pixel I tell you. Do not guess "near" a button — read the exact pixel position from the screenshot.
+
+2. NO REPEATED CLICKING. If you click an element and the screen does not visibly change after the next screenshot, do NOT click the same element again. The click landed but had no effect — either the button is disabled, you misidentified the element, or the dialog is in a different state than you expected. Press Esc or Cmd+Z first, then take a different approach.
+
+3. THREE STRIKES RULE. After 3 consecutive failed attempts at the same goal (clicking same area, same dialog, same field), STOP and report failure. Do not loop trying the same thing 30 times — it costs the user money and never works.
+
+4. COMMIT TO ONE PATH. Do not jump between menu paths mid-task. If you opened the Data menu, complete the operation there. Don't open Insert → close → reopen Data → close → try Format. Pick a route, finish it, or report failure.
+
+5. VERIFY BEFORE TYPING. Before typing into a field, take a screenshot and confirm the cursor is in the correct field. Typing into the wrong field is unrecoverable without Cmd+Z.
+
+6. SHORT TASKS COMPLETE IN UNDER 8 STEPS. Most Excel ribbon operations (Solver setup, Data Table, Goal Seek) require 4-8 actions: open dialog, fill fields, click OK. If you find yourself on iteration 9+ for a single operation, you are stuck — report failure instead of pressing on.
+
+7. NEVER CLOSE OR INTERACT WITH NON-EXCEL WINDOWS. The user has other apps open. Stay focused on Excel.
+
+8. ON FAILURE, BE HONEST. If the dialog isn't there, the menu item doesn't exist in this Excel version, or the screen state is wrong, say so plainly: "I cannot complete this — the [X] dialog did not open after [Y]." Do not pretend success.
+
+When done, stop emitting tool calls and write a brief one-sentence summary of what you accomplished or why you stopped.
+"""
+
+
+def _coords_match(a, b, tol: int = 10) -> bool:
+    """True if two [x, y] coordinates are within `tol` pixels of each other."""
+    if not isinstance(a, (list, tuple)) or not isinstance(b, (list, tuple)):
+        return False
+    if len(a) < 2 or len(b) < 2:
+        return False
+    return abs(a[0] - b[0]) <= tol and abs(a[1] - b[1]) <= tol
+
+
+def _safe_back_out() -> None:
+    """Try to leave Excel in a clean state when we abort.
+
+    Press Esc twice (closes any open dialog/popover). Best-effort — never
+    raise. Called on stop / timeout / repeated-click abort so the user
+    doesn't end up with a stuck modal dialog blocking their workbook.
+    """
+    try:
+        pyautogui.press("escape")
+        time.sleep(0.1)
+        pyautogui.press("escape")
+    except Exception as e:
+        _log(f"safe_back_out: pyautogui Esc failed: {e}", "warning")
+
+
+def run_computer_use_loop(
+    instructions: str,
+    session_id: str,
+    stop_check=None,
+):
     """Run the full Claude computer-use loop for a task.
 
-    1. Take screenshot
-    2. Send to Claude with instructions + computer tool
-    3. Claude responds with tool_use (click/type/etc.)
-    4. Execute action
-    5. Take new screenshot
-    6. Repeat until Claude stops using tools
+    Args:
+        instructions: Task description for the model.
+        session_id: For logging only.
+        stop_check: Optional callable, called BEFORE every API call. If it
+            returns True, the loop aborts gracefully (Esc back-out + return
+            "cancelled" status). Caller is responsible for plumbing this in.
+
+    Hard limits enforced:
+        - CU_MAX_ITERATIONS (12): caps step count
+        - CU_TASK_TIMEOUT_SECONDS (90): caps wall-clock time
+        - CU_REPEATED_CLICK_LIMIT (3): aborts on stuck-click pattern
+
+    Returns dict with `status` ∈ {completed, failed, cancelled, timeout, stuck},
+    `message`, `steps_taken`.
     """
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    start_time = time.time()
+    stop_check = stop_check or (lambda: False)
 
     # Initial screenshot
-    print(f"[agent] Taking initial screenshot...")
+    _log(f"[{session_id}] Taking initial screenshot...")
     screenshot_b64 = take_screenshot()
 
     messages = [
         {
             "role": "user",
             "content": [
-                {
-                    "type": "text",
-                    "text": instructions,
-                },
+                {"type": "text", "text": instructions},
                 {
                     "type": "image",
                     "source": {
@@ -258,7 +376,7 @@ def run_computer_use_loop(instructions: str, session_id: str):
     _tmp_b64 = base64.standard_b64decode(screenshot_b64)
     _tmp_img = Image.open(_io.BytesIO(_tmp_b64))
     display_w, display_h = _tmp_img.size
-    print(f"[agent] Display for Claude: {display_w}x{display_h}")
+    _log(f"[{session_id}] Display for Claude: {display_w}x{display_h}")
 
     # Set globals for coordinate scaling
     global _img_w, _img_h
@@ -275,23 +393,49 @@ def run_computer_use_loop(instructions: str, session_id: str):
         }
     ]
 
-    max_iterations = 50
     iteration = 0
 
-    while iteration < max_iterations:
+    # Recent clickable-action history for stuck-loop detection.
+    # Stores tuples of (action_type, coord) for click-like actions only.
+    recent_clicks: list[tuple[str, list]] = []
+
+    while iteration < CU_MAX_ITERATIONS:
+        # Stop check #1: before the (expensive) API call
+        if stop_check():
+            _log(f"[{session_id}] Stop signal detected before API call (iter {iteration})")
+            _safe_back_out()
+            return {
+                "status": "cancelled",
+                "message": "Stopped by user",
+                "steps_taken": iteration,
+            }
+
+        # Hard wall-clock timeout
+        elapsed = time.time() - start_time
+        if elapsed >= CU_TASK_TIMEOUT_SECONDS:
+            _log(f"[{session_id}] Timeout after {elapsed:.1f}s (iter {iteration})", "warning")
+            _safe_back_out()
+            return {
+                "status": "timeout",
+                "message": f"Timed out after {int(elapsed)}s without completing",
+                "steps_taken": iteration,
+            }
+
         iteration += 1
-        print(f"[agent] === Iteration {iteration} ===")
+        _log(f"[{session_id}] === Iteration {iteration}/{CU_MAX_ITERATIONS} (t+{elapsed:.1f}s) ===")
 
         try:
             response = client.beta.messages.create(
                 model=CU_MODEL,
                 max_tokens=4096,
+                system=_CU_SYSTEM_PROMPT,
                 tools=tools,
                 messages=messages,
                 betas=["computer-use-2025-01-24"],
             )
         except Exception as e:
-            print(f"[agent] API error: {e}")
+            _log(f"[{session_id}] API error: {e}", "error")
+            _safe_back_out()
             return {"status": "failed", "error": str(e), "steps_taken": iteration}
 
         # Process response
@@ -299,12 +443,12 @@ def run_computer_use_loop(instructions: str, session_id: str):
         text_blocks = [b for b in response.content if b.type == "text"]
 
         for tb in text_blocks:
-            print(f"[agent] Claude says: {tb.text[:200]}")
+            _log(f"[{session_id}] Claude: {tb.text[:200]}")
 
         if not tool_uses:
             # Claude is done
             final_text = " ".join(b.text for b in text_blocks)
-            print(f"[agent] Task completed in {iteration} iterations")
+            _log(f"[{session_id}] Task completed in {iteration} iterations")
             return {
                 "status": "completed",
                 "message": final_text,
@@ -314,20 +458,76 @@ def run_computer_use_loop(instructions: str, session_id: str):
         # Execute each tool use and collect results
         tool_results = []
         for tu in tool_uses:
-            action = tu.input.get("action", "")
-            print(f"[agent] Action: {action} | {json.dumps(tu.input)[:150]}")
+            # Stop check #2: between tool executions inside an iteration.
+            # If the user hits Stop while Claude returned 5 tool_uses in
+            # one response, we abort after the current one rather than
+            # plowing through all 5.
+            if stop_check():
+                _log(f"[{session_id}] Stop signal mid-iteration", "warning")
+                _safe_back_out()
+                return {
+                    "status": "cancelled",
+                    "message": "Stopped by user",
+                    "steps_taken": iteration,
+                }
 
-            # Execute the action
-            result_text = execute_computer_action(action, tu.input)
+            action = tu.input.get("action", "")
+            _log(f"[{session_id}] Action: {action} | {json.dumps(tu.input)[:150]}")
+
+            # Stuck-loop detection: track click-like actions and bail if
+            # the model is hitting the same coordinate repeatedly.
+            if action in ("left_click", "right_click", "double_click"):
+                coord = tu.input.get("coordinate", [0, 0])
+                recent_clicks.append((action, coord))
+                # Keep only the last N for matching window
+                if len(recent_clicks) > CU_REPEATED_CLICK_LIMIT:
+                    recent_clicks = recent_clicks[-CU_REPEATED_CLICK_LIMIT:]
+                if (len(recent_clicks) == CU_REPEATED_CLICK_LIMIT
+                    and all(rc[0] == action for rc in recent_clicks)
+                    and all(_coords_match(rc[1], coord) for rc in recent_clicks)):
+                    _log(
+                        f"[{session_id}] STUCK: {CU_REPEATED_CLICK_LIMIT} "
+                        f"identical {action}s at ~{coord} — aborting",
+                        "warning",
+                    )
+                    _safe_back_out()
+                    return {
+                        "status": "stuck",
+                        "message": (
+                            f"Model clicked the same spot ({coord}) "
+                            f"{CU_REPEATED_CLICK_LIMIT}× without progress. "
+                            "Aborted to avoid infinite loop."
+                        ),
+                        "steps_taken": iteration,
+                    }
+            else:
+                # Non-click action breaks the streak
+                recent_clicks = []
+
+            # Execute the action (wrapped — pyautogui can raise on permission denies)
+            try:
+                result_text = execute_computer_action(action, tu.input)
+            except Exception as e:
+                _log(f"[{session_id}] execute_computer_action raised: {e}", "error")
+                result_text = f"Action raised: {e}"
 
             # Take a fresh screenshot after the action
             time.sleep(0.5)  # brief pause for screen to update
-            new_screenshot = take_screenshot()
+            try:
+                new_screenshot = take_screenshot()
+            except Exception as e:
+                _log(f"[{session_id}] post-action screenshot failed: {e}", "error")
+                # Last-ditch: skip the screenshot, send only text result
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tu.id,
+                    "content": [{"type": "text", "text": result_text}],
+                })
+                continue
 
             # Build tool result with screenshot
             tool_result_content = []
             if action == "screenshot" or result_text == "screenshot_taken":
-                # Just the screenshot
                 tool_result_content.append({
                     "type": "image",
                     "source": {
@@ -337,7 +537,6 @@ def run_computer_use_loop(instructions: str, session_id: str):
                     },
                 })
             else:
-                # Action result + new screenshot
                 tool_result_content.append({
                     "type": "text",
                     "text": result_text,
@@ -361,7 +560,14 @@ def run_computer_use_loop(instructions: str, session_id: str):
         messages.append({"role": "assistant", "content": response.content})
         messages.append({"role": "user", "content": tool_results})
 
-    return {"status": "failed", "error": "Max iterations reached", "steps_taken": iteration}
+    # Loop fell out without Claude saying "done" — hit iteration cap
+    _log(f"[{session_id}] Hit max iterations ({CU_MAX_ITERATIONS}) without completing", "warning")
+    _safe_back_out()
+    return {
+        "status": "failed",
+        "error": f"Max iterations ({CU_MAX_ITERATIONS}) reached without completion",
+        "steps_taken": iteration,
+    }
 
 
 def _cancel_watcher_loop(http, session_id: str, stop_fn):
@@ -373,7 +579,7 @@ def _cancel_watcher_loop(http, session_id: str, stop_fn):
             if resp.status_code == 200:
                 status = resp.json().get("status")
                 if status == "cancelled":
-                    print(f"[agent] Cancel detected for {session_id} — setting stop flag")
+                    _log(f"Cancel detected for {session_id} — setting stop flag")
                     stop_fn()
                     return
                 if status in ("completed", "failed"):
@@ -396,19 +602,19 @@ def _is_cancelled(http, session_id: str) -> bool:
 
 def poll_and_execute():
     """Main loop: poll backend for pending tasks, execute them."""
-    print(f"[agent] Tsifl Desktop Agent starting...")
-    print(f"[agent] Backend: {BACKEND_URL}")
-    print(f"[agent] Model: {CU_MODEL}")
+    _log(f"Tsifl Desktop Agent starting...")
+    _log(f"Backend: {BACKEND_URL}")
+    _log(f"Model: {CU_MODEL}")
     get_screen_size()
 
     if not ANTHROPIC_API_KEY:
-        print("[agent] ERROR: ANTHROPIC_API_KEY not set!")
+        _log("ERROR: ANTHROPIC_API_KEY not set!")
         sys.exit(1)
 
     http = httpx.Client(timeout=10)
 
-    print(f"[agent] Ready. Polling for computer use tasks...")
-    print(f"[agent] Press Ctrl+C to stop")
+    _log(f"Ready. Polling for computer use tasks...")
+    _log(f"Press Ctrl+C to stop")
     print()
 
     while True:
@@ -425,9 +631,9 @@ def poll_and_execute():
                     context = session.get("context", {})
 
                     print(f"\n[agent] ========================================")
-                    print(f"[agent] New task: session {session_id}")
-                    print(f"[agent] Actions: {len(actions)}")
-                    print(f"[agent] ========================================\n")
+                    _log(f"New task: session {session_id}")
+                    _log(f"Actions: {len(actions)}")
+                    _log(f"========================================\n")
 
                     # Claim the session
                     http.post(
@@ -463,17 +669,22 @@ def poll_and_execute():
                     result = None
 
                     if known_actions:
-                        print(f"[agent] AppleScript path: {len(known_actions)} known actions")
+                        _log(f"AppleScript path: {len(known_actions)} known actions")
                         result = applescript_execute(
                             known_actions, context,
                             cancel_check=lambda: _is_cancelled(http, session_id),
                         )
 
                     if unknown_actions and not _is_cancelled(http, session_id):
-                        print(f"[agent] Computer Use fallback: {len(unknown_actions)} unknown actions")
+                        _log(f"Computer Use fallback: {len(unknown_actions)} unknown actions")
                         from services_local import build_instructions
                         instructions = build_instructions(unknown_actions, context)
-                        cu_result = run_computer_use_loop(instructions, session_id)
+                        # Pass stop_check so the CU loop checks for cancellation
+                        # BEFORE every API call, not just between iterations
+                        cu_result = run_computer_use_loop(
+                            instructions, session_id,
+                            stop_check=lambda: _is_cancelled(http, session_id),
+                        )
                         if result:
                             result["message"] += f" | CU: {cu_result.get('message', '')}"
                             if cu_result["status"] == "failed":
@@ -493,7 +704,7 @@ def poll_and_execute():
                     if _is_cancelled(http, session_id):
                         result["status"] = "cancelled"
                         result["message"] = "Stopped by user"
-                        print(f"[agent] Session {session_id} was cancelled")
+                        _log(f"Session {session_id} was cancelled")
 
                     # Report result back to backend
                     http.post(
@@ -501,7 +712,7 @@ def poll_and_execute():
                         json=result,
                     )
 
-                    print(f"[agent] Session {session_id}: {result['status']}")
+                    _log(f"Session {session_id}: {result['status']}")
 
         except httpx.ConnectError:
             pass  # Backend not reachable, retry
@@ -509,7 +720,7 @@ def poll_and_execute():
             print("\n[agent] Shutting down...")
             break
         except Exception as e:
-            print(f"[agent] Error: {e}")
+            _log(f"Error: {e}")
 
         time.sleep(2)  # Poll every 2 seconds
 
@@ -518,11 +729,11 @@ def poll_and_execute():
 
 def run_standalone(task_description: str):
     """Run a single computer use task directly (no backend needed)."""
-    print(f"[agent] Standalone mode: {task_description}")
+    _log(f"Standalone mode: {task_description}")
     get_screen_size()
 
     if not ANTHROPIC_API_KEY:
-        print("[agent] ERROR: ANTHROPIC_API_KEY not set!")
+        _log("ERROR: ANTHROPIC_API_KEY not set!")
         sys.exit(1)
 
     instructions = (
@@ -551,7 +762,7 @@ def run_applescript_standalone(action_json: str):
     import json as _json
 
     action = _json.loads(action_json)
-    print(f"[agent] AppleScript standalone: {action.get('type')}")
+    _log(f"AppleScript standalone: {action.get('type')}")
     result = execute_excel_action(action)
     print(f"\n[agent] Result: {_json.dumps(result, indent=2)}")
     return result
