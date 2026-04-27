@@ -115,6 +115,13 @@ _WRITE_TYPES_FOR_INTENT = {
     "fill_down", "fill_right",
     "clear_range", "format_range", "set_number_format",
     "add_chart", "create_named_range",
+    # Cosmetic / structural action types the LLM uses heavily on "polish the
+    # workbook" tasks. Without these, auto-inject under-counts and a request
+    # like "clean up the Restaurant Analysis sheet" emits 18 format_range
+    # actions that get phantom-dropped because the count threshold isn't met.
+    "add_conditional_format", "add_data_validation",
+    "freeze_panes", "autofit", "autofit_columns",
+    "sort_range", "copy_range",
 }
 
 
@@ -1056,7 +1063,7 @@ async def debug_guards():
         "project_memory_available": True,
         "project_memory_enabled":   project_memory.is_enabled(),
         "project_memory_backend":   project_memory.backend_type(),  # 'supabase' or 'file'
-        "build_tag": "guards-2026-04-24a-r-file-gen-guard",
+        "build_tag": "guards-2026-04-26a-prose-discipline",
     }
 
 
@@ -1780,13 +1787,25 @@ async def chat(request: ChatRequest):
         if _dropped_sheets:
             _real = request.context.get("all_sheets") or []
             _dropped_uniq = sorted(set(_dropped_sheets))
-            _warn = (
-                f"\n\n⚠️ Skipped {len(_dropped_sheets)} action(s) targeting sheet(s) "
-                f"that don't exist in your workbook: **{', '.join(_dropped_uniq)}**. "
-                f"Your actual sheets are: **{', '.join(_real) if _real else '(none detected)'}**. "
-                "Rephrase naming one of the real tabs, or ask me to create the missing "
-                "sheet first."
-            )
+            if _real:
+                # Normal case — we know the workbook tabs, list them so the
+                # user can rephrase against a real one.
+                _warn = (
+                    f"\n\nSkipped {len(_dropped_sheets)} action(s) targeting sheets "
+                    f"that don't exist in this workbook: {', '.join(_dropped_uniq)}. "
+                    f"Your actual tabs are: {', '.join(_real)}. "
+                    "Rephrase using one of those, or ask me to create the missing tab first."
+                )
+            else:
+                # Context-build failed — we don't know the workbook structure.
+                # Saying "(none detected)" reads as broken; give the user a real
+                # next step instead.
+                _warn = (
+                    f"\n\nSkipped {len(_dropped_sheets)} action(s) targeting sheets "
+                    f"I couldn't verify exist: {', '.join(_dropped_uniq)}. "
+                    "Refresh the taskpane (right-click the panel → Reload) so I can "
+                    "re-read your workbook tabs, then resend."
+                )
             result["reply"] = (result.get("reply") or "") + _warn
             result["actions"] = all_actions
             print(
