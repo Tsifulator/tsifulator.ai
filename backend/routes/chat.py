@@ -110,6 +110,21 @@ def _has_new_sheet_intent(name: str, message: str) -> bool:
     return any(kw in nlow and kw in mlow for kw in _NEW_SHEET_INTENT)
 
 
+def _name_has_intent(name: str) -> bool:
+    """True if `name` contains an intent keyword (case-insensitive).
+
+    Used as a softer signal than `_has_new_sheet_intent` — the model is
+    signaling intent through its sheet name even if the user's message
+    doesn't echo the keyword. Combined with a write-count threshold, this
+    catches 'apply all the changes' follow-up turns where the user's
+    short confirmation doesn't repeat the dashboard/summary keyword.
+    """
+    if not name:
+        return False
+    nlow = name.lower()
+    return any(kw in nlow for kw in _NEW_SHEET_INTENT)
+
+
 _WRITE_TYPES_FOR_INTENT = {
     "write_cell", "write_formula", "write_range",
     "fill_down", "fill_right",
@@ -294,10 +309,26 @@ def _auto_inject_add_sheets(
     injected_names: list = []
     for key, (canonical, count) in sheet_writes.items():
         qualifies = (
+            # User explicitly named the sheet.
             _name_mentioned(canonical, user_message)
+            # Allowlisted name (e.g. "Scenario Summary").
             or key in _ADD_SHEET_ALLOWLIST
+            # Strict: name + user message share an intent keyword.
             or (count >= min_writes_for_intent
                 and _has_new_sheet_intent(canonical, user_message))
+            # Softer: model emitted enough writes to clearly signal intent
+            # AND the sheet name itself contains an intent keyword
+            # (Dashboard / Summary / Analysis / etc). Catches "apply all the
+            # changes you mentioned" follow-ups where the user's short
+            # confirmation doesn't echo the keyword but the model is
+            # building a clear-intent sheet.
+            or (count >= 5 and _name_has_intent(canonical))
+            # Hardest: very high write count is itself the signal. If the
+            # model emits 10+ writes to a single non-existent sheet, the
+            # intent is unambiguous regardless of name. Saves the user from
+            # losing 60+ actions because the guard refused to ratify a
+            # tab the model clearly intended to create.
+            or count >= 10
         )
         if qualifies:
             injections.append({"type": "add_sheet", "payload": {"name": canonical}})
@@ -1192,7 +1223,7 @@ async def debug_guards():
         "project_memory_available": True,
         "project_memory_enabled":   project_memory.is_enabled(),
         "project_memory_backend":   project_memory.backend_type(),  # 'supabase' or 'file'
-        "build_tag": "guards-2026-04-26e-polish-auto-inject",
+        "build_tag": "guards-2026-04-26f-loose-add-sheet",
     }
 
 
