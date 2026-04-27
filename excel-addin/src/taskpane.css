@@ -89,11 +89,9 @@ body {
   max-width: 280px;
 }
 
-.login-input-group {
-  position: relative;
-}
-
-#login-form input {
+#login-form input[type="email"],
+#login-form input[type="password"],
+#login-form input[type="text"] {
   width: 100%;
   background: var(--surface);
   color: var(--text);
@@ -104,40 +102,35 @@ body {
   outline: none;
   transition: border-color 0.12s, box-shadow 0.12s;
 }
-.login-input-group input { padding-right: 38px; }
-#login-form input:focus {
+#login-form input[type="email"]:focus,
+#login-form input[type="password"]:focus,
+#login-form input[type="text"]:focus {
   border-color: var(--blue);
   box-shadow: 0 0 0 3px rgba(13, 94, 175, 0.10);
 }
 #login-form input::placeholder { color: var(--text-dim); }
 
-/* Password show/hide button. Tall enough to span the input height entirely so
-   the click target is unambiguous. No transform tricks (Office WKWebView has
-   issues hit-testing transformed absolute elements). All inner content has
-   pointer-events:none so children can't intercept the click. */
-.login-input-icon-btn {
-  position: absolute;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 38px;
-  background: transparent;
-  border: none;
-  color: var(--text-dim);
-  cursor: pointer;
-  display: flex;
+/* Show password checkbox — native click semantics, can't fail to register. */
+#show-pw-label {
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  padding: 0;
-  margin: 0;
-  z-index: 5;
-  transition: color 0.12s;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 0;
+  margin-top: -2px;
+  align-self: flex-start;
 }
-.login-input-icon-btn:hover  { color: var(--text); }
-.login-input-icon-btn:active { color: var(--blue); }
-.login-input-icon-btn:focus  { outline: none; }
-.login-input-icon-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; border-radius: 6px; }
-.login-input-icon-btn *      { pointer-events: none; }
+#show-pw-label input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--blue);
+  width: 13px;
+  height: 13px;
+}
+#show-pw-label:hover { color: var(--text); }
 
 #login-btn {
   background: var(--blue);

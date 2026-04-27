@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v67";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v68";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -102,69 +102,42 @@ function showLoginScreen() {
   document.getElementById("auth-password").addEventListener("keydown", (e) => {
     if (e.key === "Enter") handleSignIn();
   });
-  // Show/hide password toggle.
-  //
-  // Three previous attempts to flip `input.type` between "password" and "text"
-  // failed in this Office WKWebView. The sandbox appears to silently block
-  // the dynamic type mutation. Working around that by **replacing the entire
-  // element** with a clone of the opposite type — guaranteed to work because
-  // we're not mutating any property; we're swapping DOM nodes.
-  const togglePw = document.getElementById("toggle-pw-btn");
-  if (togglePw) {
-    let _toggleLock = false;
-
-    // Re-bindable Enter handler — needs to be re-attached after each swap
-    // since cloneNode doesn't carry listeners.
-    const enterHandler = (e) => { if (e.key === "Enter") handleSignIn(); };
-
-    const swapPasswordInput = () => {
-      const old = document.getElementById("auth-password");
-      if (!old) return null;
-      const newType = old.type === "password" ? "text" : "password";
-      const fresh = document.createElement("input");
-      fresh.type = newType;
-      fresh.id = "auth-password";
-      fresh.placeholder = old.placeholder || "Password";
-      fresh.autocomplete = newType === "password" ? "current-password" : "off";
-      fresh.value = old.value;
-      fresh.className = old.className;
-      // Preserve focus + caret position
-      const wasFocused = (document.activeElement === old);
-      const caret = old.selectionStart;
-      old.parentNode.replaceChild(fresh, old);
-      fresh.addEventListener("keydown", enterHandler);
-      if (wasFocused) {
-        fresh.focus();
-        try { fresh.setSelectionRange(caret, caret); } catch (_) {}
-      }
-      return newType;
-    };
-
-    const doToggle = (e) => {
-      if (e) { e.preventDefault(); e.stopPropagation(); }
-      if (_toggleLock) return;
-      _toggleLock = true;
-      setTimeout(() => { _toggleLock = false; }, 100);
+  // Show password toggle — native checkbox. Replaces the absolute-positioned
+  // eye button (4 prior versions failed to register clicks reliably under the
+  // Office WKWebView sandbox). Native <input type="checkbox"> click semantics
+  // are bulletproof; this works on every webview going back to IE 4.
+  const showPwCb = document.getElementById("show-pw-cb");
+  if (showPwCb) {
+    showPwCb.addEventListener("change", () => {
       try {
-        const newType = swapPasswordInput();
-        if (!newType) { console.warn("[tsifl] toggle: auth-password not found"); return; }
-        const nowVisible = (newType === "text");
-        const eyeOpen = togglePw.querySelector(".icon-eye-open");
-        const eyeOff  = togglePw.querySelector(".icon-eye-off");
-        if (eyeOpen) eyeOpen.style.display = nowVisible ? "none"  : "block";
-        if (eyeOff)  eyeOff.style.display  = nowVisible ? "block" : "none";
-        togglePw.setAttribute("aria-label", nowVisible ? "Hide password" : "Show password");
-        togglePw.setAttribute("title",      nowVisible ? "Hide password" : "Show password");
-        console.log("[tsifl] password swapped →", newType);
+        // Element-swap pattern: avoid runtime input.type mutation (which the
+        // Office sandbox silently blocks). Setting .type on a freshly-created
+        // element BEFORE attach is always allowed.
+        const old = document.getElementById("auth-password");
+        if (!old) { console.warn("[tsifl] auth-password not found"); return; }
+        const wantText = showPwCb.checked;
+        const fresh = document.createElement("input");
+        fresh.type        = wantText ? "text" : "password";
+        fresh.id          = "auth-password";
+        fresh.placeholder = old.placeholder || "Password";
+        fresh.autocomplete = wantText ? "off" : "current-password";
+        fresh.value       = old.value;
+        fresh.className   = old.className;
+        const wasFocused  = (document.activeElement === old);
+        const caret       = old.selectionStart;
+        old.parentNode.replaceChild(fresh, old);
+        fresh.addEventListener("keydown", (e) => { if (e.key === "Enter") handleSignIn(); });
+        if (wasFocused) {
+          fresh.focus();
+          try { fresh.setSelectionRange(caret, caret); } catch (_) {}
+        }
+        console.log("[tsifl] password visibility →", fresh.type);
       } catch (err) {
-        console.error("[tsifl] toggle handler crashed:", err);
+        console.error("[tsifl] show-password handler crashed:", err);
       }
-    };
-    togglePw.addEventListener("mousedown",   doToggle);
-    togglePw.addEventListener("touchstart",  doToggle, { passive: false });
-    togglePw.addEventListener("click",       (e) => { e.preventDefault(); e.stopPropagation(); });
+    });
   } else {
-    console.warn("[tsifl] toggle-pw-btn element not found at showLoginScreen time");
+    console.warn("[tsifl] show-pw-cb not found");
   }
   // Forgot password (Improvement 5)
   const forgotBtn = document.getElementById("forgot-pw-btn");
