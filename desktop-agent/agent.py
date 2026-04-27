@@ -37,9 +37,23 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load API key from project .env
-env_path = Path(__file__).parent.parent / ".env"
-if env_path.exists():
+# Load API key from project .env. Walk up the tree from this file's location
+# until we find a .env or hit the home dir. This means the agent works whether
+# it's run from the main repo (~/tsifulator.ai/.env) or from a worktree
+# (~/tsifulator.ai/.claude/worktrees/X/.env) — without manual symlinks.
+def _find_env_file() -> Path | None:
+    here = Path(__file__).resolve().parent
+    home = Path.home().resolve()
+    for candidate in [here, *here.parents]:
+        env = candidate / ".env"
+        if env.exists():
+            return env
+        if candidate == home or candidate == candidate.parent:
+            break
+    return None
+
+env_path = _find_env_file()
+if env_path:
     load_dotenv(env_path, override=True)
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
