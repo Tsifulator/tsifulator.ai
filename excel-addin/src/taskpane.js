@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v68";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v69";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -928,23 +928,49 @@ async function clearMemory() {
 
 // Detect replies that claim an Excel change was made. Used to flag hallucinated
 // success messages that arrive with zero actions and no computer-use session.
+//
+// IMPORTANT: keep the verb lists wide. The model loves vague polish verbs
+// ("fix", "improve", "polish", "clean up", "share recommendations") which are
+// the smoking gun for a future-tense plan with no actions emitted. If you
+// add a new verb to the system prompt's banned list, mirror it here.
 function claimsActionCompletion(text) {
   if (!text) return false;
   const t = text.toLowerCase();
+  // Wide future-tense verb set — covers polish/clean/fix/share verbs, not
+  // just create/build/insert. These are the ones that slip past the guard
+  // most often because they sound like "soft" actions.
+  const futureVerbs =
+    "create|build|make|add|insert|write|place|put|send|generate|produce|" +
+    "populate|draw|chart|plot|fill|fix|improve|polish|clean(?: up)?|format|" +
+    "autofit|auto-?fit|highlight|share|show|organize|organi[sz]e|tidy|" +
+    "set ?up|set|configure|update|refine|adjust|tweak|reformat|restyle|" +
+    "color|colou?r|bold|widen|expand|shrink|consolidate|summari[sz]e|" +
+    "analyze|analyse|recommend|propose|suggest";
+
   const patterns = [
     // Past-tense "I've done it" claims
-    /\bi['']?ve (written|added|created|updated|inserted|applied|imported|formatted|filled|set up|placed|put|made|built|generated|populated|entered|sent|placed)/,
-    /\bi have (written|added|created|updated|inserted|applied|imported|formatted|filled|placed|populated|entered|sent)/,
+    /\bi['']?ve (written|added|created|updated|inserted|applied|imported|formatted|filled|set up|placed|put|made|built|generated|populated|entered|sent|fixed|improved|cleaned|polished)/,
+    /\bi have (written|added|created|updated|inserted|applied|imported|formatted|filled|placed|populated|entered|sent|fixed|improved|cleaned)/,
     /\ball set\b/,
     /\bdone[\s\.\!—–-]/,
-    /\b(data|formulas?|chart|values|cells?|table|rows?|columns?|slide) (have been|has been|were|was) (written|added|imported|created|inserted|populated|entered|formatted|applied|placed|sent)/,
+    /\b(data|formulas?|chart|values|cells?|table|rows?|columns?|slide) (have been|has been|were|was) (written|added|imported|created|inserted|populated|entered|formatted|applied|placed|sent|fixed|cleaned|polished)/,
     /\b(written|added|created|updated|inserted|imported|formatted|populated) (the |your )?(data|formulas?|values|cells?|range|chart|table|slide)/,
-    /\bsuccessfully (wrote|added|created|inserted|imported|formatted|populated|placed|sent)/,
+    /\bsuccessfully (wrote|added|created|inserted|imported|formatted|populated|placed|sent|fixed|cleaned)/,
     // Future-tense "I'll do it" claims — just as broken when no action is emitted
-    /\bi['']?ll (create|build|make|add|insert|write|place|put|send|generate|produce|populate|draw|chart|plot|fill)\b/,
-    /\bi will (create|build|make|add|insert|write|place|put|send|generate|produce|populate)\b/,
-    /\blet me (create|build|add|insert|write|make|place|send|generate)\b/,
-    /\bgoing to (create|build|add|insert|write|make|place|send|generate)\b/,
+    new RegExp("\\bi['']?ll (" + futureVerbs + ")\\b"),
+    new RegExp("\\bi will (" + futureVerbs + ")\\b"),
+    new RegExp("\\blet me (" + futureVerbs + ")\\b"),
+    new RegExp("\\bgoing to (" + futureVerbs + ")\\b"),
+    // Two-phase plan pattern: "First, I'll X, then I'll Y" / "First X, then Y"
+    // — this is a smoking-gun future-tense plan that splits work across
+    // turns the user never gets. When no actions are emitted, this is broken.
+    /\bfirst[, ].*(then|next|after that)[, ]/i,
+    // Soft narration: "Let me know what you'd like" / "I can help with..." /
+    // "I'd be happy to..." — these are stalling phrases when paired with
+    // a request that asked for concrete changes.
+    /\bi (can|could) (help|assist|do|fix|improve|update|adjust|format|clean|polish)/,
+    /\bi['']?d be (happy|glad) to/,
+    /\blet me know (what|which|if|when|how)/,
   ];
   return patterns.some(rx => rx.test(t));
 }
