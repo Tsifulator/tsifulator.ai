@@ -33,6 +33,7 @@ DATA_FILES = [
     "agent.py",
     "excel_applescript.py",
     "services_local.py",
+    "icon.png",   # template icon for the menu bar
 ]
 
 OPTIONS = {
