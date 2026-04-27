@@ -304,7 +304,30 @@ def do_goal_seek(set_cell: str, to_value, changing_cell: str, sheet: str = ""):
                           f"holds the input value (e.g. a rate or quantity)."),
             }
         before_val = chg_range.value
-        set_before = ws_obj.range(set_cell).value
+
+        # set_cell MUST contain a formula that depends on changing_cell.
+        # If it's empty or a static value, AppleScript Goal Seek returns the
+        # cryptic -50 "Parameter error". Catch it here with a clear message
+        # so the user knows which cell is the actual problem.
+        set_range = ws_obj.range(set_cell)
+        set_formula = set_range.formula
+        set_before = set_range.value
+        if not (isinstance(set_formula, str) and set_formula.startswith("=")):
+            # No formula — could be empty or a static value
+            if set_before is None or set_before == "":
+                hint = "the cell is empty"
+            else:
+                hint = f"the cell holds a static value ({set_before!r})"
+            return {
+                "status": "failed",
+                "error": (f"set_cell {set_cell} has no formula — {hint}. "
+                          f"Goal Seek requires set_cell to be a CALCULATED cell "
+                          f"whose formula depends on {changing_cell}. Pick the "
+                          f"cell that contains the result you're targeting "
+                          f"(e.g. the net commission formula, not the empty "
+                          f"output column). Look at the workbook for cells "
+                          f"with =B*C, =SUM(...), or similar formulas."),
+            }
     except Exception as e:
         return {"status": "failed",
                 "error": f"Could not read cells: {e}"}
