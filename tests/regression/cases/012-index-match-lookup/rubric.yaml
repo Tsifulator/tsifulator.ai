@@ -1,0 +1,11 @@
+_generated_by: _build_hardening_cases.py
+_purpose: "Hardening sprint regression \u2014 pin down a known good behavior so future ships\
+  \ can't regress it."
+_project: INDEX/MATCH formula
+min_action_count: 1
+must_include_action_types:
+- write_formula
+formula_at_cell_contains:
+  Sheet1!E2:
+  - INDEX
+  - MATCH

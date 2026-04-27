@@ -1,0 +1,104 @@
+{
+  "user_id": "test-008",
+  "message": "On Sheet1, calculate Total = Price * Quantity in column D for all rows from D2 to D40",
+  "context": {
+    "app": "excel",
+    "sheet": "Sheet1",
+    "workbook_name": "Test.xlsx",
+    "all_sheets": [
+      "Sheet1"
+    ],
+    "selected_cell": "A1",
+    "selected_value": null,
+    "used_range": "A1:D40",
+    "sheet_data": [
+      [
+        "Item",
+        "Price",
+        "Qty",
+        "Total"
+      ],
+      [
+        "Item 1",
+        10,
+        5,
+        null
+      ],
+      [
+        "Item 2",
+        20,
+        3,
+        null
+      ]
+    ],
+    "sheet_formulas": [
+      [
+        "Item",
+        "Price",
+        "Qty",
+        "Total"
+      ],
+      [
+        "Item 1",
+        10,
+        5,
+        null
+      ],
+      [
+        "Item 2",
+        20,
+        3,
+        null
+      ]
+    ],
+    "sheet_summaries": [
+      {
+        "name": "Sheet1",
+        "used_range": "A1:D40",
+        "rows": 3,
+        "cols": 4,
+        "preview": [
+          [
+            "Item",
+            "Price",
+            "Qty",
+            "Total"
+          ],
+          [
+            "Item 1",
+            10,
+            5,
+            null
+          ],
+          [
+            "Item 2",
+            20,
+            3,
+            null
+          ]
+        ],
+        "preview_formulas": [
+          [
+            "Item",
+            "Price",
+            "Qty",
+            "Total"
+          ],
+          [
+            "Item 1",
+            10,
+            5,
+            null
+          ],
+          [
+            "Item 2",
+            20,
+            3,
+            null
+          ]
+        ]
+      }
+    ],
+    "named_ranges": []
+  }
+}

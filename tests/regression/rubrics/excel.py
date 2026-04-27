@@ -196,6 +196,26 @@ def min_action_count(actions: list[dict], spec: int) -> tuple[bool, str]:
     return True, f"{len(actions)} actions (≥ {spec})"
 
 
+def max_action_count(actions: list[dict], spec: int) -> tuple[bool, str]:
+    """Cap on emitted actions. Use for: discuss-mode (max=0), efficient
+    formula-fill patterns (max=5 for write+fill_down rather than 38 writes)."""
+    if len(actions) > spec:
+        return False, f"got {len(actions)} actions, max allowed is {spec}"
+    return True, f"{len(actions)} actions (≤ {spec})"
+
+
+def must_include_action_types_any_of(actions: list[dict],
+                                       spec: list[str]) -> tuple[bool, str]:
+    """At least ONE of the listed action types must appear. Use when there
+    are multiple legitimate ways to satisfy the request (e.g. either
+    `add_conditional_format` or the new `conditional_format_advanced`)."""
+    types = {a.get("type") for a in actions}
+    matched = [t for t in spec if t in types]
+    if matched:
+        return True, f"matched: {matched}"
+    return False, f"none of {spec} present in emitted types {sorted(types)}"
+
+
 def reply_not_empty(actions: list[dict], spec: bool, reply: str = "",
                     cu_session_id: str | None = None) -> tuple[bool, str]:
     """Sanity: reply text should exist unless a CU session took over.
@@ -215,18 +235,37 @@ def reply_not_empty(actions: list[dict], spec: bool, reply: str = "",
     return True, "reply present"
 
 
+def cu_session_id_required(actions: list[dict], spec: bool, reply: str = "",
+                            cu_session_id: str | None = None) -> tuple[bool, str]:
+    """Assert that a CU session was created (i.e. at least one action was
+    routed to the desktop agent path). Use this for cases where the action
+    type is in COMPUTER_USE_ACTIONS (goal_seek, run_solver, smartart_diagram,
+    pivot_table, etc.) — those actions don't appear in `data.actions`, so
+    `must_include_action_types` can't see them. Instead, the presence of a
+    cu_session_id confirms the model emitted SOMETHING that needs the agent.
+    """
+    if spec and not cu_session_id:
+        return False, "expected a cu_session_id but none was returned"
+    if cu_session_id:
+        return True, f"cu_session_id present: {cu_session_id}"
+    return True, "no cu_session_id required"
+
+
 # ── Dispatcher ───────────────────────────────────────────────────────────────
 
 CHECKS: dict[str, Callable[..., tuple[bool, str]]] = {
-    "must_include_action_types": must_include_action_types,
-    "must_reference_cells":      must_reference_cells,
-    "formula_at_cell_contains":  formula_at_cell_contains,
-    "formula_at_cell_forbids":   formula_at_cell_forbids,
-    "forbidden_sheet_targets":   forbidden_sheet_targets,
-    "allowed_sheet_targets":     allowed_sheet_targets,
-    "must_not_overwrite":        must_not_overwrite,
-    "min_action_count":          min_action_count,
-    "reply_not_empty":           reply_not_empty,
+    "must_include_action_types":         must_include_action_types,
+    "must_include_action_types_any_of":  must_include_action_types_any_of,
+    "must_reference_cells":              must_reference_cells,
+    "formula_at_cell_contains":          formula_at_cell_contains,
+    "formula_at_cell_forbids":           formula_at_cell_forbids,
+    "forbidden_sheet_targets":           forbidden_sheet_targets,
+    "allowed_sheet_targets":             allowed_sheet_targets,
+    "must_not_overwrite":                must_not_overwrite,
+    "min_action_count":                  min_action_count,
+    "max_action_count":                  max_action_count,
+    "reply_not_empty":                   reply_not_empty,
+    "cu_session_id_required":            cu_session_id_required,
 }
 
 
@@ -242,7 +281,7 @@ def evaluate(rubric: dict, actions: list[dict], reply: str = "",
             results.append((False, name, f"UNKNOWN RUBRIC KEY"))
             continue
         try:
-            if name == "reply_not_empty":
+            if name in ("reply_not_empty", "cu_session_id_required"):
                 ok, detail = check(actions, spec, reply=reply, cu_session_id=cu_session_id)
             else:
                 ok, detail = check(actions, spec)

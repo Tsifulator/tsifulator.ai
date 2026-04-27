@@ -1,0 +1,116 @@
+{
+  "user_id": "test-012",
+  "message": "On Sheet1, in cell E2, write a formula that uses INDEX/MATCH to look up the price in column B based on the item name in D2",
+  "context": {
+    "app": "excel",
+    "sheet": "Sheet1",
+    "workbook_name": "Test.xlsx",
+    "all_sheets": [
+      "Sheet1"
+    ],
+    "selected_cell": "A1",
+    "selected_value": null,
+    "used_range": "A1:E5",
+    "sheet_data": [
+      [
+        "Item",
+        "Price",
+        null,
+        "Lookup",
+        "Result"
+      ],
+      [
+        "Apple",
+        1.5,
+        null,
+        "Apple",
+        null
+      ],
+      [
+        "Banana",
+        0.75,
+        null,
+        null,
+        null
+      ]
+    ],
+    "sheet_formulas": [
+      [
+        "Item",
+        "Price",
+        null,
+        "Lookup",
+        "Result"
+      ],
+      [
+        "Apple",
+        1.5,
+        null,
+        "Apple",
+        null
+      ],
+      [
+        "Banana",
+        0.75,
+        null,
+        null,
+        null
+      ]
+    ],
+    "sheet_summaries": [
+      {
+        "name": "Sheet1",
+        "used_range": "A1:E5",
+        "rows": 3,
+        "cols": 5,
+        "preview": [
+          [
+            "Item",
+            "Price",
+            null,
+            "Lookup",
+            "Result"
+          ],
+          [
+            "Apple",
+            1.5,
+            null,
+            "Apple",
+            null
+          ],
+          [
+            "Banana",
+            0.75,
+            null,
+            null,
+            null
+          ]
+        ],
+        "preview_formulas": [
+          [
+            "Item",
+            "Price",
+            null,
+            "Lookup",
+            "Result"
+          ],
+          [
+            "Apple",
+            1.5,
+            null,
+            "Apple",
+            null
+          ],
+          [
+            "Banana",
+            0.75,
+            null,
+            null,
+            null
+          ]
+        ]
+      }
+    ],
+    "named_ranges": []
+  }
+}

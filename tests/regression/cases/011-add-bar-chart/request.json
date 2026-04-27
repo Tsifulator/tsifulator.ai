@@ -1,0 +1,112 @@
+{
+  "user_id": "test-011",
+  "message": "Add a bar chart on Sheet1 showing revenue by quarter from A1:B5",
+  "context": {
+    "app": "excel",
+    "sheet": "Sheet1",
+    "workbook_name": "Test.xlsx",
+    "all_sheets": [
+      "Sheet1"
+    ],
+    "selected_cell": "A1",
+    "selected_value": null,
+    "used_range": "A1:B5",
+    "sheet_data": [
+      [
+        "Quarter",
+        "Revenue"
+      ],
+      [
+        "Q1",
+        100000
+      ],
+      [
+        "Q2",
+        120000
+      ],
+      [
+        "Q3",
+        95000
+      ],
+      [
+        "Q4",
+        140000
+      ]
+    ],
+    "sheet_formulas": [
+      [
+        "Quarter",
+        "Revenue"
+      ],
+      [
+        "Q1",
+        100000
+      ],
+      [
+        "Q2",
+        120000
+      ],
+      [
+        "Q3",
+        95000
+      ],
+      [
+        "Q4",
+        140000
+      ]
+    ],
+    "sheet_summaries": [
+      {
+        "name": "Sheet1",
+        "used_range": "A1:B5",
+        "rows": 5,
+        "cols": 2,
+        "preview": [
+          [
+            "Quarter",
+            "Revenue"
+          ],
+          [
+            "Q1",
+            100000
+          ],
+          [
+            "Q2",
+            120000
+          ],
+          [
+            "Q3",
+            95000
+          ],
+          [
+            "Q4",
+            140000
+          ]
+        ],
+        "preview_formulas": [
+          [
+            "Quarter",
+            "Revenue"
+          ],
+          [
+            "Q1",
+            100000
+          ],
+          [
+            "Q2",
+            120000
+          ],
+          [
+            "Q3",
+            95000
+          ],
+          [
+            "Q4",
+            140000
+          ]
+        ]
+      }
+    ],
+    "named_ranges": []
+  }
+}

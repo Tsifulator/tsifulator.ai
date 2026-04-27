@@ -1,0 +1,8 @@
+_generated_by: _build_hardening_cases.py
+_purpose: "Hardening sprint regression \u2014 pin down a known good behavior so future ships\
+  \ can't regress it."
+_project: 'Apply-all follow-up: must not invent sheets'
+forbidden_sheet_targets:
+- Dashboard
+- Summary
+- Pivot

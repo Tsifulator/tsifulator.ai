@@ -1,0 +1,8 @@
+_generated_by: _build_hardening_cases.py
+_purpose: "Hardening sprint regression \u2014 pin down a known good behavior so future ships\
+  \ can't regress it."
+_project: Currency formatting
+min_action_count: 1
+must_include_action_types_any_of:
+- format_range
+- set_number_format

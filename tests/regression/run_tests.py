@@ -172,6 +172,7 @@ def run_case(case: dict, backend: str, timeout: int,
     data = resp.json()
     actions = data.get("actions") or []
     reply = data.get("reply") or ""
+    cu_session_id = data.get("cu_session_id")
 
     # response.json is the "golden" response used by --cached. Default live
     # runs MUST NOT touch it (flaky LLM output could silently poison the
@@ -182,7 +183,7 @@ def run_case(case: dict, backend: str, timeout: int,
         except Exception:
             pass
 
-    check_results = evaluator(rubric, actions, reply, cu_session_id=data.get("cu_session_id"))
+    check_results = evaluator(rubric, actions, reply, cu_session_id=cu_session_id)
     all_ok = all(ok for ok, _, _ in check_results)
 
     return {

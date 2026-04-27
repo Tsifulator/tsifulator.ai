@@ -1,0 +1,9 @@
+_generated_by: _build_hardening_cases.py
+_purpose: "Hardening sprint regression \u2014 pin down a known good behavior so future ships\
+  \ can't regress it."
+_project: Goal Seek with explicit set/changing cells
+# Goal Seek now routes through the desktop agent (CU bucket), so the addin
+# action list will be empty — the goal_seek action lives in the CU session.
+# We assert: (a) a CU session was created, (b) reply was correctly blanked.
+cu_session_id_required: true
+reply_not_empty: false

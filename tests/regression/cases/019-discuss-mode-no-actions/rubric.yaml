@@ -1,0 +1,6 @@
+_generated_by: _build_hardening_cases.py
+_purpose: "Hardening sprint regression \u2014 pin down a known good behavior so future ships\
+  \ can't regress it."
+_project: 'Discuss-mode: educational ask, no actions emitted'
+max_action_count: 0
+reply_not_empty: true

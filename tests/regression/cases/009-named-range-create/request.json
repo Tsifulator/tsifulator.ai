@@ -1,0 +1,80 @@
+{
+  "user_id": "test-009",
+  "message": "Create a named range called 'Revenue' for cells B2:B13 on Sheet1",
+  "context": {
+    "app": "excel",
+    "sheet": "Sheet1",
+    "workbook_name": "Test.xlsx",
+    "all_sheets": [
+      "Sheet1"
+    ],
+    "selected_cell": "A1",
+    "selected_value": null,
+    "used_range": "A1:B13",
+    "sheet_data": [
+      [
+        "Month",
+        "Revenue"
+      ],
+      [
+        "Jan",
+        100
+      ],
+      [
+        "Feb",
+        200
+      ]
+    ],
+    "sheet_formulas": [
+      [
+        "Month",
+        "Revenue"
+      ],
+      [
+        "Jan",
+        100
+      ],
+      [
+        "Feb",
+        200
+      ]
+    ],
+    "sheet_summaries": [
+      {
+        "name": "Sheet1",
+        "used_range": "A1:B13",
+        "rows": 3,
+        "cols": 2,
+        "preview": [
+          [
+            "Month",
+            "Revenue"
+          ],
+          [
+            "Jan",
+            100
+          ],
+          [
+            "Feb",
+            200
+          ]
+        ],
+        "preview_formulas": [
+          [
+            "Month",
+            "Revenue"
+          ],
+          [
+            "Jan",
+            100
+          ],
+          [
+            "Feb",
+            200
+          ]
+        ]
+      }
+    ],
+    "named_ranges": []
+  }
+}

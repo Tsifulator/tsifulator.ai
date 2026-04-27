@@ -1,0 +1,104 @@
+{
+  "user_id": "test-014",
+  "message": "Create a PivotTable from the data on Sheet1 (A1:D20) with Region as rows, Product as columns, and sum of Sales as the value. Place it on a new tab called Pivot.",
+  "context": {
+    "app": "excel",
+    "sheet": "Sheet1",
+    "workbook_name": "Test.xlsx",
+    "all_sheets": [
+      "Sheet1"
+    ],
+    "selected_cell": "A1",
+    "selected_value": null,
+    "used_range": "A1:D20",
+    "sheet_data": [
+      [
+        "Date",
+        "Region",
+        "Product",
+        "Sales"
+      ],
+      [
+        "2026-01-01",
+        "North",
+        "A",
+        100
+      ],
+      [
+        "2026-01-02",
+        "South",
+        "B",
+        200
+      ]
+    ],
+    "sheet_formulas": [
+      [
+        "Date",
+        "Region",
+        "Product",
+        "Sales"
+      ],
+      [
+        "2026-01-01",
+        "North",
+        "A",
+        100
+      ],
+      [
+        "2026-01-02",
+        "South",
+        "B",
+        200
+      ]
+    ],
+    "sheet_summaries": [
+      {
+        "name": "Sheet1",
+        "used_range": "A1:D20",
+        "rows": 3,
+        "cols": 4,
+        "preview": [
+          [
+            "Date",
+            "Region",
+            "Product",
+            "Sales"
+          ],
+          [
+            "2026-01-01",
+            "North",
+            "A",
+            100
+          ],
+          [
+            "2026-01-02",
+            "South",
+            "B",
+            200
+          ]
+        ],
+        "preview_formulas": [
+          [
+            "Date",
+            "Region",
+            "Product",
+            "Sales"
+          ],
+          [
+            "2026-01-01",
+            "North",
+            "A",
+            100
+          ],
+          [
+            "2026-01-02",
+            "South",
+            "B",
+            200
+          ]
+        ]
+      }
+    ],
+    "named_ranges": []
+  }
+}

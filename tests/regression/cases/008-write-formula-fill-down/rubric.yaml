@@ -1,0 +1,15 @@
+_generated_by: _build_hardening_cases.py
+_purpose: "Hardening sprint regression \u2014 pin down a known good behavior so future ships\
+  \ can't regress it."
+_project: Write formula once + fill_down (no row-by-row writes)
+min_action_count: 1
+must_include_action_types:
+- fill_down
+must_include_action_types_any_of:
+- write_formula
+- write_cell
+max_action_count: 5
+formula_at_cell_contains:
+  Sheet1!D2:
+  - B2
+  - C2

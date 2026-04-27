@@ -1,0 +1,61 @@
+{
+  "user_id": "test-018",
+  "message": "Add a summary row to the 'Transactions' tab. Bold the headers and freeze the top row.",
+  "context": {
+    "app": "excel",
+    "sheet": "Sheet1",
+    "workbook_name": "Test.xlsx",
+    "all_sheets": [
+      "Sheet1",
+      "Data"
+    ],
+    "selected_cell": "A1",
+    "selected_value": null,
+    "used_range": "A1:C5",
+    "sheet_data": [
+      [
+        "Item",
+        "Price",
+        "Qty"
+      ]
+    ],
+    "sheet_formulas": [
+      [
+        "Item",
+        "Price",
+        "Qty"
+      ]
+    ],
+    "sheet_summaries": [
+      {
+        "name": "Sheet1",
+        "used_range": "A1:C5",
+        "rows": 1,
+        "cols": 3,
+        "preview": [
+          [
+            "Item",
+            "Price",
+            "Qty"
+          ]
+        ],
+        "preview_formulas": [
+          [
+            "Item",
+            "Price",
+            "Qty"
+          ]
+        ]
+      },
+      {
+        "name": "Data",
+        "used_range": "empty",
+        "rows": 0,
+        "cols": 0,
+        "preview": [],
+        "preview_formulas": []
+      }
+    ],
+    "named_ranges": []
+  }
+}

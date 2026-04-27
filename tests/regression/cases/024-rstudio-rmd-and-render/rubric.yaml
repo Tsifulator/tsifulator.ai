@@ -1,0 +1,14 @@
+_generated_by: _build_hardening_cases.py
+_purpose: "Hardening sprint regression \u2014 pin down a known good behavior so future ships\
+  \ can't regress it."
+_project: 'RStudio: writeLines + rmarkdown::render in ONE run_r_code'
+min_action_count: 1
+max_action_count: 2
+exactly_one_run_r_code: true
+must_include_action_types:
+- run_r_code
+code_contains:
+- writeLines
+- rmarkdown::render
+- lm(
+reply_not_empty: false

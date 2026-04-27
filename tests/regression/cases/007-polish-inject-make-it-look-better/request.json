@@ -1,0 +1,92 @@
+{
+  "user_id": "test-007",
+  "message": "make this workbook look better",
+  "context": {
+    "app": "excel",
+    "sheet": "Sheet1",
+    "workbook_name": "Test.xlsx",
+    "all_sheets": [
+      "Sheet1"
+    ],
+    "selected_cell": "A1",
+    "selected_value": null,
+    "used_range": "A1:C5",
+    "sheet_data": [
+      [
+        "Name",
+        "Revenue",
+        "Profit"
+      ],
+      [
+        "Q1",
+        100000,
+        25000
+      ],
+      [
+        "Q2",
+        120000,
+        30000
+      ]
+    ],
+    "sheet_formulas": [
+      [
+        "Name",
+        "Revenue",
+        "Profit"
+      ],
+      [
+        "Q1",
+        100000,
+        25000
+      ],
+      [
+        "Q2",
+        120000,
+        30000
+      ]
+    ],
+    "sheet_summaries": [
+      {
+        "name": "Sheet1",
+        "used_range": "A1:C5",
+        "rows": 3,
+        "cols": 3,
+        "preview": [
+          [
+            "Name",
+            "Revenue",
+            "Profit"
+          ],
+          [
+            "Q1",
+            100000,
+            25000
+          ],
+          [
+            "Q2",
+            120000,
+            30000
+          ]
+        ],
+        "preview_formulas": [
+          [
+            "Name",
+            "Revenue",
+            "Profit"
+          ],
+          [
+            "Q1",
+            100000,
+            25000
+          ],
+          [
+            "Q2",
+            120000,
+            30000
+          ]
+        ]
+      }
+    ],
+    "named_ranges": []
+  }
+}

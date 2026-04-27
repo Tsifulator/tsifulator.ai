@@ -1,0 +1,13 @@
+{
+  "user_id": "test-024",
+  "message": "Generate an RMarkdown report named 'analysis.Rmd' that runs a linear regression on the mtcars dataset (mpg ~ wt + cyl) and knits to PDF. Use base R only.",
+  "context": {
+    "app": "rstudio",
+    "working_dir": "/Users/test/projects/r",
+    "files_in_dir": [],
+    "rstudio_panes": {
+      "console": "",
+      "source": ""
+    }
+  }
+}

@@ -1,0 +1,7 @@
+_generated_by: _build_hardening_cases.py
+_purpose: "Hardening sprint regression \u2014 pin down a known good behavior so future ships\
+  \ can't regress it."
+_project: "Phantom sheet \u2014 must NOT write to non-existent 'Transactions'"
+forbidden_sheet_targets:
+- Transactions
+reply_not_empty: false

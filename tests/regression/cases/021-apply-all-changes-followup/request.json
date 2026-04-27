@@ -1,0 +1,125 @@
+{
+  "user_id": "test-021",
+  "message": "apply all of the changes you mentioned",
+  "context": {
+    "app": "excel",
+    "sheet": "Calculator",
+    "workbook_name": "Test.xlsx",
+    "all_sheets": [
+      "Calculator",
+      "Data"
+    ],
+    "selected_cell": "A1",
+    "selected_value": null,
+    "used_range": "A1:E10",
+    "sheet_data": [
+      [
+        "Restaurant",
+        "Value",
+        "Buffet",
+        "Profit",
+        "ROI"
+      ],
+      [
+        "A",
+        38.19,
+        11.99,
+        26.2,
+        2.18
+      ],
+      [
+        "B",
+        56.39,
+        19.99,
+        36.4,
+        1.82
+      ]
+    ],
+    "sheet_formulas": [
+      [
+        "Restaurant",
+        "Value",
+        "Buffet",
+        "Profit",
+        "ROI"
+      ],
+      [
+        "A",
+        38.19,
+        11.99,
+        26.2,
+        2.18
+      ],
+      [
+        "B",
+        56.39,
+        19.99,
+        36.4,
+        1.82
+      ]
+    ],
+    "sheet_summaries": [
+      {
+        "name": "Calculator",
+        "used_range": "A1:E10",
+        "rows": 3,
+        "cols": 5,
+        "preview": [
+          [
+            "Restaurant",
+            "Value",
+            "Buffet",
+            "Profit",
+            "ROI"
+          ],
+          [
+            "A",
+            38.19,
+            11.99,
+            26.2,
+            2.18
+          ],
+          [
+            "B",
+            56.39,
+            19.99,
+            36.4,
+            1.82
+          ]
+        ],
+        "preview_formulas": [
+          [
+            "Restaurant",
+            "Value",
+            "Buffet",
+            "Profit",
+            "ROI"
+          ],
+          [
+            "A",
+            38.19,
+            11.99,
+            26.2,
+            2.18
+          ],
+          [
+            "B",
+            56.39,
+            19.99,
+            36.4,
+            1.82
+          ]
+        ]
+      },
+      {
+        "name": "Data",
+        "used_range": "empty",
+        "rows": 0,
+        "cols": 0,
+        "preview": [],
+        "preview_formulas": []
+      }
+    ],
+    "named_ranges": []
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "user_id": "test-015",
+  "message": "On Sheet1, apply a green-yellow-red color scale to column D (D2:D20) so high values are green and low values are red",
+  "context": {
+    "app": "excel",
+    "sheet": "Sheet1",
+    "workbook_name": "Test.xlsx",
+    "all_sheets": [
+      "Sheet1"
+    ],
+    "selected_cell": "A1",
+    "selected_value": null,
+    "used_range": "A1:D20",
+    "sheet_data": [
+      [
+        "Item",
+        "Q1",
+        "Q2",
+        "Total"
+      ],
+      [
+        "A",
+        100,
+        120,
+        220
+      ]
+    ],
+    "sheet_formulas": [
+      [
+        "Item",
+        "Q1",
+        "Q2",
+        "Total"
+      ],
+      [
+        "A",
+        100,
+        120,
+        220
+      ]
+    ],
+    "sheet_summaries": [
+      {
+        "name": "Sheet1",
+        "used_range": "A1:D20",
+        "rows": 2,
+        "cols": 4,
+        "preview": [
+          [
+            "Item",
+            "Q1",
+            "Q2",
+            "Total"
+          ],
+          [
+            "A",
+            100,
+            120,
+            220
+          ]
+        ],
+        "preview_formulas": [
+          [
+            "Item",
+            "Q1",
+            "Q2",
+            "Total"
+          ],
+          [
+            "A",
+            100,
+            120,
+            220
+          ]
+        ]
+      }
+    ],
+    "named_ranges": []
+  }
+}

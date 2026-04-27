@@ -1,0 +1,8 @@
+_generated_by: _build_hardening_cases.py
+_purpose: "Hardening sprint regression \u2014 pin down a known good behavior so future ships\
+  \ can't regress it."
+_project: PivotTable P1 handler
+# pivot_table is in COMPUTER_USE_ACTIONS — routes to desktop agent,
+# so the action lives in the CU session not in the addin actions list.
+cu_session_id_required: true
+reply_not_empty: false

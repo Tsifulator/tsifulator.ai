@@ -1,0 +1,28 @@
+{
+  "user_id": "test-016",
+  "message": "Build a 3-tab workbook: Sheet 'Data' with sample sales data (month, region, sales), Sheet 'Analysis' with formulas summing sales by region, Sheet 'Summary' with a formatted header and the totals.",
+  "context": {
+    "app": "excel",
+    "sheet": "Sheet1",
+    "workbook_name": "Test.xlsx",
+    "all_sheets": [
+      "Sheet1"
+    ],
+    "selected_cell": "A1",
+    "selected_value": null,
+    "used_range": "empty",
+    "sheet_data": [],
+    "sheet_formulas": [],
+    "sheet_summaries": [
+      {
+        "name": "Sheet1",
+        "used_range": "empty",
+        "rows": 0,
+        "cols": 0,
+        "preview": [],
+        "preview_formulas": []
+      }
+    ],
+    "named_ranges": []
+  }
+}

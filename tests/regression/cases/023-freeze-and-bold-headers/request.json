@@ -1,0 +1,60 @@
+{
+  "user_id": "test-023",
+  "message": "Freeze the top row on Sheet1 and bold the headers",
+  "context": {
+    "app": "excel",
+    "sheet": "Sheet1",
+    "workbook_name": "Test.xlsx",
+    "all_sheets": [
+      "Sheet1"
+    ],
+    "selected_cell": "A1",
+    "selected_value": null,
+    "used_range": "A1:E50",
+    "sheet_data": [
+      [
+        "Date",
+        "Region",
+        "Product",
+        "Sales",
+        "Cost"
+      ]
+    ],
+    "sheet_formulas": [
+      [
+        "Date",
+        "Region",
+        "Product",
+        "Sales",
+        "Cost"
+      ]
+    ],
+    "sheet_summaries": [
+      {
+        "name": "Sheet1",
+        "used_range": "A1:E50",
+        "rows": 1,
+        "cols": 5,
+        "preview": [
+          [
+            "Date",
+            "Region",
+            "Product",
+            "Sales",
+            "Cost"
+          ]
+        ],
+        "preview_formulas": [
+          [
+            "Date",
+            "Region",
+            "Product",
+            "Sales",
+            "Cost"
+          ]
+        ]
+      }
+    ],
+    "named_ranges": []
+  }
+}

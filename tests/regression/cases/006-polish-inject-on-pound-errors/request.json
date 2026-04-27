@@ -1,0 +1,104 @@
+{
+  "user_id": "test-006",
+  "message": "fix the #### errors on this sheet",
+  "context": {
+    "app": "excel",
+    "sheet": "Sheet1",
+    "workbook_name": "Test.xlsx",
+    "all_sheets": [
+      "Sheet1"
+    ],
+    "selected_cell": "A1",
+    "selected_value": null,
+    "used_range": "A1:D10",
+    "sheet_data": [
+      [
+        "Item",
+        "Price",
+        "Qty",
+        "Total"
+      ],
+      [
+        "Widget A",
+        1234567.89,
+        100,
+        123456789
+      ],
+      [
+        "Widget B",
+        9876543.21,
+        50,
+        493827160.5
+      ]
+    ],
+    "sheet_formulas": [
+      [
+        "Item",
+        "Price",
+        "Qty",
+        "Total"
+      ],
+      [
+        "Widget A",
+        1234567.89,
+        100,
+        123456789
+      ],
+      [
+        "Widget B",
+        9876543.21,
+        50,
+        493827160.5
+      ]
+    ],
+    "sheet_summaries": [
+      {
+        "name": "Sheet1",
+        "used_range": "A1:D10",
+        "rows": 3,
+        "cols": 4,
+        "preview": [
+          [
+            "Item",
+            "Price",
+            "Qty",
+            "Total"
+          ],
+          [
+            "Widget A",
+            1234567.89,
+            100,
+            123456789
+          ],
+          [
+            "Widget B",
+            9876543.21,
+            50,
+            493827160.5
+          ]
+        ],
+        "preview_formulas": [
+          [
+            "Item",
+            "Price",
+            "Qty",
+            "Total"
+          ],
+          [
+            "Widget A",
+            1234567.89,
+            100,
+            123456789
+          ],
+          [
+            "Widget B",
+            9876543.21,
+            50,
+            493827160.5
+          ]
+        ]
+      }
+    ],
+    "named_ranges": []
+  }
+}

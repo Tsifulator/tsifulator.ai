@@ -1,0 +1,92 @@
+{
+  "user_id": "test-010",
+  "message": "Format column C on Sheet1 as currency with 2 decimals",
+  "context": {
+    "app": "excel",
+    "sheet": "Sheet1",
+    "workbook_name": "Test.xlsx",
+    "all_sheets": [
+      "Sheet1"
+    ],
+    "selected_cell": "A1",
+    "selected_value": null,
+    "used_range": "A1:C5",
+    "sheet_data": [
+      [
+        "Item",
+        "Qty",
+        "Price"
+      ],
+      [
+        "Apple",
+        10,
+        1.5
+      ],
+      [
+        "Banana",
+        20,
+        0.75
+      ]
+    ],
+    "sheet_formulas": [
+      [
+        "Item",
+        "Qty",
+        "Price"
+      ],
+      [
+        "Apple",
+        10,
+        1.5
+      ],
+      [
+        "Banana",
+        20,
+        0.75
+      ]
+    ],
+    "sheet_summaries": [
+      {
+        "name": "Sheet1",
+        "used_range": "A1:C5",
+        "rows": 3,
+        "cols": 3,
+        "preview": [
+          [
+            "Item",
+            "Qty",
+            "Price"
+          ],
+          [
+            "Apple",
+            10,
+            1.5
+          ],
+          [
+            "Banana",
+            20,
+            0.75
+          ]
+        ],
+        "preview_formulas": [
+          [
+            "Item",
+            "Qty",
+            "Price"
+          ],
+          [
+            "Apple",
+            10,
+            1.5
+          ],
+          [
+            "Banana",
+            20,
+            0.75
+          ]
+        ]
+      }
+    ],
+    "named_ranges": []
+  }
+}

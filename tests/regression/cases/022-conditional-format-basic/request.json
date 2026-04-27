@@ -1,0 +1,92 @@
+{
+  "user_id": "test-022",
+  "message": "On Sheet1, highlight cells in column C that are greater than 100 with green background",
+  "context": {
+    "app": "excel",
+    "sheet": "Sheet1",
+    "workbook_name": "Test.xlsx",
+    "all_sheets": [
+      "Sheet1"
+    ],
+    "selected_cell": "A1",
+    "selected_value": null,
+    "used_range": "A1:C20",
+    "sheet_data": [
+      [
+        "Item",
+        "Date",
+        "Value"
+      ],
+      [
+        "A",
+        "2026-01-01",
+        50
+      ],
+      [
+        "B",
+        "2026-01-02",
+        150
+      ]
+    ],
+    "sheet_formulas": [
+      [
+        "Item",
+        "Date",
+        "Value"
+      ],
+      [
+        "A",
+        "2026-01-01",
+        50
+      ],
+      [
+        "B",
+        "2026-01-02",
+        150
+      ]
+    ],
+    "sheet_summaries": [
+      {
+        "name": "Sheet1",
+        "used_range": "A1:C20",
+        "rows": 3,
+        "cols": 3,
+        "preview": [
+          [
+            "Item",
+            "Date",
+            "Value"
+          ],
+          [
+            "A",
+            "2026-01-01",
+            50
+          ],
+          [
+            "B",
+            "2026-01-02",
+            150
+          ]
+        ],
+        "preview_formulas": [
+          [
+            "Item",
+            "Date",
+            "Value"
+          ],
+          [
+            "A",
+            "2026-01-01",
+            50
+          ],
+          [
+            "B",
+            "2026-01-02",
+            150
+          ]
+        ]
+      }
+    ],
+    "named_ranges": []
+  }
+}

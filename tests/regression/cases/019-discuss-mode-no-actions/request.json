@@ -1,0 +1,28 @@
+{
+  "user_id": "test-019",
+  "message": "what is a vlookup and when should I use it",
+  "context": {
+    "app": "excel",
+    "sheet": "Sheet1",
+    "workbook_name": "Test.xlsx",
+    "all_sheets": [
+      "Sheet1"
+    ],
+    "selected_cell": "A1",
+    "selected_value": null,
+    "used_range": "A1:A1",
+    "sheet_data": [],
+    "sheet_formulas": [],
+    "sheet_summaries": [
+      {
+        "name": "Sheet1",
+        "used_range": "A1:A1",
+        "rows": 0,
+        "cols": 0,
+        "preview": [],
+        "preview_formulas": []
+      }
+    ],
+    "named_ranges": []
+  }
+}
