@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v73";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v74";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -660,6 +660,27 @@ const _CONTEXTUAL_RE = new RegExp(
   "i"
 );
 
+// Action verbs — if any of these appear, the user wants tsifl to DO something
+// to the workbook, not chat. Must NOT be routed to Ollama (which can't emit
+// Excel actions). Mirror of the backend's _ACTION_DEMANDING_VERBS in chat.py.
+const _ACTION_VERB_RE = new RegExp(
+  [
+    "\\b(fix|debug|polish|improve|tidy|format|autofit|auto-?fit)\\b",
+    "\\bclean ?up\\b",
+    "\\bmake (it|this) (better|nice|cleaner|look|professional|prettier)\\b",
+    "\\bmake (it|this) look\\b",
+    "\\bany (recommendation|reccomendation|improvement|fix)\\b",
+    "\\b(spruce|beautify) (it|this|up)\\b",
+    "\\bwhat (would|should) (you|i) change\\b",
+    "\\bhelp me (debug|fix|with this|polish|clean|improve)\\b",
+    "\\bplease (actually )?(make|apply|do|fix|change)\\b",
+    "\\bapply (all|the|these|those) (changes?|fixes?|improvements?|suggestions?)\\b",
+    "\\bcorrect the (issue|problem|error|bug)\\b",
+    "###",  // user mentioned ##### errors → always action
+  ].join("|"),
+  "i"
+);
+
 function isDiscussMode(message) {
   const m = (message || "").trim();
   if (!m) return false;
@@ -668,6 +689,9 @@ function isDiscussMode(message) {
   if (/\b[A-Z]{1,3}\d+(?::[A-Z]{1,3}\d+)?\b/.test(m)) return false;
   // "this workbook", "my model", etc. → needs context, route to Claude.
   if (_CONTEXTUAL_RE.test(m)) return false;
+  // Action verbs ("fix", "debug", "polish", "apply changes", "####") →
+  // user wants the workbook modified. Ollama can't do that. Route to Claude.
+  if (_ACTION_VERB_RE.test(m)) return false;
   return _DISCUSS_RE.test(m);
 }
 
