@@ -125,6 +125,113 @@ _WRITE_TYPES_FOR_INTENT = {
 }
 
 
+# Verbs that signal "user wants action, not a chat reply". When the model
+# returns ZERO actions on a turn whose message contains one of these AND
+# the workbook has at least one sheet with data, we auto-inject the safe
+# default polish set so the user gets SOMETHING done. The model can keep
+# offering options in the reply text, but the workbook gets fixed regardless.
+_ACTION_DEMANDING_VERBS = (
+    "fix", "debug", "polish", "clean up", "cleanup", "improve",
+    "make it better", "make it look", "tidy", "format", "autofit",
+    "auto-fit", "any recommendation", "any reccomendation",  # user typo
+    "what would you change", "what should i change",
+    "help me debug", "help me fix", "make it nice", "make it look nice",
+    "make it cleaner", "make it look better", "spruce", "beautify",
+    "what do you think", "any ideas", "any improvement",
+)
+
+# Phrases in the model's REPLY that indicate it stalled with a menu.
+# When detected alongside zero actions, we inject defaults regardless of
+# whether the user message looks "actionable" — the model itself flagged
+# that the user wanted action.
+_STALL_MENU_PATTERNS = (
+    r"pick (a |the |one )?(number|option|one)",
+    r"reply with (a |the )?number",
+    r"here are some options",
+    r"i haven['']?t (built|done|made|created|added|fixed|applied) (anything|it|them) yet",
+    r"want me to (do|fix|apply|build|run) [^.?!\n]{0,40}\?",
+    r"which (one|of these|option) (would|do) you",
+    r"let me know which",
+)
+
+
+def _looks_like_stall(reply: str) -> bool:
+    """True if the reply text contains a stalling/menu phrase."""
+    if not reply:
+        return False
+    low = reply.lower()
+    return any(re.search(p, low) for p in _STALL_MENU_PATTERNS)
+
+
+def _user_wants_action(message: str) -> bool:
+    """True if the user message contains a verb that demands action."""
+    if not message:
+        return False
+    low = message.lower()
+    # Direct ##### error mention is always action-demanding
+    if "####" in message or "###" in message:
+        return True
+    return any(verb in low for verb in _ACTION_DEMANDING_VERBS)
+
+
+def _auto_inject_polish_actions(
+    actions: list, context: dict, user_message: str, reply: str,
+) -> tuple[list, list]:
+    """When the model stalls on an action-demanding turn, inject the safe
+    default polish set so the workbook actually changes.
+
+    Triggers when ALL of these hold:
+      1. `actions` is empty (no execute_actions emitted by the model).
+      2. EITHER the user message contains an action-demanding verb,
+         OR the reply contains a stalling/menu pattern.
+      3. The workbook context has at least one sheet with data
+         (sheet_summaries with rows > 0).
+
+    Injected default set:
+      - autofit on the active sheet (full-sheet autofitColumns + Rows).
+        Always safe; never destructive. Fixes ##### errors immediately.
+
+    Returns (actions_with_injected, injected_descriptions). Idempotent —
+    if `actions` is non-empty (model did emit work), returns unchanged.
+    """
+    if actions:  # model already acted — leave alone
+        return actions, []
+    if not _user_wants_action(user_message) and not _looks_like_stall(reply or ""):
+        return actions, []
+
+    ctx = context or {}
+    active = ctx.get("sheet")
+    summaries = ctx.get("sheet_summaries") or []
+    has_data = any(
+        isinstance(s, dict) and s.get("rows", 0) > 0 for s in summaries
+    )
+    if not has_data:
+        return actions, []
+
+    injected: list[dict] = []
+    descs: list[str] = []
+
+    # Always: full-sheet autofit on the active sheet (or every sheet with data
+    # if no active sheet is reported). Fixes ##### errors which is the most
+    # common ask under "fix this".
+    target_sheets: list[str] = []
+    if isinstance(active, str) and active.strip():
+        target_sheets = [active.strip()]
+    else:
+        target_sheets = [
+            s.get("name") for s in summaries
+            if isinstance(s, dict) and s.get("rows", 0) > 0 and isinstance(s.get("name"), str)
+        ]
+
+    for sheet_name in target_sheets:
+        injected.append({"type": "autofit", "payload": {"sheet": sheet_name}})
+
+    if injected:
+        descs.append(f"autofit ({len(target_sheets)} sheet{'s' if len(target_sheets) != 1 else ''})")
+
+    return injected, descs
+
+
 def _auto_inject_add_sheets(
     actions: list, context: dict, user_message: str = "",
     min_writes_for_intent: int = 3,
@@ -1085,7 +1192,7 @@ async def debug_guards():
         "project_memory_available": True,
         "project_memory_enabled":   project_memory.is_enabled(),
         "project_memory_backend":   project_memory.backend_type(),  # 'supabase' or 'file'
-        "build_tag": "guards-2026-04-26d-no-option-menus",
+        "build_tag": "guards-2026-04-26e-polish-auto-inject",
     }
 
 
@@ -1773,6 +1880,31 @@ async def chat(request: ChatRequest):
             result["reply"] = (result.get("reply") or "") + _inj_warn
             print(
                 f"[auto-inject] Prepended add_sheet for: {_injected_sheets}",
+                flush=True,
+            )
+
+    # Polish auto-injector: when the model stalls on an action-demanding
+    # turn (zero actions emitted, but the user asked to fix/debug/polish/etc
+    # OR the reply is a numbered-menu stall), inject the safe default
+    # action set so the workbook actually changes. The model can keep its
+    # numbered menu in the reply text — we just ensure SOMETHING happens.
+    _polish_injected: list[str] = []
+    if app in ("excel", "google_sheets"):
+        _polish_actions, _polish_injected = _auto_inject_polish_actions(
+            all_actions, request.context,
+            user_message=request.message,
+            reply=result.get("reply") or "",
+        )
+        if _polish_injected:
+            all_actions = _polish_actions + (all_actions or [])
+            _polish_warn = (
+                f"\n\nApplied default fixes since the request asked for action: "
+                f"{', '.join(_polish_injected)}. Use Ctrl+Z to undo, or tell me "
+                "exactly what to change next."
+            )
+            result["reply"] = (result.get("reply") or "") + _polish_warn
+            print(
+                f"[polish-inject] Injected default actions: {_polish_injected}",
                 flush=True,
             )
 
