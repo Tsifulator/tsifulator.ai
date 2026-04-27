@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v70";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v71";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -971,6 +971,16 @@ function claimsActionCompletion(text) {
     /\bi (can|could) (help|assist|do|fix|improve|update|adjust|format|clean|polish)/,
     /\bi['']?d be (happy|glad) to/,
     /\blet me know (what|which|if|when|how)/,
+    // Option-menu pattern: "Here are some options — pick a number" /
+    // "Reply with a number" / "Pick one and I will" / "Want me to do A,
+    // B, or C?". tsifl is an agent — when the user asks for action, the
+    // model must emit actions, not present a multiple-choice quiz.
+    /\b(pick|choose|reply with|tell me) (a |the |which )?(number|option|one)\b/,
+    /\bhere are some options\b/,
+    /\b(let me know|tell me) which (one|to|number)/,
+    /\bi haven['']?t (built|done|made|created|added|fixed|applied) (anything|it|them) yet\b/,
+    /\bwant me to (do|fix|apply|build|run|execute) [^.?!\n]{0,40}\?/,
+    /\bwhich (one|of these|option) (would|do) you/,
   ];
   return patterns.some(rx => rx.test(t));
 }
