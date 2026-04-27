@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v63";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v64";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -102,12 +102,23 @@ function showLoginScreen() {
   document.getElementById("auth-password").addEventListener("keydown", (e) => {
     if (e.key === "Enter") handleSignIn();
   });
-  // Show/hide password toggle (Improvement 9)
+  // Show/hide password toggle — uses inline SVG icons (eye-open / eye-off)
+  // instead of an emoji glyph so clicks land reliably across Office webviews.
   const togglePw = document.getElementById("toggle-pw-btn");
   if (togglePw) {
-    togglePw.addEventListener("click", () => {
+    togglePw.addEventListener("click", (e) => {
+      e.preventDefault();
       const pwInput = document.getElementById("auth-password");
-      pwInput.type = pwInput.type === "password" ? "text" : "password";
+      const isVisible = pwInput.type === "text";
+      pwInput.type = isVisible ? "password" : "text";
+      const eyeOpen = togglePw.querySelector(".icon-eye-open");
+      const eyeOff  = togglePw.querySelector(".icon-eye-off");
+      if (eyeOpen && eyeOff) {
+        eyeOpen.style.display = isVisible ? "block" : "none";
+        eyeOff.style.display  = isVisible ? "none"  : "block";
+      }
+      togglePw.setAttribute("aria-label", isVisible ? "Show password" : "Hide password");
+      togglePw.setAttribute("title",      isVisible ? "Show password" : "Hide password");
     });
   }
   // Forgot password (Improvement 5)
