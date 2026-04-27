@@ -154,6 +154,19 @@ def build_instructions(actions: list, context: dict) -> str:
                 parts.append(f"  9. Grouped By: Columns")
             parts.append(f"  10. Click OK")
 
+        elif action_type == "computer_use":
+            # Generic CU fallback — backend Claude emits this for ribbon-only
+            # features that don't have a dedicated action type (SmartArt,
+            # page setup, headers/footers, etc.). The `task` field carries
+            # a step-by-step description that Claude CU can follow directly.
+            task = payload.get("task", "").strip()
+            if task:
+                parts.append(f"TASK {i}: {task}")
+            else:
+                # Fallback: backend forgot the task field. Dump payload so CU
+                # has *something* to work with rather than failing silently.
+                parts.append(f"TASK {i}: {json.dumps(payload)}")
+
         else:
             parts.append(f"TASK {i}: {action_type}")
             parts.append(f"  Details: {json.dumps(payload)}")
