@@ -45,6 +45,10 @@ COMPUTER_USE_ACTIONS = {
     "install_addins",        # Ribbon → File → Options → Add-ins; no Office.js API
     "uninstall_addins",      # Same — must toggle the checkbox in Excel Options
     "computer_use",          # Generic computer use fallback
+    # ── P1 background-friendly types (xlwings, runs without screen takeover) ──
+    "smartart_diagram",          # Process/cycle/list flow diagrams
+    "pivot_table",               # PivotTable creation with rows/cols/values
+    "conditional_format_advanced",  # Color scales, data bars, icon sets, top-N
 }
 
 # Actions handled by the Office.js add-in (fast path)

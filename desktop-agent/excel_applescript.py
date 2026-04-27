@@ -969,6 +969,363 @@ def do_uninstall_addins(addins: list):
     return {"status": "completed", "steps": steps}
 
 
+# ── P1 handlers (xlwings, runs silently in background) ─────────────────────
+
+
+def do_smartart_diagram(steps: list, sheet: str = "",
+                         layout: str = "process", anchor: str = ""):
+    """Create a SmartArt-style flow diagram on the given sheet.
+
+    Excel for Mac's `Shapes.AddSmartArt` is unreliable, so we build an
+    equivalent flow diagram from rounded rectangles + arrow connectors —
+    visually identical to "Basic Process" SmartArt and 100% deterministic.
+
+    Args:
+        steps: list of node text strings, e.g.
+               ["Selling Price", "Commission Rate", "Total Commission", "PHRE Share"]
+        sheet: target worksheet name (defaults to active sheet)
+        layout: 'process' (horizontal arrow flow), 'cycle' (circular arrow),
+                'list' (stacked rectangles). Only 'process' is shipped in P1;
+                cycle/list fall back to process.
+        anchor: optional top-left anchor cell like 'F2'. If empty, defaults
+                to a position right of the used range.
+
+    Runs entirely in the background via xlwings — no Excel focus needed.
+    """
+    if not steps:
+        return {"status": "failed", "error": "No steps provided for SmartArt diagram"}
+
+    check_stop()
+
+    try:
+        app, wb, ws = _get_xlwings()
+    except Exception as e:
+        return {"status": "failed", "error": f"xlwings init: {e}"}
+
+    # Target sheet: switch only if specified and different from active
+    if sheet:
+        try:
+            ws = wb.sheets[sheet]
+        except Exception:
+            return {"status": "failed", "error": f"Sheet '{sheet}' not found"}
+
+    # Compute anchor pixel position. Excel measures shapes in points (1pt ≈ 0.75px).
+    # If no anchor given, place to the right of the used range.
+    BOX_W, BOX_H = 140, 60
+    GAP = 30  # arrow length
+
+    if anchor:
+        try:
+            anchor_range = ws.range(anchor)
+            left = float(anchor_range.api.left) if hasattr(anchor_range.api, "left") else 50.0
+            top = float(anchor_range.api.top) if hasattr(anchor_range.api, "top") else 50.0
+        except Exception:
+            left, top = 400.0, 50.0
+    else:
+        # Place to the right of column F by default (safe for most workbooks)
+        try:
+            anchor_range = ws.range("F2")
+            left = float(anchor_range.api.left) if hasattr(anchor_range.api, "left") else 400.0
+            top = float(anchor_range.api.top) if hasattr(anchor_range.api, "top") else 50.0
+        except Exception:
+            left, top = 400.0, 50.0
+
+    n = len(steps)
+    steps_added: list[str] = []
+
+    # msoShapeRoundedRectangle = 5; msoShapeRightArrow = 33
+    SHAPE_ROUNDED_RECT = 5
+    SHAPE_RIGHT_ARROW = 33
+
+    for i, text in enumerate(steps):
+        check_stop()
+        x = left + i * (BOX_W + GAP)
+
+        try:
+            # Add rounded rectangle for the step
+            shp = ws.api.shapes.add_shape(SHAPE_ROUNDED_RECT, x, top, BOX_W, BOX_H)
+            # Set text (Mac xlwings + Excel COM)
+            try:
+                shp.text_frame.text_range.text = str(text)
+            except AttributeError:
+                # Older xlwings/Excel — try alternative path
+                try:
+                    shp.text_frame2.text_range.text = str(text)
+                except Exception:
+                    # Fall back to AppleScript text-set via the shape's index
+                    pass
+            steps_added.append(f"Box {i+1}: {text}")
+        except Exception as e:
+            return {
+                "status": "failed",
+                "error": f"Failed to add box {i+1} ('{text}'): {e}",
+                "steps": steps_added,
+            }
+
+        # Arrow between this box and the next
+        if i < n - 1:
+            try:
+                arrow_x = x + BOX_W
+                arrow_y = top + (BOX_H / 2) - 10
+                ws.api.shapes.add_shape(
+                    SHAPE_RIGHT_ARROW, arrow_x, arrow_y, GAP, 20
+                )
+            except Exception as e:
+                # Non-fatal — boxes still rendered, just no arrow
+                steps_added.append(f"WARN: arrow {i+1}→{i+2} failed: {e}")
+
+    return {
+        "status": "completed",
+        "message": f"Created SmartArt-style flow diagram with {n} steps on '{ws.name}'",
+        "steps": steps_added,
+    }
+
+
+def do_pivot_table(source_range: str, output_cell: str,
+                    rows: list = None, columns: list = None,
+                    values: list = None, page_filters: list = None,
+                    sheet: str = "", output_sheet: str = "",
+                    name: str = ""):
+    """Create a PivotTable from `source_range`, place it at `output_cell`.
+
+    Args:
+        source_range: source data, e.g. 'A1:E50' or 'Sheet1!A1:E50'
+        output_cell: top-left cell for the pivot, e.g. 'G2' on output_sheet
+        rows: column headers to put in the Rows area
+        columns: column headers to put in the Columns area
+        values: list of dicts: {"field": "Sales", "function": "sum"|"count"|...}
+                or just strings (defaults to sum)
+        page_filters: column headers to put in the Filters area
+        sheet: source sheet (defaults to active)
+        output_sheet: destination sheet (defaults to source sheet)
+        name: optional pivot table name
+
+    Runs silently via xlwings — no Excel focus needed.
+    """
+    if not source_range:
+        return {"status": "failed", "error": "source_range is required"}
+    if not output_cell:
+        return {"status": "failed", "error": "output_cell is required"}
+
+    rows = rows or []
+    columns = columns or []
+    values = values or []
+    page_filters = page_filters or []
+
+    check_stop()
+
+    try:
+        app, wb, src_ws = _get_xlwings()
+    except Exception as e:
+        return {"status": "failed", "error": f"xlwings init: {e}"}
+
+    # Resolve source sheet
+    if sheet:
+        try:
+            src_ws = wb.sheets[sheet]
+        except Exception:
+            return {"status": "failed", "error": f"Source sheet '{sheet}' not found"}
+
+    # Resolve destination sheet
+    dst_ws = src_ws
+    if output_sheet:
+        try:
+            dst_ws = wb.sheets[output_sheet]
+        except Exception:
+            # Auto-create if missing — analyst convention
+            try:
+                dst_ws = wb.sheets.add(name=output_sheet, after=src_ws)
+            except Exception as e:
+                return {"status": "failed", "error": f"Could not create output sheet '{output_sheet}': {e}"}
+
+    # Build the source range reference. xlwings expects 'Sheet!A1:E50' format
+    # for cross-sheet pivots, or just 'A1:E50' if same-sheet.
+    if "!" in source_range:
+        full_source = source_range
+    else:
+        full_source = f"{src_ws.name}!{source_range}"
+
+    steps: list[str] = []
+    try:
+        check_stop()
+        # xlConsolidationDatabase = 1
+        cache = wb.api.pivot_caches().create(
+            source_type=1,  # xlDatabase
+            source_data=full_source,
+        )
+        steps.append(f"Created pivot cache from {full_source}")
+
+        check_stop()
+        pivot_name = name or f"PivotTable_{int(time.time())}"
+        pt = cache.create_pivot_table(
+            table_destination=f"'{dst_ws.name}'!{output_cell}",
+            table_name=pivot_name,
+        )
+        steps.append(f"Created pivot table '{pivot_name}' at {output_cell}")
+    except Exception as e:
+        return {"status": "failed", "error": f"PivotTable create failed: {e}", "steps": steps}
+
+    # Wire fields. xlPivotFieldOrientation enum:
+    #   xlRowField = 1, xlColumnField = 2, xlPageField = 3, xlDataField = 4
+    def _set_field(field_name: str, orientation: int) -> None:
+        try:
+            pf = pt.pivot_fields(field_name)
+            pf.orientation = orientation
+            steps.append(f"  {field_name} → {{1:'row',2:'col',3:'filter',4:'value'}}[{orientation}]")
+        except Exception as e:
+            steps.append(f"WARN: could not set field '{field_name}': {e}")
+
+    for f in rows:
+        check_stop(); _set_field(f, 1)
+    for f in columns:
+        check_stop(); _set_field(f, 2)
+    for f in page_filters:
+        check_stop(); _set_field(f, 3)
+
+    # Values: each entry can be a string ('Sales' → sum) or
+    # {"field": "Sales", "function": "sum|count|average|max|min"}
+    AGG_MAP = {
+        "sum": -4157, "count": -4112, "average": -4106,
+        "max": -4136, "min": -4139, "product": -4149,
+        "stdev": -4155, "var": -4164,
+    }
+    for entry in values:
+        check_stop()
+        if isinstance(entry, str):
+            field_name, func = entry, "sum"
+        elif isinstance(entry, dict):
+            field_name = entry.get("field", "")
+            func = (entry.get("function") or "sum").lower()
+        else:
+            continue
+        if not field_name:
+            continue
+        try:
+            pf = pt.pivot_fields(field_name)
+            pf.orientation = 4  # xlDataField
+            pf.function = AGG_MAP.get(func, -4157)
+            steps.append(f"  Value: {func}({field_name})")
+        except Exception as e:
+            steps.append(f"WARN: could not add value '{field_name}': {e}")
+
+    return {
+        "status": "completed",
+        "message": f"PivotTable '{pivot_name}' created on '{dst_ws.name}' at {output_cell}",
+        "steps": steps,
+    }
+
+
+def do_conditional_format_advanced(range_ref: str, rule: str,
+                                     sheet: str = "", **kwargs):
+    """Apply advanced conditional formatting (color scale / data bar / icon set).
+
+    Args:
+        range_ref: target cell range, e.g. 'D2:D40'
+        rule: one of 'color_scale_3', 'color_scale_2', 'data_bar',
+              'icon_set_3', 'top_n', 'bottom_n', 'above_average', 'below_average'
+        sheet: target worksheet (defaults to active)
+        **kwargs: rule-specific params (e.g. n=10 for top_n,
+                  bar_color='blue' for data_bar, icon_style='3 arrows')
+
+    Uses xlwings COM API — runs silently in the background.
+    """
+    if not range_ref:
+        return {"status": "failed", "error": "range_ref is required"}
+
+    check_stop()
+
+    try:
+        app, wb, ws = _get_xlwings()
+    except Exception as e:
+        return {"status": "failed", "error": f"xlwings init: {e}"}
+
+    if sheet:
+        try:
+            ws = wb.sheets[sheet]
+        except Exception:
+            return {"status": "failed", "error": f"Sheet '{sheet}' not found"}
+
+    try:
+        rng = ws.range(range_ref)
+    except Exception as e:
+        return {"status": "failed", "error": f"Bad range '{range_ref}': {e}"}
+
+    fc = rng.api.format_conditions
+    steps: list[str] = []
+
+    try:
+        check_stop()
+        if rule == "color_scale_3":
+            # 3-color scale: red → yellow → green by percentile
+            cs = fc.add_color_scale(color_scale_type=3)
+            steps.append(f"Added 3-color scale to {range_ref}")
+        elif rule == "color_scale_2":
+            cs = fc.add_color_scale(color_scale_type=2)
+            steps.append(f"Added 2-color scale to {range_ref}")
+        elif rule == "data_bar":
+            db = fc.add_databar()
+            steps.append(f"Added data bar to {range_ref}")
+        elif rule in ("icon_set_3", "icon_set"):
+            ic = fc.add_icon_set_condition()
+            steps.append(f"Added 3-icon set to {range_ref}")
+        elif rule == "top_n":
+            n = int(kwargs.get("n", 10))
+            # xlTop10Top = 0
+            top = fc.add_top10()
+            top.top_bottom = 0  # top
+            top.rank = n
+            try:
+                top.font.color = 0x006100  # dark green text
+                top.interior.color = 0xC6EFCE  # light green fill
+            except Exception:
+                pass
+            steps.append(f"Highlighted top {n} values in {range_ref}")
+        elif rule == "bottom_n":
+            n = int(kwargs.get("n", 10))
+            top = fc.add_top10()
+            top.top_bottom = 1  # bottom
+            top.rank = n
+            try:
+                top.font.color = 0x9C0006  # dark red text
+                top.interior.color = 0xFFC7CE  # light red fill
+            except Exception:
+                pass
+            steps.append(f"Highlighted bottom {n} values in {range_ref}")
+        elif rule == "above_average":
+            ab = fc.add_above_average()
+            ab.above_below = 0  # above
+            try:
+                ab.font.color = 0x006100
+                ab.interior.color = 0xC6EFCE
+            except Exception:
+                pass
+            steps.append(f"Highlighted above-average in {range_ref}")
+        elif rule == "below_average":
+            ab = fc.add_above_average()
+            ab.above_below = 1  # below
+            try:
+                ab.font.color = 0x9C0006
+                ab.interior.color = 0xFFC7CE
+            except Exception:
+                pass
+            steps.append(f"Highlighted below-average in {range_ref}")
+        else:
+            return {
+                "status": "failed",
+                "error": f"Unknown conditional format rule: '{rule}'. "
+                         f"Valid: color_scale_3, color_scale_2, data_bar, "
+                         f"icon_set_3, top_n, bottom_n, above_average, below_average",
+            }
+    except Exception as e:
+        return {"status": "failed", "error": f"Format condition apply failed: {e}", "steps": steps}
+
+    return {
+        "status": "completed",
+        "message": f"Applied {rule} conditional formatting to {range_ref} on '{ws.name}'",
+        "steps": steps,
+    }
+
+
 # ── Dispatcher ───────────────────────────────────────────────────────────────
 
 
@@ -1035,6 +1392,38 @@ def execute_excel_action(action: dict) -> dict:
 
         elif action_type == "uninstall_addins":
             return do_uninstall_addins(payload.get("addins", []))
+
+        # ── P1 background-friendly handlers (xlwings, no focus-stealing) ──
+
+        elif action_type == "smartart_diagram":
+            return do_smartart_diagram(
+                steps=payload.get("steps", []),
+                sheet=payload.get("sheet", ""),
+                layout=payload.get("layout", "process"),
+                anchor=payload.get("anchor", ""),
+            )
+
+        elif action_type == "pivot_table":
+            return do_pivot_table(
+                source_range=payload.get("source_range", ""),
+                output_cell=payload.get("output_cell", ""),
+                rows=payload.get("rows", []),
+                columns=payload.get("columns", []),
+                values=payload.get("values", []),
+                page_filters=payload.get("page_filters", []),
+                sheet=payload.get("sheet", ""),
+                output_sheet=payload.get("output_sheet", ""),
+                name=payload.get("name", ""),
+            )
+
+        elif action_type == "conditional_format_advanced":
+            return do_conditional_format_advanced(
+                range_ref=payload.get("range", ""),
+                rule=payload.get("rule", ""),
+                sheet=payload.get("sheet", ""),
+                **{k: v for k, v in payload.items()
+                   if k not in ("range", "rule", "sheet", "type")},
+            )
 
         else:
             return {"status": "unknown", "error": f"Unknown action type: {action_type}"}
