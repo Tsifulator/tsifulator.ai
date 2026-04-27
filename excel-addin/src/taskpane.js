@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v65";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v66";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -102,24 +102,38 @@ function showLoginScreen() {
   document.getElementById("auth-password").addEventListener("keydown", (e) => {
     if (e.key === "Enter") handleSignIn();
   });
-  // Show/hide password toggle — uses inline SVG icons (eye-open / eye-off)
-  // instead of an emoji glyph so clicks land reliably across Office webviews.
+  // Show/hide password toggle. Office WKWebView sometimes doesn't fire `click`
+  // reliably on absolutely-positioned buttons inside form rows — fires `mousedown`
+  // instead. Listen on both, dedupe with a flag so we don't double-toggle.
   const togglePw = document.getElementById("toggle-pw-btn");
   if (togglePw) {
-    togglePw.addEventListener("click", (e) => {
-      e.preventDefault();
-      const pwInput = document.getElementById("auth-password");
-      const isVisible = pwInput.type === "text";
-      pwInput.type = isVisible ? "password" : "text";
-      const eyeOpen = togglePw.querySelector(".icon-eye-open");
-      const eyeOff  = togglePw.querySelector(".icon-eye-off");
-      if (eyeOpen && eyeOff) {
-        eyeOpen.style.display = isVisible ? "block" : "none";
-        eyeOff.style.display  = isVisible ? "none"  : "block";
+    let _toggleLock = false;
+    const doToggle = (e) => {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      if (_toggleLock) return;
+      _toggleLock = true;
+      setTimeout(() => { _toggleLock = false; }, 100);
+      try {
+        const pwInput = document.getElementById("auth-password");
+        if (!pwInput) { console.warn("[tsifl] toggle: auth-password not found"); return; }
+        const isVisible = pwInput.type === "text";
+        pwInput.type = isVisible ? "password" : "text";
+        const eyeOpen = togglePw.querySelector(".icon-eye-open");
+        const eyeOff  = togglePw.querySelector(".icon-eye-off");
+        if (eyeOpen) eyeOpen.style.display = isVisible ? "block" : "none";
+        if (eyeOff)  eyeOff.style.display  = isVisible ? "none"  : "block";
+        togglePw.setAttribute("aria-label", isVisible ? "Show password" : "Hide password");
+        togglePw.setAttribute("title",      isVisible ? "Show password" : "Hide password");
+        console.log("[tsifl] password toggled →", pwInput.type);
+      } catch (err) {
+        console.error("[tsifl] toggle handler crashed:", err);
       }
-      togglePw.setAttribute("aria-label", isVisible ? "Show password" : "Hide password");
-      togglePw.setAttribute("title",      isVisible ? "Show password" : "Hide password");
-    });
+    };
+    togglePw.addEventListener("mousedown",   doToggle);
+    togglePw.addEventListener("touchstart",  doToggle, { passive: false });
+    togglePw.addEventListener("click",       (e) => { e.preventDefault(); e.stopPropagation(); });
+  } else {
+    console.warn("[tsifl] toggle-pw-btn element not found at showLoginScreen time");
   }
   // Forgot password (Improvement 5)
   const forgotBtn = document.getElementById("forgot-pw-btn");

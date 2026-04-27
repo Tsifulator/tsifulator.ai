@@ -111,32 +111,33 @@ body {
 }
 #login-form input::placeholder { color: var(--text-dim); }
 
-/* Password show/hide button — large click target, no <label> wrapper to
-   prevent click interception. SVG has pointer-events:none so the click
-   reliably reaches the button. */
+/* Password show/hide button. Tall enough to span the input height entirely so
+   the click target is unambiguous. No transform tricks (Office WKWebView has
+   issues hit-testing transformed absolute elements). All inner content has
+   pointer-events:none so children can't intercept the click. */
 .login-input-icon-btn {
   position: absolute;
-  right: 4px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 30px;
-  height: 30px;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 38px;
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: 6px;
+  border: none;
   color: var(--text-dim);
   cursor: pointer;
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  z-index: 2;
-  transition: color 0.12s, background 0.12s;
+  margin: 0;
+  z-index: 5;
+  transition: color 0.12s;
 }
-.login-input-icon-btn:hover  { color: var(--text); background: var(--bg); }
-.login-input-icon-btn:active { transform: translateY(-50%) scale(0.94); }
-.login-input-icon-btn:focus  { outline: none; border-color: var(--blue); }
-.login-input-icon-btn svg    { display: block; pointer-events: none; }
+.login-input-icon-btn:hover  { color: var(--text); }
+.login-input-icon-btn:active { color: var(--blue); }
+.login-input-icon-btn:focus  { outline: none; }
+.login-input-icon-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; border-radius: 6px; }
+.login-input-icon-btn *      { pointer-events: none; }
 
 #login-btn {
   background: var(--blue);
