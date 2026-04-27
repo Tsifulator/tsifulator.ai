@@ -1589,18 +1589,52 @@ def execute_all_actions(actions: list, context: dict = None, cancel_check=None) 
 
         time.sleep(0.3)
 
+    # Build a rich, multi-line message that surfaces each action's specific
+    # outcome (e.g. "Goal Seek converged: D7 changed from 0.5 to 0.7272"
+    # instead of the useless "Executed 1 actions (1/1 OK)"). The frontend
+    # reads result.message and displays it as the chat reply, so this is
+    # the user-visible feedback channel.
+    def _summarize() -> str:
+        lines: list[str] = []
+        for i, (a, r) in enumerate(zip(actions, results), start=1):
+            atype = a.get("type", "?")
+            rstatus = r.get("status", "unknown")
+            rmsg = r.get("message", "") or ""
+            if rmsg:
+                # Per-action message exists — use it, prefixed for clarity
+                # when there's >1 action
+                if len(actions) == 1:
+                    lines.append(rmsg)
+                else:
+                    lines.append(f"{i}. {atype}: {rmsg}")
+            else:
+                # Fall back to status + steps
+                err = r.get("error", "")
+                steps = r.get("steps", [])
+                step_summary = "; ".join(s for s in steps[-3:] if s)
+                if rstatus == "completed":
+                    fallback = f"{atype}: completed" + (f" — {step_summary}" if step_summary else "")
+                elif rstatus == "failed":
+                    fallback = f"{atype}: failed" + (f" — {err}" if err else "")
+                elif rstatus == "cancelled":
+                    fallback = f"{atype}: stopped"
+                else:
+                    fallback = f"{atype}: {rstatus}"
+                lines.append(fallback if len(actions) == 1 else f"{i}. {fallback}")
+        return "\n".join(lines) if lines else "No actions executed"
+
     if cancelled:
         _emergency_cleanup()
         return {
             "status": "cancelled",
-            "message": f"Stopped by user after {len(results)}/{len(actions)} actions",
+            "message": f"Stopped by user after {len(results)}/{len(actions)} action(s).\n\n{_summarize()}",
             "results": results,
             "steps_taken": len(results),
         }
 
     return {
         "status": "completed" if all_ok else "partial",
-        "message": f"Executed {len(actions)} actions ({sum(1 for r in results if r.get('status') == 'completed')}/{len(actions)} OK)",
+        "message": _summarize(),
         "results": results,
         "steps_taken": len(actions),
     }

@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v75";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v76";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -1457,14 +1457,23 @@ async function handleSubmit() {
             const statusData = await statusResp.json();
             const s = statusData.status;
             if (s === "running") everRunning = true;
+            // Use the agent's actual rich result message (e.g. "Goal Seek
+            // converged: D7 changed from 0.5 to 0.7272, so C18 = 100000")
+            // instead of generic placeholders. Falls back to placeholders
+            // when the agent didn't provide detail (older agent versions
+            // or actions that don't return a message).
+            const agentMsg = (statusData.result && statusData.result.message) || "";
             if (s === "completed") {
               cuDone = true;
               hideAccessModal();
-              appendMessage("assistant", "Done — advanced features applied.");
+              appendMessage("assistant", agentMsg || "Done.");
             } else if (s === "failed") {
               cuDone = true;
               hideAccessModal();
-              appendMessage("assistant", `Desktop automation failed: ${statusData.error || "unknown error"}`);
+              appendMessage("assistant",
+                agentMsg
+                  ? `Desktop automation failed: ${agentMsg}`
+                  : `Desktop automation failed: ${statusData.error || "unknown error"}`);
             } else if (s === "cancelled") {
               cuDone = true;
               hideAccessModal();
@@ -1472,7 +1481,10 @@ async function handleSubmit() {
             } else if (s === "partial") {
               cuDone = true;
               hideAccessModal();
-              appendMessage("assistant", "Done — some advanced features applied (partial completion).");
+              appendMessage("assistant",
+                agentMsg
+                  ? `Some actions completed, some did not:\n\n${agentMsg}`
+                  : "Done — some advanced features applied (partial completion).");
             } else if (s === "pending" && cuPolls >= agentPickupDeadline && !everRunning) {
               // No desktop agent has claimed the session after 15s —
               // almost certainly means the user hasn't started the
