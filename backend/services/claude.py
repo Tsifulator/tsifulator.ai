@@ -2769,7 +2769,39 @@ TRANSACTIONS PROJECT SPECIFICS:
     if is_hybrid:
         print(f"[routing] HYBRID (explain+act) → tool_choice=auto. msg={message[:80]!r}", flush=True)
 
-    force_tools = (is_rstudio_with_images or (is_action_app and not is_greeting)) and not skip_tools and not is_hybrid
+    # IMPOSSIBLE FEATURE DETECTION — bug 020 fix. When the user asks for
+    # capabilities tsifl genuinely doesn't have (PDF export, email send,
+    # web browsing, calendar/reminder, file download), tool_choice=any
+    # forces the model to pick SOMETHING and it ends up emitting a wrong
+    # tool with no text reply. Relax to "auto" for these so the model can
+    # cleanly say "I can't do that" without a forced tool call.
+    _HAS_IMPOSSIBLE_REQUEST = re.compile(
+        r"(?:"
+        r"export.{0,20}(?:as |to )?(?:pdf|word|html|csv\s+file|image)|"
+        r"save.{0,20}as.{0,10}pdf|"
+        r"convert.{0,20}to.{0,10}pdf|"
+        r"(?:send|compose|draft|write).{0,20}(?:email|mail|message)|"
+        r"email.{0,30}(?:to|me)|"
+        r"browse|search the (?:web|internet)|"
+        r"download|fetch.{0,20}(?:from|url)|"
+        r"schedule.{0,20}(?:reminder|meeting|event)|"
+        r"add.{0,20}to.{0,10}calendar|"
+        r"open.{0,10}(?:url|website|browser)|"
+        r"upload.{0,20}to|"
+        r"share.{0,20}via"
+        r")",
+        re.IGNORECASE
+    )
+    asks_impossible = bool(_HAS_IMPOSSIBLE_REQUEST.search(message))
+    if asks_impossible:
+        print(f"[routing] IMPOSSIBLE FEATURE → tool_choice=auto + reply allowed. msg={message[:80]!r}", flush=True)
+
+    force_tools = (
+        (is_rstudio_with_images or (is_action_app and not is_greeting))
+        and not skip_tools
+        and not is_hybrid
+        and not asks_impossible
+    )
     tool_choice = {"type": "any"} if force_tools else {"type": "auto"}
 
     try:

@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v76";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v77";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -30,6 +30,50 @@ const MAX_HISTORY = 20;
 // Debug state (Improvement 10)
 let lastSyncTimestamp = null;
 let sessionSource = "none";
+
+// ── Cheap mode (force Haiku tier) ──────────────────────────────────────────
+// Toggleable via the "$" button in the header. When ON, every chat request
+// gets context.force_model = "haiku" so the backend's _select_model uses
+// MODEL_FAST regardless of message complexity. Cost: ~3x cheaper per call.
+// Trade-off: Haiku is weaker on edge cases. Use during dev iteration; flip
+// off for production demos / "is this the real experience" tests.
+//
+// State persists in localStorage so reloads/restarts remember the user's
+// preference. Default: OFF (Sonnet).
+const CHEAP_MODE_KEY = "tsifl_cheap_mode";
+let _cheapMode = false;
+try {
+  _cheapMode = window.localStorage.getItem(CHEAP_MODE_KEY) === "1";
+} catch (_) { /* localStorage unavailable — fall back to default */ }
+
+function _renderCheapModeButton() {
+  const btn = document.getElementById("cheap-mode-btn");
+  if (!btn) return;
+  if (_cheapMode) {
+    btn.classList.add("cheap-on");
+    btn.title = "Cheap mode: ON (Haiku, ~3x cheaper). Click to switch back to Sonnet.";
+    btn.textContent = "$ ON";
+  } else {
+    btn.classList.remove("cheap-on");
+    btn.title = "Cheap mode: OFF (Sonnet, default quality). Click to enable Haiku for cheaper dev runs.";
+    btn.textContent = "$";
+  }
+}
+
+function _toggleCheapMode() {
+  _cheapMode = !_cheapMode;
+  try {
+    window.localStorage.setItem(CHEAP_MODE_KEY, _cheapMode ? "1" : "0");
+  } catch (_) {}
+  _renderCheapModeButton();
+  showToast(
+    _cheapMode
+      ? "Cheap mode ON — using Haiku (~3x cheaper, weaker on edge cases)"
+      : "Cheap mode OFF — using Sonnet (default quality)",
+    "info",
+    3000
+  );
+}
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 
@@ -261,6 +305,12 @@ function showChatScreen(user) {
     document.getElementById("chat-history").innerHTML = "";
     showLoginScreen();
   });
+
+  // Cheap-mode toggle in the header. Renders initial state from localStorage,
+  // wires the click → flip state + re-render + show toast.
+  _renderCheapModeButton();
+  const cheapBtn = document.getElementById("cheap-mode-btn");
+  if (cheapBtn) cheapBtn.addEventListener("click", _toggleCheapMode);
 
   // Image attachment — file picker
   // File input is overlaid on the attach button (no programmatic .click() needed —
@@ -1098,13 +1148,21 @@ async function handleSubmit() {
       setStatus("Thinking...");
     }
 
+    // Inject force_model when cheap mode is on. Backend's _select_model
+    // honors context.force_model = "haiku" / "sonnet" / "opus" (see
+    // services/claude.py). Using ?? avoids overwriting if some other
+    // code path already set force_model (e.g. RStudio image override).
+    const requestContext = _cheapMode
+      ? { ...excelContext, force_model: excelContext.force_model ?? "haiku" }
+      : excelContext;
+
     const response = await fetch(`${BACKEND_URL}/chat/`, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify({
         user_id: CURRENT_USER.id,
         message: message,
-        context: excelContext,
+        context: requestContext,
         images:  images.length > 0 ? images : undefined,
       }),
     });

@@ -60,6 +60,10 @@
         <img id="logo-img" src="/assets/tsifl-wordmark.png" alt="tsifl" />
         <div id="header-right">
           <button id="undo-btn" class="header-btn" title="Undo last action" style="display:none;">Undo</button>
+          <!-- Cheap-mode toggle: forces backend to use Haiku tier for ~3x cost
+               reduction during dev iteration. Persists across reloads via
+               localStorage. Visual: dim outline when off, solid when on. -->
+          <button id="cheap-mode-btn" class="header-btn" title="Cheap mode: forces Haiku tier (~3x cheaper). Use during dev/testing.">$</button>
           <span id="tasks-remaining"></span>
           <button id="logout-btn" title="Sign out">&#8617;</button>
         </div>

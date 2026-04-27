@@ -84,10 +84,43 @@ _ADD_SHEET_ALLOWLIST = {
 
 
 def _name_mentioned(name: str, message: str) -> bool:
-    """True if `name` appears as a whole-phrase substring of `message`, case-insensitive."""
+    """True if `name` appears as a whole-phrase substring of `message`,
+    case-insensitive. Used as a soft signal — does NOT imply creation intent.
+    See `_name_explicitly_created` for the stricter check used by auto-inject."""
     if not name or not message:
         return False
     pattern = r"\b" + re.escape(name.strip()) + r"\b"
+    return re.search(pattern, message, flags=re.IGNORECASE) is not None
+
+
+def _name_explicitly_created(name: str, message: str) -> bool:
+    """True ONLY when the user's message explicitly asks to CREATE a sheet
+    with this name. Distinguishes "create a Sales tab" (create intent) from
+    "add a row to the Sales tab" (modify intent on existing sheet).
+
+    Bug 018 fix: previously `_name_mentioned` was used as the auto-inject
+    qualification, which over-triggered. User says 'add a summary row to
+    the Transactions tab' assuming it exists; auto-inject created a phantom
+    Transactions sheet and let 7 garbage writes through.
+
+    Required pattern: a creation verb (create/add/build/make/new) followed
+    by the name within ~5 words (allowing 'create a new <name> sheet',
+    'build the <name> tab', etc). Bare 'to/on/in the <name>' does NOT
+    qualify, because those phrasings assume the sheet already exists.
+    """
+    if not name or not message:
+        return False
+    name_re = re.escape(name.strip())
+    # Creation verbs that signal user wants a NEW sheet
+    verbs = (
+        r"(?:create|add|build|make|insert|generate|set ?up|set-?up|"
+        r"new|gimme|give me)"
+    )
+    # Optional articles + qualifiers between verb and name
+    fillers = r"(?:\s+(?:a|an|the|new|another|extra|fresh)){0,3}"
+    # Optional "tab"/"sheet"/"worksheet" after the name
+    suffix = r"(?:\s+(?:tab|sheet|worksheet))?"
+    pattern = rf"\b{verbs}{fillers}\s+{name_re}{suffix}\b"
     return re.search(pattern, message, flags=re.IGNORECASE) is not None
 
 
@@ -309,8 +342,11 @@ def _auto_inject_add_sheets(
     injected_names: list = []
     for key, (canonical, count) in sheet_writes.items():
         qualifies = (
-            # User explicitly named the sheet.
-            _name_mentioned(canonical, user_message)
+            # User EXPLICITLY asked to create a sheet with this name.
+            # Tightened from `_name_mentioned` (bug 018): bare mention of
+            # the name doesn't imply creation intent — "add to the X tab"
+            # assumes X exists, only "create/build/make a X tab" does.
+            _name_explicitly_created(canonical, user_message)
             # Allowlisted name (e.g. "Scenario Summary").
             or key in _ADD_SHEET_ALLOWLIST
             # Strict: name + user message share an intent keyword.
@@ -1223,7 +1259,7 @@ async def debug_guards():
         "project_memory_available": True,
         "project_memory_enabled":   project_memory.is_enabled(),
         "project_memory_backend":   project_memory.backend_type(),  # 'supabase' or 'file'
-        "build_tag": "pathB-2026-04-27b-prompt-caching",
+        "build_tag": "pathB-2026-04-27c-018-020-cheap-mode",
     }
 
 

@@ -224,6 +224,19 @@ body {
   border-color: var(--blue);
 }
 
+/* Cheap-mode toggle — active state. Solid amber so the user can't miss
+   that they're in cheap mode (Haiku) and not the default tier. */
+#cheap-mode-btn.cheap-on {
+  background: #FEF3C7;
+  color: #92400E;
+  border-color: #F59E0B;
+}
+#cheap-mode-btn.cheap-on:hover {
+  background: #FDE68A;
+  color: #78350F;
+  border-color: #D97706;
+}
+
 #logout-btn {
   background: none;
   border: none;
