@@ -1,0 +1,9 @@
+# py2app build artifacts — never commit these.
+# Anyone wanting the .app builds it themselves via `python3 setup.py py2app -A`.
+build/
+dist/
+
+# Python bytecode + onboarding markers
+__pycache__/
+*.pyc
+.onboarded
