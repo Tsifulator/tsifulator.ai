@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v74";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v75";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -969,7 +969,11 @@ function claimsActionCompletion(text) {
     "autofit|auto-?fit|highlight|share|show|organize|organi[sz]e|tidy|" +
     "set ?up|set|configure|update|refine|adjust|tweak|reformat|restyle|" +
     "color|colou?r|bold|widen|expand|shrink|consolidate|summari[sz]e|" +
-    "analyze|analyse|recommend|propose|suggest";
+    "analyze|analyse|recommend|propose|suggest|" +
+    // New: future-tense action verbs that slipped past — "let me set this up",
+    // "I'll configure", "I'll handle", "I'll run", "I'll do this"
+    "handle|run|do|execute|perform|kick off|start|launch|trigger|process|" +
+    "open|navigate to|go to|use|apply|implement|deploy";
 
   const patterns = [
     // Past-tense "I've done it" claims
