@@ -11,48 +11,37 @@
 
     <!-- ── LOGIN SCREEN ── -->
     <div id="login-screen">
-      <div id="login-card">
-        <img id="login-logo" src="/assets/tsifl-wordmark.png" alt="tsifl" />
-        <div id="login-tagline">Agentic Sandbox for Financial Analysts</div>
+      <img id="login-logo" src="/assets/tsifl-wordmark.png" alt="tsifl" />
+      <div id="login-tagline">Agentic Sandbox for Financial Analysts</div>
 
-        <div id="login-form">
-          <label class="login-field">
-            <span class="login-field-label">Email</span>
-            <input type="email" id="auth-email" placeholder="you@firm.com" autocomplete="email"/>
-          </label>
+      <div id="login-form">
+        <input type="email" id="auth-email" placeholder="Email" autocomplete="email"/>
 
-          <label class="login-field">
-            <span class="login-field-label">Password</span>
-            <div class="login-input-group">
-              <input type="password" id="auth-password" placeholder="••••••••" autocomplete="current-password"/>
-              <button type="button" id="toggle-pw-btn" class="login-input-icon-btn" aria-label="Show password" title="Show password">
-                <!-- Eye open (visible by default) -->
-                <svg class="icon-eye-open" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/>
-                  <circle cx="12" cy="12" r="3"/>
-                </svg>
-                <!-- Eye off (hidden by default; shown when password is visible) -->
-                <svg class="icon-eye-off" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
-                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-10-7-10-7a18.45 18.45 0 0 1 3.66-4.78"/>
-                  <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 7 10 7a18.5 18.5 0 0 1-2.16 3.19"/>
-                  <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/>
-                  <line x1="2" y1="2" x2="22" y2="22"/>
-                </svg>
-              </button>
-            </div>
-          </label>
-
-          <button id="login-btn">Sign In</button>
-          <button id="signup-btn" class="secondary">Create Account</button>
-
-          <div id="auth-error"></div>
-
-          <button id="forgot-pw-btn" type="button">Forgot password?</button>
+        <div class="login-input-group">
+          <input type="password" id="auth-password" placeholder="Password" autocomplete="current-password"/>
+          <button type="button" id="toggle-pw-btn" class="login-input-icon-btn" aria-label="Show password" title="Show password">
+            <svg class="icon-eye-open" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+            <svg class="icon-eye-off" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
+              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-10-7-10-7a18.45 18.45 0 0 1 3.66-4.78"/>
+              <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 7 10 7a18.5 18.5 0 0 1-2.16 3.19"/>
+              <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/>
+              <line x1="2" y1="2" x2="22" y2="22"/>
+            </svg>
+          </button>
         </div>
-      </div>
 
-      <div id="login-footer">
-        Built for analysts who live in their models. <a id="login-help-link" href="#" tabindex="-1">Learn more</a>
+        <button id="login-btn" type="button">Sign in</button>
+
+        <div id="auth-error"></div>
+
+        <div class="login-links">
+          <button id="signup-btn" type="button" class="login-link">Create account</button>
+          <span class="login-link-sep">·</span>
+          <button id="forgot-pw-btn" type="button" class="login-link">Forgot password</button>
+        </div>
       </div>
     </div>
 

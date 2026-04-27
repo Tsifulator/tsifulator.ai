@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v64";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v65";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -327,9 +327,9 @@ async function handleSignUp() {
   // Validation (Improvement 9)
   if (!email || !email.includes("@")) { errEl.textContent = "Enter a valid email address."; return; }
   if (password.length < 6) { errEl.textContent = "Password must be at least 6 characters."; return; }
-  document.getElementById("signup-btn").textContent = "Creating account...";
+  document.getElementById("signup-btn").textContent = "Creating account…";
   const { user, error } = await signUp(email, password);
-  document.getElementById("signup-btn").textContent = "Create Account";
+  document.getElementById("signup-btn").textContent = "Create account";
   if (error) { errEl.textContent = error.message; return; }
   errEl.style.color = "#16A34A";
   errEl.textContent = "Account created! Check your email to confirm, then sign in.";
