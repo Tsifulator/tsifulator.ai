@@ -34,6 +34,39 @@ MODEL_FAST     = "claude-haiku-4-5-20251001"   # $1/$5 per M tokens — greeting
 MODEL_STANDARD = "claude-sonnet-4-20250514"    # $3/$15 per M tokens
 MODEL_HEAVY    = "claude-opus-4-20250514"      # $15/$75 per M tokens — complex analysis, debugging
 
+
+# ── Prompt Caching (Anthropic ephemeral cache) ──────────────────────────────
+# The system prompt is ~8k chars / ~2k tokens of mostly-stable content. By
+# wrapping it in a cache_control block, Anthropic caches it for ~5 minutes
+# and subsequent requests within that window pay 10× less for the cached
+# tokens (0.1× input cost on cache reads vs. 1.25× on the initial write).
+#
+# Cost math for a typical Excel chat request:
+#   - System prompt: ~2k tokens
+#   - Sonnet input @ $3/M = $0.006 normally
+#   - With cache hit @ $0.30/M = $0.0006 (90% savings on prompt portion)
+#   - Across a 24-case regression run + interactive use, this adds up.
+#
+# The cache key is the prompt text, so dynamic per-app prompts (Excel vs
+# RStudio vs Word) cache separately, which is correct — each app surface
+# has its own prompt branch.
+
+def _system_block(prompt: str) -> list:
+    """Wrap a system prompt string into a cache-enabled content block.
+
+    Returns the structured form Anthropic expects when cache_control is set.
+    Pass this as `system=` to messages.create / messages.stream.
+    """
+    if not prompt:
+        return []
+    return [
+        {
+            "type": "text",
+            "text": prompt,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+
 # Patterns that indicate the user wants ideas/opinions/discussion, NOT immediate action.
 # These messages route to Haiku with NO tools — the model just talks and suggests.
 # If the user likes a suggestion, their follow-up ("yes do #2") routes to action mode.
@@ -2745,7 +2778,7 @@ TRANSACTIONS PROJECT SPECIFICS:
         with client.messages.stream(
             model       = selected_model,
             max_tokens  = 16384,
-            system      = system_prompt,
+            system      = _system_block(system_prompt),
             tools       = [] if skip_tools else TOOLS,
             tool_choice = tool_choice,
             messages    = messages,
@@ -3196,7 +3229,7 @@ async def _retry_r_action(
         with client.messages.stream(
             model       = model,
             max_tokens  = 16384,
-            system      = system_prompt,
+            system      = _system_block(system_prompt),
             tools       = TOOLS,
             tool_choice = {"type": "any"},
             messages    = correction_messages,
@@ -3738,7 +3771,7 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
         with client.messages.stream(
             model       = selected_model,
             max_tokens  = 4096,
-            system      = system_prompt,
+            system      = _system_block(system_prompt),
             messages    = messages,
         ) as stream:
             for text in stream.text_stream:
@@ -3748,7 +3781,7 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
         with client.messages.stream(
             model       = selected_model,
             max_tokens  = 16384,
-            system      = system_prompt,
+            system      = _system_block(system_prompt),
             tools       = TOOLS,
             tool_choice = {"type": "auto"},
             messages    = messages,
