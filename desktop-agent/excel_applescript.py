@@ -379,28 +379,60 @@ end tell
         chg_after = None
         set_after = None
 
-    moved = (
-        isinstance(before_val, (int, float))
-        and isinstance(chg_after, (int, float))
-        and abs(before_val - chg_after) > 1e-9
-    )
-    if not moved:
+    # Format numeric values nicely for the user-facing message
+    def _fmt(v):
+        if isinstance(v, (int, float)):
+            return f"{v:.4f}".rstrip("0").rstrip(".") if isinstance(v, float) else str(v)
+        return str(v)
+
+    # REAL convergence check — did set_cell actually reach the target?
+    # The previous version only checked "did changing_cell move?" which is
+    # true even when Goal Seek iterated to garbage values without solving.
+    # Tolerance: 0.1% of |goal| or 0.5 absolute, whichever is larger.
+    converged = False
+    if isinstance(set_after, (int, float)) and isinstance(goal_val, (int, float)):
+        tolerance = max(abs(goal_val) * 0.001, 0.5)
+        converged = abs(set_after - goal_val) <= tolerance
+
+    if not converged:
+        # Auto-revert: restore changing_cell to its original numeric value so
+        # we don't leave the workbook in a corrupted state (e.g. D7 stuck at
+        # -16777166% from a runaway iteration).
+        revert_msg = ""
+        try:
+            ws_obj.range(changing_cell).value = before_val
+            revert_msg = f" Reverted {changing_cell} to {_fmt(before_val)}."
+        except Exception as e:
+            revert_msg = f" Could not auto-revert {changing_cell}: {e}"
+
+        # Diagnose why: did changing_cell barely move (no influence) or did it
+        # swing wildly (Goal Seek tried hard but couldn't solve)?
+        if isinstance(before_val, (int, float)) and isinstance(chg_after, (int, float)):
+            chg_delta = abs(chg_after - before_val)
+            if chg_delta < 1e-6:
+                hint = (f"{changing_cell} didn't move at all — its current "
+                        f"value may not affect {set_cell}'s formula at all. "
+                        f"Check that {set_cell}'s formula actually depends "
+                        f"on {changing_cell} given the workbook's current state "
+                        f"(e.g. an IFS/IF branch may be using a different cell).")
+            else:
+                hint = (f"{changing_cell} swung from {_fmt(before_val)} to "
+                        f"{_fmt(chg_after)} but {set_cell} still came out to "
+                        f"{_fmt(set_after)} (target was {_fmt(goal_val)}). "
+                        f"The target value may be unreachable given the formula's "
+                        f"structure, or {changing_cell}'s effect on {set_cell} "
+                        f"is too weak/non-monotonic to converge.")
+        else:
+            hint = (f"{set_cell} ended at {_fmt(set_after)} instead of "
+                    f"target {_fmt(goal_val)}.")
+
         return {
             "status": "failed",
-            "error": (f"Goal Seek did not converge. {changing_cell} stayed "
-                      f"at {before_val!r}. Check that {set_cell}'s formula "
-                      f"actually depends on {changing_cell}, and that the "
-                      f"target value ({goal_val}) is reachable."),
+            "error": f"Goal Seek did not converge to {_fmt(goal_val)}. {hint}{revert_msg}",
             "steps": steps,
         }
 
-    # Format numeric values nicely for the user-facing message
-    def _fmt(v):
-        if isinstance(v, float):
-            # 4 decimals max, drop trailing zeros
-            return f"{v:.4f}".rstrip("0").rstrip(".")
-        return str(v)
-
+    # Convergence confirmed
     steps.append(
         f"Goal Seek: {set_cell}: {_fmt(set_before)} → {_fmt(set_after)} "
         f"by changing {changing_cell}: {_fmt(before_val)} → {_fmt(chg_after)}"
