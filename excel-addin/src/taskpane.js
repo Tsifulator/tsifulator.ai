@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v77";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v78";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -1198,13 +1198,25 @@ async function handleSubmit() {
         /Note: skipped \d+ action/.test(reply) ||
         /Refused to modify \d+ locked/.test(reply) ||
         /Note: the report was NOT generated/.test(reply);
-      if (!willExecute && claimsActionCompletion(reply) && !serverAlreadyExplained) {
+
+      // Don't fire the banner on conversational messages — "thanks", "ok",
+      // "hi", "got it", etc. Those don't ask for action, so the model's
+      // friendly reply is correct and the banner just adds noise. We detect
+      // conversational by a short, no-action-verb user message.
+      const userMsgClean = (message || "").trim().toLowerCase();
+      const isConversational = (
+        userMsgClean.length < 25
+        && !/\b[A-Z]{1,3}\d+\b/.test(message || "")  // no cell refs
+        && !/\b(fix|debug|polish|improve|format|autofit|create|build|make|add|insert|write|update|run|apply|change|export|email|export|generate|set|configure)\b/.test(userMsgClean)
+      );
+
+      if (!willExecute && claimsActionCompletion(reply) && !serverAlreadyExplained && !isConversational) {
         reply =
           "**Note: nothing was actually changed in the spreadsheet.** " +
           "The assistant claimed to have done something, but no action was executed. " +
-          "Try rephrasing your request with specifics (cell range, sheet name, exact values), " +
-          "or if you asked for something that needs the desktop agent, start it with:\n\n" +
-          "    cd desktop-agent && python3 agent.py\n\n" +
+          "Try rephrasing your request with specifics (cell range, sheet name, exact values). " +
+          "If your request needs advanced features (Solver, Data Tables, SmartArt, etc.) " +
+          "make sure the **tsifl Helper** app is running in your menu bar.\n\n" +
           "---\n\n" +
           reply;
       }
@@ -1550,7 +1562,9 @@ async function handleSubmit() {
               cuDone = true;
               hideAccessModal();
               appendMessage("assistant",
-                "No desktop agent is running on your machine, so advanced actions can't be executed. Start the agent from a Terminal with:\n\n  cd desktop-agent && python3 agent.py\n\nThen retry your request.");
+                "**tsifl Helper isn't running.** Advanced features like Solver, Data Tables, SmartArt and PivotTables need the helper app running in your menu bar.\n\n" +
+                "**Fix:** open `tsifl Helper.app` from your Applications folder (or wherever you installed it). You'll see a `tsifl` entry appear in your menu bar (top-right of screen). Then retry your request.\n\n" +
+                "_If you don't have it installed yet, follow `desktop-agent/INSTALL.md`._");
               // Also tell the backend to clean up the stuck session.
               try {
                 await fetch(`${BACKEND_URL}/computer-use/cancel/${cuSessionId}`, { method: "POST" });

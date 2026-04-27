@@ -200,8 +200,12 @@ class TsiflHelperApp(rumps.App):
     """
 
     def __init__(self):
-        super().__init__("tsifl", quit_button=None)  # custom quit handler below
-        self.title = "tsifl"
+        # Title uses a compact glyph so it doesn't get clipped behind the
+        # MacBook notch on M1+ machines. The full "tsifl" name shows in the
+        # menu when clicked. Once we have a proper .icns icon, this becomes
+        # an icon (self.icon = "icon.icns") and the title can stay empty.
+        super().__init__("ƒ", quit_button=None)  # custom quit handler below
+        self.title = "ƒ"
         # Fallback icon-less mode for first launch — text-only menu bar entry.
         # Once we ship a proper .icns icon, we'll set self.icon = "icon.icns".
         self.menu = [
@@ -277,13 +281,13 @@ class TsiflHelperApp(rumps.App):
         # Find the "Status" menu item (always at index 0)
         status_item = self.menu.get("Status: starting...") or next(iter(self.menu.values()))
         if _last_error:
-            self.title = "tsifl ●"
+            self.title = "ƒ!"
             status_text = f"Error: {_last_error[:40]}..."
         elif _agent_thread is None or not _agent_thread.is_alive():
-            self.title = "tsifl —"
+            self.title = "ƒ—"
             status_text = "Status: stopped"
         else:
-            self.title = "tsifl"
+            self.title = "ƒ"
             uptime = int(time.time() - (_agent_started_at or time.time()))
             mins = uptime // 60
             secs = uptime % 60
