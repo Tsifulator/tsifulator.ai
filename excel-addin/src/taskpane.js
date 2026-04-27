@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v66";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v67";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -102,29 +102,60 @@ function showLoginScreen() {
   document.getElementById("auth-password").addEventListener("keydown", (e) => {
     if (e.key === "Enter") handleSignIn();
   });
-  // Show/hide password toggle. Office WKWebView sometimes doesn't fire `click`
-  // reliably on absolutely-positioned buttons inside form rows — fires `mousedown`
-  // instead. Listen on both, dedupe with a flag so we don't double-toggle.
+  // Show/hide password toggle.
+  //
+  // Three previous attempts to flip `input.type` between "password" and "text"
+  // failed in this Office WKWebView. The sandbox appears to silently block
+  // the dynamic type mutation. Working around that by **replacing the entire
+  // element** with a clone of the opposite type — guaranteed to work because
+  // we're not mutating any property; we're swapping DOM nodes.
   const togglePw = document.getElementById("toggle-pw-btn");
   if (togglePw) {
     let _toggleLock = false;
+
+    // Re-bindable Enter handler — needs to be re-attached after each swap
+    // since cloneNode doesn't carry listeners.
+    const enterHandler = (e) => { if (e.key === "Enter") handleSignIn(); };
+
+    const swapPasswordInput = () => {
+      const old = document.getElementById("auth-password");
+      if (!old) return null;
+      const newType = old.type === "password" ? "text" : "password";
+      const fresh = document.createElement("input");
+      fresh.type = newType;
+      fresh.id = "auth-password";
+      fresh.placeholder = old.placeholder || "Password";
+      fresh.autocomplete = newType === "password" ? "current-password" : "off";
+      fresh.value = old.value;
+      fresh.className = old.className;
+      // Preserve focus + caret position
+      const wasFocused = (document.activeElement === old);
+      const caret = old.selectionStart;
+      old.parentNode.replaceChild(fresh, old);
+      fresh.addEventListener("keydown", enterHandler);
+      if (wasFocused) {
+        fresh.focus();
+        try { fresh.setSelectionRange(caret, caret); } catch (_) {}
+      }
+      return newType;
+    };
+
     const doToggle = (e) => {
       if (e) { e.preventDefault(); e.stopPropagation(); }
       if (_toggleLock) return;
       _toggleLock = true;
       setTimeout(() => { _toggleLock = false; }, 100);
       try {
-        const pwInput = document.getElementById("auth-password");
-        if (!pwInput) { console.warn("[tsifl] toggle: auth-password not found"); return; }
-        const isVisible = pwInput.type === "text";
-        pwInput.type = isVisible ? "password" : "text";
+        const newType = swapPasswordInput();
+        if (!newType) { console.warn("[tsifl] toggle: auth-password not found"); return; }
+        const nowVisible = (newType === "text");
         const eyeOpen = togglePw.querySelector(".icon-eye-open");
         const eyeOff  = togglePw.querySelector(".icon-eye-off");
-        if (eyeOpen) eyeOpen.style.display = isVisible ? "block" : "none";
-        if (eyeOff)  eyeOff.style.display  = isVisible ? "none"  : "block";
-        togglePw.setAttribute("aria-label", isVisible ? "Show password" : "Hide password");
-        togglePw.setAttribute("title",      isVisible ? "Show password" : "Hide password");
-        console.log("[tsifl] password toggled →", pwInput.type);
+        if (eyeOpen) eyeOpen.style.display = nowVisible ? "none"  : "block";
+        if (eyeOff)  eyeOff.style.display  = nowVisible ? "block" : "none";
+        togglePw.setAttribute("aria-label", nowVisible ? "Hide password" : "Show password");
+        togglePw.setAttribute("title",      nowVisible ? "Hide password" : "Show password");
+        console.log("[tsifl] password swapped →", newType);
       } catch (err) {
         console.error("[tsifl] toggle handler crashed:", err);
       }
