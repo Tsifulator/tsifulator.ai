@@ -1259,7 +1259,7 @@ async def debug_guards():
         "project_memory_available": True,
         "project_memory_enabled":   project_memory.is_enabled(),
         "project_memory_backend":   project_memory.backend_type(),  # 'supabase' or 'file'
-        "build_tag": "pathB-2026-04-27d-banner-polish-no-model-id",
+        "build_tag": "pathB-2026-04-27e-no-meta-narration",
     }
 
 

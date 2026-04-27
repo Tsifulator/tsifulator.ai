@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v79";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v80";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -3148,24 +3148,22 @@ function appendMessage(role, text, images, meta) {
   //   phantom dropped  → server guard stopped writes to made-up sheets
   //   local · ollama   → reply came from local model, zero API cost
   if (role === "assistant" && meta) {
+    // The user has access to the dedicated Memory panel (header has its
+    // own '8 cells remembered' display + Reset button). Repeating that
+    // count above every chat reply is noise. Same for the ollama backend
+    // signal — implementation detail. We only surface meta chips when
+    // the server actively GUARDED something (locked-cell or phantom-sheet
+    // drops) — those are actionable and the user needs to know.
     const parts = [];
-    // Note: the previous `local · ollama · gemma3:latest` chip was removed
-    // — it looked unprofessional in the chat UI. Backend model selection
-    // is an implementation detail the user shouldn't see. We still log
-    // ollama usage to the browser console for dev debugging.
     if (meta.ollama) {
+      // Console-only signal for dev debugging; not surfaced to UI
       try { console.info(`[tsifl] reply via local ollama (${meta.ollama})`); } catch (_) {}
     }
     if (meta.lockBlocked)     parts.push(`${meta.lockBlocked} blocked by lock`);
     if (meta.phantomDropped)  parts.push(`${meta.phantomDropped} phantom dropped`);
-    if (meta.memoryCount) {
-      const n = meta.memoryCount;
-      const over = meta.memoryOverrides || 0;
-      const label = over > 0
-        ? `memory · ${n} entr${n === 1 ? "y" : "ies"} · ${over} overridden`
-        : `memory · ${n} entr${n === 1 ? "y" : "ies"} respected`;
-      parts.push(label);
-    }
+    // Memory chip removed — see Memory panel in header for state. The
+    // cell count + override count both live there, prominently, with a
+    // Reset action right next to them.
     if (parts.length) {
       const chip = document.createElement("div");
       chip.className = "assistant-meta-chip";
