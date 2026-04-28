@@ -1294,7 +1294,63 @@ class ChatResponse(BaseModel):
 @router.get("/debug/postprocess-version")
 async def debug_postprocess_version():
     """Verify which version of postprocessing code is deployed."""
-    return {"e15_formula": "=I5", "version": "v2_fixed_2026-04-12", "data_table_injection": "disabled"}
+    return {
+        "e15_formula": "=I5",
+        "version": "v2_fixed_2026-04-12",
+        "data_table_injection": "disabled",
+        # v95 marker — flips True once auto-inject blanket-intent fix lands.
+        # Probe with: curl /chat/debug/postprocess-version
+        "v95_blanket_intent_no_threshold": True,
+    }
+
+
+@router.get("/debug/auto-inject-test")
+async def debug_auto_inject_test(message: str = "", sheets: str = ""):
+    """Run _auto_inject_add_sheets logic on a synthetic request and return
+    the decision matrix. Lets us debug auto-inject without going through
+    Claude (which adds 30+ seconds and burns tokens).
+
+    Args:
+        message: user message to test against blanket-intent regex
+        sheets: comma-separated phantom sheet names with optional :count
+                e.g. "Best Buys:30,RW Averages:5,Top 10:25"
+
+    Returns: blanket_intent flag, per-sheet decision rule, injected names.
+    """
+    blanket = _has_blanket_sheet_creation_intent(message)
+
+    # Parse the synthetic phantom-sheet writes
+    fake_actions: list = []
+    for entry in (sheets or "").split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if ":" in entry:
+            name, _c = entry.split(":", 1)
+            try:
+                count = int(_c)
+            except Exception:
+                count = 1
+        else:
+            name, count = entry, 1
+        name = name.strip()
+        for _ in range(count):
+            fake_actions.append({
+                "type": "write_cell",
+                "payload": {"sheet": name, "cell": "A1", "value": "x"},
+            })
+
+    fake_context = {"app": "excel", "all_sheets": ["Sheet1"]}
+    new_actions, injected = _auto_inject_add_sheets(
+        fake_actions, fake_context, user_message=message,
+    )
+    return {
+        "blanket_intent": blanket,
+        "input_message": message,
+        "input_sheets": sheets,
+        "injected": injected,
+        "total_actions_after": len(new_actions),
+    }
 
 @router.get("/debug/guards")
 async def debug_guards():
