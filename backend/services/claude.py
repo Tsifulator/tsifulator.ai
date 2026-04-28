@@ -817,6 +817,26 @@ You will see a [SYSTEM: ...] note with the file path. Use import_csv with that p
 - NEVER use run_shell_command or write_range for uploaded data files. import_csv handles it automatically.
 - NEVER try to parse or re-type the CSV data yourself. Just import_csv the path.
 
+### IMPORT IS ONE STEP — KEEP GOING IN THE SAME TURN
+The single most common bug: model emits `import_csv` and STOPS, expecting
+the user to ask the analysis question again. This is wrong. The user's
+prompt already contains the analysis ask — `import_csv` is a setup step,
+not the response. After it, immediately emit add_sheet / write_formula /
+add_chart / etc. for every part of what the user asked for, IN THE SAME
+TURN. Do not split work across turns. Do not say "Data imported. Let me
+know what you'd like." That phrase is banned and will be replaced by the
+backend with an apology to the user.
+
+Example: user uploads "fifa21.csv" and asks "rank right wingers by
+weight, create a sheet with averages, top 10 highest rated, and 5 best
+buys". You emit, in one response:
+  1. import_csv "/tmp/fifa21.csv"
+  2. add_sheet "RW Ranked by Weight" + write_formula filtering+sorting
+  3. add_sheet "RW Averages" + write_formula AVERAGEIFS over each stat
+  4. add_sheet "Top 10 Rated" + write_formula INDEX/MATCH on LARGE
+  5. add_sheet "Best Buys" + write_formula a value/overall heuristic
+That's ~25-40 actions in ONE response. Don't bail at step 1.
+
 ## REFERENCING FILES BY NAME + LOCATION (Downloads / Documents / Desktop)
 When the user says things like "from the loandata dataset in downloads", "the sales.csv in my documents",
 "that file on my desktop", etc., they are pointing at a file on their LOCAL machine.
@@ -3752,8 +3772,30 @@ def _parse_tool_response(response) -> dict:
     if not reply:
         if actions:
             action_types = [a.get("type", "") for a in actions]
+            # Detect "model bailed after import only" — emitted import_csv
+            # (or similar) and NOTHING else. The system prompt bans the
+            # phrase "Data imported. Let me know..." because it signals
+            # the model gave up mid-task; if we ARE at this fallback, the
+            # model literally did that. Surface it honestly so the user
+            # can resend the analysis request.
+            only_import = (
+                any("import" in t for t in action_types)
+                and not any(
+                    t in ("write_cell", "write_formula", "write_range",
+                          "fill_down", "fill_right", "add_sheet", "add_chart",
+                          "create_named_range", "format_range", "add_conditional_format")
+                    for t in action_types
+                )
+            )
             if any(t == "run_r_code" for t in action_types):
                 reply = ""  # phase-2 interpretation handles it
+            elif only_import:
+                # Honest message — and don't contradict system prompt.
+                reply = (
+                    "I imported the data, but didn't get to the analysis you "
+                    "asked for. Resend just the analysis part now — the data's "
+                    "already in the workbook so I won't have to import again."
+                )
             elif any("chart" in t for t in action_types):
                 reply = "I've set up the chart for you — take a look and let me know if you'd like any adjustments."
             elif any("write" in t or "fill" in t for t in action_types):
@@ -3761,7 +3803,11 @@ def _parse_tool_response(response) -> dict:
             elif any("format" in t for t in action_types):
                 reply = "Formatting applied. Let me know if you'd like any changes."
             elif any("import" in t for t in action_types):
-                reply = "Data imported. Let me know what analysis you'd like to run on it."
+                # Fallback for import-only that the only_import branch
+                # somehow missed (defensive — shouldn't happen).
+                reply = (
+                    "I imported the data. Resend your analysis request now."
+                )
             else:
                 reply = ""
         else:

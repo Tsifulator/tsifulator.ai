@@ -1,0 +1,24 @@
+{
+  "user_id": "test-027",
+  "message": "[SYSTEM: ATTACHED FILES — File paths: /tmp/fifa21.csv]\n\nrank all the right wingers by weight, create one sheet with the average of each stat for right wingers, give me the top 10 highest rated and top 10 lowest rated, and a final sheet with 5 players you think are the best buys based on pace, overall, and value",
+  "context": {
+    "app": "excel",
+    "sheet": "Sheet1",
+    "workbook_name": "fifa21_import.xlsx",
+    "all_sheets": ["Sheet1"],
+    "selected_cell": "A1",
+    "selected_value": null,
+    "used_range": "A1",
+    "sheet_data": [],
+    "sheet_summaries": [
+      {
+        "name": "Sheet1",
+        "used_range": "A1",
+        "rows": 0,
+        "cols": 0,
+        "preview": []
+      }
+    ],
+    "named_ranges": []
+  }
+}

@@ -1,0 +1,32 @@
+_purpose: |
+  When the user attaches a CSV and asks a multi-part analysis ('rank by X,
+  create averages sheet, top 10 by Y, best 5 buys'), the model often
+  emitted only `import_csv` and stopped, leaving the analysis undone. The
+  backend's "Data imported. Let me know what analysis..." fallback even
+  contradicted the system prompt's explicit ban on that phrase.
+
+  v94 reinforces the system prompt with a worked example showing
+  import_csv → add_sheet → write_formula chain in ONE response. The
+  fallback message was also rewritten to be honest when the model bails.
+
+  Assertion: when import_csv is emitted, at least one analysis action
+  type (add_sheet OR write_formula OR add_chart) must also be emitted in
+  the same response. Reply must NOT be the banned 'Data imported' line.
+_project: "Import-then-analyze — model must complete the full task"
+
+# Should produce both the import AND analysis actions in one response.
+min_action_count: 5
+must_include_action_types:
+  - import_csv
+must_include_action_types_any_of:
+  - add_sheet
+  - write_formula
+  - add_chart
+
+# Reply must NOT be the banned bail-out phrases (system prompt bans them
+# explicitly; backend fallback also avoids them).
+reply_must_not_contain:
+  - "Data imported. Let me know"
+  - "Let me know what analysis"
+
+reply_not_empty: true
