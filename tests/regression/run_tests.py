@@ -132,22 +132,36 @@ def run_case(case: dict, backend: str, timeout: int,
     # case starts from a deterministic blank slate. Without this, the first
     # case to run pollutes state for the next. Silently ignores 404s — if the
     # endpoint doesn't exist yet or state is already empty, no harm done.
+    #
+    # Mirror backend services/project_memory.fingerprint(): prefer
+    # `workbook_name` when present (current clients), fall back to the
+    # sheets hash. Compute BOTH and clear both — older runs may have
+    # written under the legacy hash, current ones write under the
+    # workbook-name hash; we want neither to leak between cases.
     user_id = req.get("user_id", "")
     app_ctx = (req.get("context") or {})
-    # Compute workbook_id client-side to match backend's fingerprint() logic
     import hashlib as _h, json as _j
-    _wb_sig = {
-        "app":    app_ctx.get("app") or "",
-        "sheets": sorted(app_ctx.get("all_sheets") or []),
+    app = app_ctx.get("app") or ""
+    name = (app_ctx.get("workbook_name") or "").strip()
+    primary_sig = (
+        {"app": app, "workbook": name}
+        if name else
+        {"app": app, "sheets": sorted(app_ctx.get("all_sheets") or [])}
+    )
+    legacy_sig = {"app": app, "sheets": sorted(app_ctx.get("all_sheets") or [])}
+    workbook_ids = {
+        _h.sha256(_j.dumps(primary_sig, sort_keys=True).encode()).hexdigest()[:16],
+        _h.sha256(_j.dumps(legacy_sig,  sort_keys=True).encode()).hexdigest()[:16],
     }
-    workbook_id = _h.sha256(_j.dumps(_wb_sig, sort_keys=True).encode()).hexdigest()[:16]
-    try:
-        requests.delete(
-            f"{backend.rstrip('/')}/chat/debug/project-memory/{user_id}/{workbook_id}",
-            timeout=10,
-        )
-    except Exception:
-        pass  # pre-flight is best-effort
+    workbook_id = next(iter(workbook_ids))  # for any later debug log
+    for wid in workbook_ids:
+        try:
+            requests.delete(
+                f"{backend.rstrip('/')}/chat/debug/project-memory/{user_id}/{wid}",
+                timeout=10,
+            )
+        except Exception:
+            pass  # pre-flight is best-effort
 
     t0 = time.time()
     try:
