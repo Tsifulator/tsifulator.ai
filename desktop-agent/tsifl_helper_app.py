@@ -35,6 +35,21 @@ import rumps  # type: ignore[import-untyped]
 _SHORTCUT_LOG = Path.home() / "Library" / "Logs" / "tsifl-shortcut.log"
 
 
+def _log_shortcut_trace(msg: str):
+    """Append a non-error trace line to the shortcut log (no notification).
+
+    Used for diagnostic events (drops received, POSTs sent, etc.) where
+    we want a record but don't want to spam the user with notifications.
+    """
+    try:
+        _SHORTCUT_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with _SHORTCUT_LOG.open("a", encoding="utf-8") as f:
+            stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            f.write(f"{stamp} {msg}\n")
+    except Exception:
+        pass
+
+
 def _log_shortcut_error(msg: str, exc: Exception | None = None):
     """Append an error line to the shortcut log + post a macOS notification
     so the user can SEE the failure. No more silent stderr writes."""
@@ -324,6 +339,23 @@ def _send_to_backend(message: str, frontmost_app: str, images: list | None = Non
     }
     if images:
         body["images"] = images
+
+    # Diagnostic log: what's about to be POSTed (helps debug "Claude says
+    # it can't see the image"). Logs to ~/Library/Logs/tsifl-shortcut.log.
+    try:
+        img_summary = (
+            ", ".join(
+                f"{(img.get('file_name') or 'pasted')}:{img.get('media_type','?')}:"
+                f"{len(img.get('data','') or '')}b64chars"
+                for img in (images or [])
+            )
+            if images else "none"
+        )
+        _log_shortcut_trace(
+            f"POST /chat/ app={app} msg={message[:60]!r} images=[{img_summary}]"
+        )
+    except Exception:
+        pass
 
     try:
         # Image-attached requests can be larger so we bump the timeout
@@ -655,7 +687,7 @@ def _define_panel_classes():
             return False  # input field owns keyboard focus
 
         def draggingEntered_(self, sender):
-            if self._has_files(sender):
+            if self._has_acceptable_drop(sender):
                 return 1  # NSDragOperationCopy
             return 0      # NSDragOperationNone
 
@@ -663,26 +695,54 @@ def _define_panel_classes():
             return self.draggingEntered_(sender)
 
         def prepareForDragOperation_(self, sender):
-            return self._has_files(sender)
+            return self._has_acceptable_drop(sender)
 
         def performDragOperation_(self, sender):
             try:
+                # Diagnostic: log what's on the pasteboard so we can see
+                # why a particular drop failed to register an attachment.
+                try:
+                    pb = sender.draggingPasteboard()
+                    types = list(pb.types() or [])
+                    _log_shortcut_trace(f"drop received, pasteboard types: {types}")
+                except Exception:
+                    pass
+
                 paths = self._extract_paths(sender)
                 added = _queue_paths_as_images(paths)
                 # Stash the most recent dropped path so the safety-net
                 # text filter can recover it if the field editor somehow
-                # still inserted the rendered filename (we'd then have
-                # text in the input we can't decode back to a disk path).
+                # still inserted the rendered filename.
                 if paths:
                     _stash_dropped_path(paths[0])
+                _log_shortcut_trace(
+                    f"drop processed: paths={len(paths)} queued={added} "
+                    f"pending_total={len(_pending_images)}"
+                )
                 return added > 0
             except Exception as e:
                 _log_shortcut_error("drop failed", e)
                 return False
 
-        def _has_files(self, sender):
+        def _has_acceptable_drop(self, sender):
+            """Cheap check (no file I/O) — does the pasteboard carry a
+            type we know how to handle? Used by draggingEntered_ /
+            prepareForDragOperation_ to decide whether to accept the
+            drag without paying for a full _extract_paths call (which
+            would stage temp files for image data).
+            """
             try:
-                return bool(self._extract_paths(sender))
+                pb = sender.draggingPasteboard()
+                types = set(pb.types() or [])
+                accept = {
+                    "NSFilenamesPboardType",
+                    "public.file-url",
+                    "public.png",
+                    "public.jpeg",
+                    "public.tiff",
+                    "public.image",
+                }
+                return bool(types & accept)
             except Exception:
                 return False
 
@@ -1039,14 +1099,24 @@ def _build_floating_panel():
     layer.setCornerRadius_(14.0)
     layer.setBorderWidth_(1.5)
     layer.setBorderColor_(blue.CGColor())
-    # Register for file URL drag types. Both legacy (NSFilenamesPboardType)
-    # and modern (public.file-url UTI) — Finder uses the legacy type but
-    # other source apps may use the UTI form.
+    # Register for file URL + raw image drag types. Three categories:
+    #   - File paths from Finder (NSFilenamesPboardType, public.file-url)
+    #   - Raw image bytes from browser drags (public.png, public.jpeg,
+    #     public.tiff) — Chrome/Safari put the image data directly on the
+    #     pasteboard with no on-disk file
+    #   - Generic image UTI (public.image) — covers HEIC, GIF, etc.
+    # The drop handler stages raw bytes to /tmp via _stage_pasteboard_image
+    # so the downstream queue logic sees a real path either way.
     if _TsiflContentViewClass is not None:
         try:
-            content.registerForDraggedTypes_(
-                ["NSFilenamesPboardType", "public.file-url"]
-            )
+            content.registerForDraggedTypes_([
+                "NSFilenamesPboardType",
+                "public.file-url",
+                "public.png",
+                "public.jpeg",
+                "public.tiff",
+                "public.image",
+            ])
         except Exception as e:
             sys.stderr.write(f"[tsifl-helper] register drag types failed: {e}\n")
     panel.setContentView_(content)
