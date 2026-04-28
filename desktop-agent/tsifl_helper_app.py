@@ -449,37 +449,22 @@ def _stash_dropped_path(path: str) -> None:
 def _strip_and_extract_paths(text: str):
     """Detect filename / URL pollution in `text`, return (cleaned_text, paths).
 
-    The user-reported bug: dragging an image onto the input made the field
-    editor insert the file's display name (URL-encoded) as text. We detect
-    three patterns:
+    Strips ONLY safe-to-strip patterns (won't false-positive on user prose):
 
-      1. Explicit `file://...` URL (full URL inserted, can be decoded)
-      2. Percent-encoded filename ending in an attachment extension
-         (e.g. "Screenshot%202026-04-28%20at%202.35.07%E2%80%A6.png")
-      3. Plain filename ending in an attachment extension on its own line
-         (last-resort — only stripped if it matches `_LAST_DRAG_PATH`)
-
-    For pattern 1 the path is recovered from the URL. For 2/3 we can't
-    recover the disk path from text alone, so we cross-reference
-    `_LAST_DRAG_PATH` (set when the content view handles the drop).
+      1. Explicit `file://...` URLs — no human types these. Decoded path
+         is added to `paths` so the file gets queued as an attachment.
+      2. The exact filename of `_LAST_DRAG_PATH`, in either its plain
+         form ("Screenshot.png") or its URL-percent-encoded form
+         ("Screenshot%202026-04-28.png"). We only strip what we KNOW
+         was just dropped — avoids killing user text like "70% growth".
     """
     import re
-    global _FILE_URL_RE, _PCT_ATTACH_RE, _PLAIN_ATTACH_RE
-    if _FILE_URL_RE is None:
-        _FILE_URL_RE = re.compile(r"file://\S+", re.IGNORECASE)
-        ext_alt = "|".join(_ATTACH_EXTS)
-        # Percent-encoded filename: at least one %XX escape, ends with attachment ext.
-        _PCT_ATTACH_RE = re.compile(
-            r"\S*%[0-9A-Fa-f]{2}\S*\.(?:" + ext_alt + r")\b",
-            re.IGNORECASE,
-        )
-        # Plain filename: word chars / spaces / dots, ends with attachment ext.
-        _PLAIN_ATTACH_RE = re.compile(
-            r"^[\w][\w\s\.\-]*\.(?:" + ext_alt + r")$",
-            re.IGNORECASE,
-        )
 
     paths: list[str] = []
+    cleaned = text
+
+    # Pattern 1: file:// URLs — always safe to strip
+    file_url_re = re.compile(r"file://\S+", re.IGNORECASE)
 
     def _replace_url(m):
         url = m.group(0).rstrip(".,;)")
@@ -494,35 +479,37 @@ def _strip_and_extract_paths(text: str):
             pass
         return ""
 
-    cleaned = _FILE_URL_RE.sub(_replace_url, text)
+    cleaned = file_url_re.sub(_replace_url, cleaned)
 
-    # Pattern 2: percent-encoded filenames
-    if _PCT_ATTACH_RE.search(cleaned):
-        cleaned = _PCT_ATTACH_RE.sub("", cleaned)
-        if _LAST_DRAG_PATH:
-            paths.append(_LAST_DRAG_PATH)
-
-    # Pattern 3: plain filename on its own line — only kill it if it
-    # matches the last-known dropped path's filename. Avoids stripping
-    # legit user prose that happens to end in ".png".
+    # Pattern 2: exact filename match against _LAST_DRAG_PATH (plain or
+    # URL-encoded form). We anchor on the known filename so user prose
+    # with `%` characters doesn't trigger a false strip.
     if _LAST_DRAG_PATH:
         from pathlib import Path as _P
-        last_name = _P(_LAST_DRAG_PATH).name.lower()
-        new_lines = []
-        stripped_any = False
-        for line in cleaned.splitlines():
-            stripped = line.strip()
-            if stripped.lower() == last_name and _PLAIN_ATTACH_RE.match(stripped):
-                stripped_any = True
-                continue
-            new_lines.append(line)
-        if stripped_any:
-            cleaned = "\n".join(new_lines)
-            if _LAST_DRAG_PATH not in paths:
+        from urllib.parse import quote
+        last_name = _P(_LAST_DRAG_PATH).name
+        if last_name:
+            patterns = [re.escape(last_name)]
+            try:
+                encoded = quote(last_name)
+                if encoded and encoded != last_name:
+                    patterns.append(re.escape(encoded))
+            except Exception:
+                pass
+            stripped_any = False
+            for pat in patterns:
+                # Match the filename anywhere in the input, with optional
+                # surrounding whitespace, allowing for line-leading/trailing.
+                pat_re = re.compile(r"\s*" + pat + r"\s*", re.IGNORECASE)
+                if pat_re.search(cleaned):
+                    cleaned = pat_re.sub(" ", cleaned, count=1)
+                    stripped_any = True
+            if stripped_any and _LAST_DRAG_PATH not in paths:
                 paths.append(_LAST_DRAG_PATH)
 
-    # Tidy up blank lines left where pollution used to live
+    # Tidy up: collapse multiple spaces, drop blank lines
     cleaned = "\n".join(line for line in cleaned.splitlines() if line.strip())
+    cleaned = re.sub(r"  +", " ", cleaned)
     return cleaned.strip(), paths
 
 
@@ -725,17 +712,14 @@ def _define_panel_classes():
                 _panel_submit(text)
 
         def controlTextDidChange_(self, notification):
-            """Safety net for the URL-pollution bug.
+            """Primary defense against URL pollution from drag-drop.
 
-            Custom field editor blocks file URL drops at the source, but
-            paste / Services / odd UTI translations can still slip a file
-            path into the input text. This handler runs on every user-
-            initiated change, strips polluting filenames / URLs, and
-            auto-queues the file as an attachment when we can recover
-            the path (either from a `file://` URL in the text, or from
-            `_LAST_DRAG_PATH` if the content view just saw the drop).
+            Fires on every user-initiated change (typing, paste, drag-
+            drop). Strips file:// URLs and matches the exact filename of
+            _LAST_DRAG_PATH (set when the content view sees a drop) —
+            both safe to strip without false-positives on user prose.
 
-            `setStringValue_` does NOT fire this method (only field-
+            `setStringValue_` does NOT re-fire this method (only field-
             editor mutations do), so the rewrite below cannot recurse.
             """
             if _panel_input is None or _panel_busy:
@@ -744,15 +728,10 @@ def _define_panel_classes():
                 current = str(_panel_input.stringValue() or "")
                 if not current:
                     return
-                # Fast-path bail: no '%' (percent-encoding hint) AND no
-                # 'file://' (explicit URL). If neither, there's nothing
-                # to strip — pure typed text.
-                lower = current.lower()
-                if "file://" not in lower and "%" not in current:
-                    # Could still be a plain filename match against
-                    # _LAST_DRAG_PATH — check that briefly.
-                    if not _LAST_DRAG_PATH:
-                        return
+                # Fast-path bail: nothing to strip if there's no file://
+                # URL AND no recent drop to anchor a filename match on.
+                if "file://" not in current.lower() and not _LAST_DRAG_PATH:
+                    return
                 cleaned, paths = _strip_and_extract_paths(current)
                 if cleaned != current:
                     _panel_input.setStringValue_(cleaned)
@@ -762,10 +741,38 @@ def _define_panel_classes():
                 pass
 
         def attachClicked_(self, sender):
-            """Open NSOpenPanel — let user pick image files. Each
-            selected file is base64-encoded and queued in
-            `_pending_images` via the shared helper; the next submit
-            sends them with the chat request."""
+            """Attach button. Two modes:
+              - Plain click: opens file picker → adds to _pending_images
+              - ⌥-click (Option held): clears all queued attachments
+                — gives the user a way to undo a wrong attach without
+                opening + recreating the panel.
+            """
+            global _pending_images, _LAST_DRAG_PATH
+            # Detect Option-modifier — shortcut to clear all attachments.
+            try:
+                from AppKit import NSApp
+                NS_EVENT_MOD_OPTION = 1 << 19  # NSEventModifierFlagOption
+                cur_event = NSApp().currentEvent()
+                if cur_event is not None and _pending_images:
+                    flags = int(cur_event.modifierFlags())
+                    if flags & NS_EVENT_MOD_OPTION:
+                        _pending_images = []
+                        _LAST_DRAG_PATH = None
+                        if _panel_attach_btn is not None:
+                            try:
+                                _panel_attach_btn.setTitle_("+")
+                            except Exception:
+                                pass
+                        if _panel_input is not None:
+                            try:
+                                _panel_input.becomeFirstResponder()
+                            except Exception:
+                                pass
+                        return
+            except Exception:
+                pass
+
+            # Default: open file picker → encode + queue
             try:
                 from AppKit import NSOpenPanel
                 panel = NSOpenPanel.openPanel()
@@ -985,6 +992,15 @@ def _build_floating_panel():
     attach_btn.setFont_(NSFont.systemFontOfSize_(18.0))
     try:
         attach_btn.setContentTintColor_(muted)
+    except Exception:
+        pass
+    # Tooltip tells the user how to clear (otherwise the ⌥-click
+    # affordance is invisible). Hover lingers for ~1s before showing
+    # in macOS by default.
+    try:
+        attach_btn.setToolTip_(
+            "Click to attach an image or PDF.  ⌥-click to clear all attachments."
+        )
     except Exception:
         pass
     content.addSubview_(attach_btn)
@@ -1427,28 +1443,24 @@ def _show_shortcut_panel():
 
         # Also wire the input as the target's delegate, so
         # `controlTextDidChange_` fires on every user-initiated edit.
-        # That's the safety-net hook that strips any file:// URL the
-        # field editor failed to block, and auto-queues the file as a
-        # proper attachment.
+        # That's the primary URL-pollution defense: detects file:// or
+        # percent-encoded filename text in the input on every keystroke,
+        # strips it, and auto-queues the corresponding file as a proper
+        # attachment via _LAST_DRAG_PATH.
         try:
             _panel_input.setDelegate_(_panel_target)
         except Exception as e:
             sys.stderr.write(f"[tsifl-helper] input delegate attach failed: {e}\n")
 
-        # Set the panel's window delegate so it vends our custom field
-        # editor (the one that rejects file URL drops at the source).
-        # Built lazily once per app lifetime.
-        global _panel_delegate
-        if _panel_delegate is None and _TsiflPanelDelegateClass is not None:
-            try:
-                _panel_delegate = _TsiflPanelDelegateClass.alloc().init()
-            except Exception as e:
-                sys.stderr.write(f"[tsifl-helper] panel delegate init failed: {e}\n")
-        if _panel_delegate is not None:
-            try:
-                _panel_ref.setDelegate_(_panel_delegate)
-            except Exception as e:
-                sys.stderr.write(f"[tsifl-helper] setDelegate_ failed: {e}\n")
+        # NOTE: v85 tried to install a custom NSWindowDelegate (vending a
+        # _TsiflFieldEditor that rejects all file URL drops) — this broke
+        # the spacebar and other typing input on the field. Reason most
+        # likely: NSTextView subclass needs more init wiring than just
+        # setFieldEditor_:True for keyboard event routing. Reverted to
+        # default field editor + relying on the controlTextDidChange_
+        # safety net + content-view drag handler. The class definitions
+        # are kept (in `_define_panel_classes`) for a future re-enable
+        # once we can verify they don't break typing.
 
         # Esc monitor: register once for the app's lifetime. The handler
         # dismisses whatever the current panel is.
