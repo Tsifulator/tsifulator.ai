@@ -33,7 +33,8 @@ DATA_FILES = [
     "agent.py",
     "excel_applescript.py",
     "services_local.py",
-    "icon.png",   # template icon for the menu bar
+    "icon.png",       # template icon for the menu bar (black, auto-tinted)
+    "icon_blue.png",  # tsifl-blue version for the floating panel logo
 ]
 
 OPTIONS = {
