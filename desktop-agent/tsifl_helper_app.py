@@ -423,6 +423,57 @@ _LAST_DRAG_PATH = None    # most-recent dropped path; used by safety-net to reco
                           # filename (no file:// prefix) — see _stash_dropped_path
 
 
+def _resize_image_for_upload(path: str):
+    """Read an image from disk, downsample if needed, return (bytes, media_type).
+
+    Why: macOS screenshots are 5+ MB at retina resolution; the backend's
+    cap is 1.4MB base64 (~1MB binary), and Claude's API tops out at 5MB.
+    We resize to <1MB binary client-side so we ALWAYS fit inside both
+    limits, no matter the source. Returns (None, None) if PIL is missing
+    or the image can't be decoded — caller falls back to the raw bytes.
+
+    Strategy: cap longest edge at 1568px (Anthropic's recommendation),
+    then re-encode as JPEG with progressive quality reduction until the
+    binary is ≤ ~700KB. JPEG over PNG because the resize is for an LLM
+    vision model, not human archival — JPEG quality 80 is visually
+    indistinguishable but ~5–10× smaller than PNG.
+    """
+    try:
+        from PIL import Image as _PILImage
+        import io as _io
+    except Exception:
+        return None, None
+
+    try:
+        img = _PILImage.open(path)
+        # Flatten alpha → white background (JPEG can't carry alpha)
+        if img.mode in ("RGBA", "LA"):
+            bg = _PILImage.new("RGB", img.size, (255, 255, 255))
+            mask = img.split()[-1]
+            bg.paste(img, mask=mask)
+            img = bg
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        # Cap longest edge per Anthropic vision docs.
+        MAX_DIM = 1568
+        if max(img.size) > MAX_DIM:
+            img.thumbnail((MAX_DIM, MAX_DIM), _PILImage.LANCZOS)
+
+        # Encode as JPEG; reduce quality until under 700KB binary
+        # (≈ 930KB base64, well below the 1.4MB backend cap).
+        for quality in (85, 75, 65, 55, 45):
+            buf = _io.BytesIO()
+            img.save(buf, format="JPEG", quality=quality, optimize=True)
+            data = buf.getvalue()
+            if len(data) <= 700_000:
+                return data, "image/jpeg"
+        return data, "image/jpeg"  # last attempt — accept whatever size
+    except Exception as e:
+        sys.stderr.write(f"[tsifl-helper] resize failed for {path}: {e}\n")
+        return None, None
+
+
 def _queue_paths_as_images(paths) -> int:
     """Read each path off disk, base64-encode, queue in `_pending_images`,
     update the +N badge on the attach button. Returns count actually added.
@@ -431,7 +482,9 @@ def _queue_paths_as_images(paths) -> int:
     safety net all share one code path. Filters by extension so a stray
     text file dropped on the panel doesn't get encoded. Dedupes by
     filename so the safety-net text filter and the content-view drop
-    handler don't both queue the same file.
+    handler don't both queue the same file. Images are resized on-disk
+    if PIL is available, so a 5MB screenshot doesn't blow past the
+    backend's image-size cap (1.4MB base64).
     """
     global _pending_images
     import base64 as _b64
@@ -447,11 +500,27 @@ def _queue_paths_as_images(paths) -> int:
             name = _P(path).name
             if name in existing_names:
                 continue  # dedupe — already queued
-            with open(path, "rb") as f:
-                data = f.read()
+
+            # PDFs go through as-is (resize doesn't apply). Images get
+            # downsampled to fit the backend cap. Falls back to raw
+            # bytes if PIL is missing or the image can't be decoded.
+            if ext == "pdf":
+                with open(path, "rb") as f:
+                    data = f.read()
+                media_type = "application/pdf"
+            else:
+                resized, mt = _resize_image_for_upload(path)
+                if resized is not None:
+                    data = resized
+                    media_type = mt
+                else:
+                    with open(path, "rb") as f:
+                        data = f.read()
+                    media_type = _MEDIA_TYPES.get(ext, "image/png")
+
             _pending_images.append({
                 "data": _b64.b64encode(data).decode("ascii"),
-                "media_type": _MEDIA_TYPES.get(ext, "application/octet-stream"),
+                "media_type": media_type,
                 "file_name": name,
             })
             existing_names.add(name)

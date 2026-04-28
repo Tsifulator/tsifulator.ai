@@ -1756,11 +1756,15 @@ async def chat(request: ChatRequest):
         request.user_id, request.context, message
     )
 
-    # Limit image sizes to avoid 413 from Claude API
-    # Each base64 image ~1.33x original size; cap at 1MB base64 per image, max 5 images
+    # Limit image sizes per Claude's vision API (5MB per image, base64).
+    # Previously capped at 1.4MB which was overly conservative — a stock
+    # macOS retina screenshot is 3-5MB base64 and was getting silently
+    # dropped, leading to "I don't see an image" replies. The desktop
+    # panel resizes client-side to ~700KB, but we keep 5MB here as the
+    # absolute ceiling for any other client that might POST raw images.
     safe_images = []
     for img in remaining_images[:5]:  # max 5 images
-        if len(img.get("data", "")) <= 1_400_000:  # ~1MB decoded
+        if len(img.get("data", "")) <= 5_000_000:  # Anthropic's documented limit
             safe_images.append(img)
         else:
             logger.warning(f"[chat] Dropping oversized image ({len(img.get('data',''))//1000}KB): {img.get('file_name','')}")
