@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v82";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v92";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -3140,30 +3140,21 @@ function appendMessage(role, text, images, meta) {
   const div     = document.createElement("div");
   div.className   = `message ${role}`;
 
-  // Memory chip rendered ABOVE the assistant's text — surfaces when memory
-  // actually shaped the response, or when the reply came from local Ollama.
-  //   memory respected → LLM honored every prior entry without overwriting
-  //   N overridden     → LLM chose to rewrite N cells that were in memory
-  //   lock blocked     → server guard stopped writes to locked cells
-  //   phantom dropped  → server guard stopped writes to made-up sheets
-  //   local · ollama   → reply came from local model, zero API cost
+  // Meta chip rendered ABOVE the assistant's text. Surfaces ONLY when the
+  // server actively guarded something the user can act on right now.
+  //   lock blocked     → writes to locked cells; user should clear locks or rephrase
+  //   local · ollama   → console signal for dev debugging only
+  // (Removed in v92):
+  //   phantom dropped  → confusing developer-speak ("58 phantom dropped"). The
+  //   reply body now explains the situation in plain English when the guard
+  //   fires, so the chip is redundant noise.
+  //   memory chip      → see Memory panel in header for state.
   if (role === "assistant" && meta) {
-    // The user has access to the dedicated Memory panel (header has its
-    // own '8 cells remembered' display + Reset button). Repeating that
-    // count above every chat reply is noise. Same for the ollama backend
-    // signal — implementation detail. We only surface meta chips when
-    // the server actively GUARDED something (locked-cell or phantom-sheet
-    // drops) — those are actionable and the user needs to know.
     const parts = [];
     if (meta.ollama) {
-      // Console-only signal for dev debugging; not surfaced to UI
       try { console.info(`[tsifl] reply via local ollama (${meta.ollama})`); } catch (_) {}
     }
-    if (meta.lockBlocked)     parts.push(`${meta.lockBlocked} blocked by lock`);
-    if (meta.phantomDropped)  parts.push(`${meta.phantomDropped} phantom dropped`);
-    // Memory chip removed — see Memory panel in header for state. The
-    // cell count + override count both live there, prominently, with a
-    // Reset action right next to them.
+    if (meta.lockBlocked) parts.push(`${meta.lockBlocked} blocked by lock`);
     if (parts.length) {
       const chip = document.createElement("div");
       chip.className = "assistant-meta-chip";

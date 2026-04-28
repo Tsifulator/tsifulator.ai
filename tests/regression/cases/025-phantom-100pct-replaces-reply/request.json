@@ -1,0 +1,33 @@
+{
+  "user_id": "test-025",
+  "message": "please create a DCF",
+  "context": {
+    "app": "excel",
+    "sheet": "Sheet1",
+    "workbook_name": "fifa21.xlsx",
+    "all_sheets": ["Sheet1"],
+    "selected_cell": "A1",
+    "selected_value": "photoUrl",
+    "used_range": "A1:E20",
+    "sheet_data": [
+      ["photoUrl", "LongName", "playerUrl", "Nationality", "Positions"],
+      ["https://cdn.sofifa.com/players/158/023/21_60.png", "LionelMessi", "http://sofifa.com/player/158023/lionel-messi/210005/", "Argentina", "RWSTCF"],
+      ["https://cdn.sofifa.com/players/020/801/21_60.png", "C.RonaldodosSantosAveiro", "http://sofifa.com/player/20801/c-ronaldo-dos-santos-aveiro/210005/", "Portugal", "STLW"],
+      ["https://cdn.sofifa.com/players/200/389/21_60.png", "JanOblak", "http://sofifa.com/player/200389/jan-oblak/210005/", "Slovenia", "GK"],
+      ["https://cdn.sofifa.com/players/192/985/21_60.png", "KevinDeBruyne", "http://sofifa.com/player/192985/kevin-de-bruyne/210005/", "Belgium", "CAMCM"]
+    ],
+    "sheet_summaries": [
+      {
+        "name": "Sheet1",
+        "used_range": "A1:E20",
+        "rows": 20,
+        "cols": 5,
+        "preview": [
+          ["photoUrl", "LongName", "playerUrl", "Nationality", "Positions"],
+          ["...", "LionelMessi", "...", "Argentina", "RWSTCF"]
+        ]
+      }
+    ],
+    "named_ranges": []
+  }
+}

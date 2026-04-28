@@ -2020,24 +2020,53 @@ async def chat(request: ChatRequest):
                     if isinstance(ss, dict) and isinstance(ss.get("name"), str)
                 ]
             _dropped_uniq = sorted(set(_dropped_sheets))
-            if _real:
-                # Normal case — we know the workbook tabs, list them so the
-                # user can rephrase against a real one.
-                _warn = (
-                    f"\n\nNote: skipped {len(_dropped_sheets)} action(s) targeting sheets "
-                    f"that don't exist in this workbook: {', '.join(_dropped_uniq)}. "
-                    f"Your actual tabs are: {', '.join(_real)}. "
-                    "Rephrase using one of those, or ask me to create the missing tab first."
-                )
+
+            # If EVERY meaningful write got dropped, the model's success-tone
+            # reply ("All set — I've written...") is a lie. Replace it
+            # entirely with a clean explanation. Otherwise (partial drop —
+            # some actions survived), append a Note so the user knows the
+            # full set wasn't honored.
+            _surviving_writes = sum(
+                1 for a in all_actions
+                if a.get("type") in _WRITE_TYPES_FOR_INTENT
+            )
+
+            def _fmt_list(items: list[str]) -> str:
+                items = [f'"{x}"' for x in items]
+                if len(items) == 1: return items[0]
+                if len(items) == 2: return f"{items[0]} and {items[1]}"
+                return ", ".join(items[:-1]) + f", and {items[-1]}"
+
+            if _surviving_writes == 0:
+                # Total bust — replace the reply, don't append.
+                if _real:
+                    result["reply"] = (
+                        f"This workbook only has {_fmt_list(_real)} — I'd need a "
+                        f"{_fmt_list(_dropped_uniq)} tab to put that work there. "
+                        f"Want me to create {_fmt_list(_dropped_uniq)} first, or "
+                        f"rephrase the request against an existing tab?"
+                    )
+                else:
+                    result["reply"] = (
+                        f"I couldn't read this workbook's tabs, so I tried to write "
+                        f"to {_fmt_list(_dropped_uniq)} — but I can't confirm those "
+                        f"exist. Refresh the panel (right-click → Reload) and resend."
+                    )
             else:
-                # Context-build failed — we don't know the workbook structure.
-                _warn = (
-                    f"\n\nNote: skipped {len(_dropped_sheets)} action(s) for sheet(s) "
-                    f"I couldn't verify: {', '.join(_dropped_uniq)}. "
-                    "Refresh the taskpane (right-click the panel → Reload) so I can "
-                    "re-read your workbook tabs, then resend."
-                )
-            result["reply"] = (result.get("reply") or "") + _warn
+                # Partial bust — keep the model's reply, append a short note.
+                if _real:
+                    _warn = (
+                        f"\n\n(Skipped {len(_dropped_sheets)} change(s) for "
+                        f"{_fmt_list(_dropped_uniq)} — that tab doesn't exist. "
+                        f"Want me to create it?)"
+                    )
+                else:
+                    _warn = (
+                        f"\n\n(Skipped {len(_dropped_sheets)} change(s) for "
+                        f"{_fmt_list(_dropped_uniq)} — I couldn't verify the tab "
+                        f"exists. Refresh the panel and resend if it should.)"
+                    )
+                result["reply"] = (result.get("reply") or "") + _warn
             result["actions"] = all_actions
             print(
                 f"[phantom-sheet] Dropped {len(_dropped_sheets)} action(s) "

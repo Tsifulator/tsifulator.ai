@@ -251,6 +251,46 @@ def cu_session_id_required(actions: list[dict], spec: bool, reply: str = "",
     return True, "no cu_session_id required"
 
 
+def reply_must_not_contain(actions: list[dict], spec: list[str], reply: str = "",
+                            cu_session_id: str | None = None) -> tuple[bool, str]:
+    """Reply must NOT contain any of the given substrings (case-insensitive).
+
+    Used to assert that the model isn't lying — e.g. saying "All set —
+    I've written the data" when phantom-sheet guard dropped every action.
+    """
+    if not spec:
+        return True, "no forbidden substrings"
+    low = (reply or "").lower()
+    hits = [s for s in spec if s.lower() in low]
+    if hits:
+        return False, f"reply contains forbidden text: {hits}"
+    return True, f"reply contains none of: {spec}"
+
+
+def reply_must_contain(actions: list[dict], spec: list[str], reply: str = "",
+                        cu_session_id: str | None = None) -> tuple[bool, str]:
+    """Reply must contain ALL of the given substrings (case-insensitive)."""
+    if not spec:
+        return True, "no required substrings"
+    low = (reply or "").lower()
+    missing = [s for s in spec if s.lower() not in low]
+    if missing:
+        return False, f"reply missing required text: {missing}"
+    return True, f"reply contains all of: {spec}"
+
+
+def reply_must_contain_any_of(actions: list[dict], spec: list[str], reply: str = "",
+                                cu_session_id: str | None = None) -> tuple[bool, str]:
+    """Reply must contain AT LEAST ONE of the given substrings."""
+    if not spec:
+        return True, "no required substrings"
+    low = (reply or "").lower()
+    matched = [s for s in spec if s.lower() in low]
+    if not matched:
+        return False, f"reply contains none of: {spec}"
+    return True, f"reply contains: {matched[0]}"
+
+
 # ── Dispatcher ───────────────────────────────────────────────────────────────
 
 CHECKS: dict[str, Callable[..., tuple[bool, str]]] = {
@@ -266,6 +306,15 @@ CHECKS: dict[str, Callable[..., tuple[bool, str]]] = {
     "max_action_count":                  max_action_count,
     "reply_not_empty":                   reply_not_empty,
     "cu_session_id_required":            cu_session_id_required,
+    "reply_must_not_contain":            reply_must_not_contain,
+    "reply_must_contain":                reply_must_contain,
+    "reply_must_contain_any_of":         reply_must_contain_any_of,
+}
+
+# Rubric keys that need access to the reply text and/or cu_session_id
+_REPLY_AWARE_CHECKS = {
+    "reply_not_empty", "cu_session_id_required",
+    "reply_must_not_contain", "reply_must_contain", "reply_must_contain_any_of",
 }
 
 
@@ -281,7 +330,7 @@ def evaluate(rubric: dict, actions: list[dict], reply: str = "",
             results.append((False, name, f"UNKNOWN RUBRIC KEY"))
             continue
         try:
-            if name in ("reply_not_empty", "cu_session_id_required"):
+            if name in _REPLY_AWARE_CHECKS:
                 ok, detail = check(actions, spec, reply=reply, cu_session_id=cu_session_id)
             else:
                 ok, detail = check(actions, spec)

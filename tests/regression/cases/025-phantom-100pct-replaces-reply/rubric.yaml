@@ -1,0 +1,30 @@
+_purpose: |
+  When the user asks for a DCF on a workbook full of FIFA player data, the
+  model hallucinates writes to a "DCF Model" sheet that doesn't exist. The
+  phantom-sheet guard drops every action. Reply MUST NOT keep the model's
+  confident "All set — I've written the data" — that's a self-contradicting
+  lie. Backend should replace the reply entirely with a clean explanation
+  that mentions the actual existing tab and offers to create the missing one.
+_project: "Phantom 100% drop — reply must be replaced, not appended"
+
+# No actions should survive (or at most a small number — the model might
+# emit an autofit on Sheet1 incidentally, that's fine).
+max_action_count: 5
+
+# The model's success-tone language must NOT appear in the final reply.
+reply_must_not_contain:
+  - "All set"
+  - "I've written"
+  - "I have written"
+  - "successfully created"
+
+# Reply should reference the real tab and offer a path forward.
+# Either "Sheet1" (the only tab) or "create" (offer to add the missing tab)
+# must show up — both is best, but at minimum one to confirm the
+# replacement reply fired.
+reply_must_contain_any_of:
+  - "Sheet1"
+  - "create"
+  - "rephrase"
+
+reply_not_empty: true
