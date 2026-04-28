@@ -369,6 +369,94 @@ _last_response_text: str | None = None      # last successful reply — restored
 _pending_images: list = []                  # list of {data: base64, media_type, file_name}
                                             # — set by attach button, sent with next submit,
                                             # cleared after each successful submit
+_panel_delegate: "object | None" = None     # NSWindowDelegate that vends our custom field
+                                            # editor. Held module-level so PyObjC ARC
+                                            # doesn't reclaim it while the panel is live.
+
+
+# ── Attachment helpers (shared by + button, drag-drop, and URL-strip fallback)
+_FILE_URL_RE = None  # lazy-compiled below
+_ATTACH_EXTS = ("png", "jpg", "jpeg", "gif", "webp", "heic", "pdf")
+_MEDIA_TYPES = {
+    "png": "image/png",   "jpg": "image/jpeg",
+    "jpeg": "image/jpeg", "gif": "image/gif",
+    "webp": "image/webp", "heic": "image/heic",
+    "pdf": "application/pdf",
+}
+
+
+def _queue_paths_as_images(paths) -> int:
+    """Read each path off disk, base64-encode, queue in `_pending_images`,
+    update the +N badge on the attach button. Returns count actually added.
+
+    Centralized so the + button, the drag-drop handler, and the URL-strip
+    safety net all share one code path. Filters by extension so a stray
+    text file dropped on the panel doesn't get encoded.
+    """
+    global _pending_images
+    import base64 as _b64
+    from pathlib import Path as _P
+    added = 0
+    for raw in paths:
+        try:
+            path = str(raw)
+            ext = _P(path).suffix.lower().lstrip(".")
+            if ext not in _ATTACH_EXTS:
+                continue
+            with open(path, "rb") as f:
+                data = f.read()
+            _pending_images.append({
+                "data": _b64.b64encode(data).decode("ascii"),
+                "media_type": _MEDIA_TYPES.get(ext, "application/octet-stream"),
+                "file_name": _P(path).name,
+            })
+            added += 1
+        except Exception as e:
+            sys.stderr.write(f"[tsifl-helper] queue image {raw} failed: {e}\n")
+    if added > 0 and _panel_attach_btn is not None:
+        try:
+            _panel_attach_btn.setTitle_(f"+{len(_pending_images)}")
+        except Exception:
+            pass
+    return added
+
+
+def _strip_and_extract_paths(text: str):
+    """Find file:// URLs in `text` and return (cleaned_text, [file_paths]).
+
+    The user-reported bug: dragging an image onto the input field made
+    NSTextView insert the file URL as text (e.g. file:///Users/.../Screenshot.png),
+    polluting what the user typed. Custom field editor blocks this at the
+    source, but if anything slips through we strip it here as a safety net
+    AND auto-queue the file as an attachment — so the user's intent
+    (attach image) is preserved.
+    """
+    import re
+    global _FILE_URL_RE
+    if _FILE_URL_RE is None:
+        # Match file:// URLs (case-insensitive). NSTextView always
+        # inserts the full URL with prefix when dropping a file.
+        _FILE_URL_RE = re.compile(r"file://\S+", re.IGNORECASE)
+    paths: list[str] = []
+
+    def _replace(m):
+        url = m.group(0).rstrip(".,;)")  # trim trailing punctuation
+        try:
+            from urllib.parse import urlparse, unquote
+            parsed = urlparse(url)
+            if parsed.scheme.lower() == "file":
+                p = unquote(parsed.path)
+                if p:
+                    paths.append(p)
+        except Exception:
+            pass
+        return ""
+
+    cleaned = _FILE_URL_RE.sub(_replace, text)
+    # Drop empty lines left behind so the user's typed text doesn't sit
+    # under a blank gap where the URL used to be.
+    cleaned = "\n".join(line for line in cleaned.splitlines() if line.strip())
+    return cleaned.strip(), paths
 
 
 # ── PyObjC subclasses (registered ONCE at module load) ──────────────────────
@@ -379,14 +467,20 @@ _pending_images: list = []                  # list of {data: base64, media_type,
 # every panel rebuild.
 
 def _define_panel_classes():
-    """Define the NSPanel subclass + the action-target NSObject subclass.
-    Called once on module load. Returns (panel_class, target_class)."""
+    """Define all PyObjC subclasses used by the floating panel.
+
+    Called once on module load. Returns:
+        (panel_class, target_class, content_view_class, panel_delegate_class)
+
+    All four classes are registered with the Objective-C runtime on first
+    call; subsequent panel rebuilds reuse them.
+    """
     try:
-        from AppKit import NSPanel
+        from AppKit import NSPanel, NSView, NSTextView
         from Foundation import NSObject
     except Exception as _ie:
         sys.stderr.write(f"[tsifl-helper] AppKit/Foundation unavailable: {_ie}\n")
-        return None, None
+        return None, None, None, None
 
     class _TsiflFloatingPanel(NSPanel):
         """Floating panel that CAN become the key window, even when
@@ -399,6 +493,135 @@ def _define_panel_classes():
 
         def canBecomeMainWindow(self):
             return False  # menu-bar utility, not the app's main window
+
+    class _TsiflFieldEditor(NSTextView):
+        """Custom field editor used by the panel for the input NSTextField.
+
+        Default field editor is a vanilla NSTextView, which accepts file
+        URL drops and inserts them as text — that's the user-reported bug
+        ('the URL appears in the input when I attach an image'). We
+        narrow the acceptable drag types to plain text only AND reject
+        the pasteboard read at the lowest level for any file/URL type.
+
+        File drops are still accepted at the panel level (see
+        _TsiflContentView below) — they just route to `_pending_images`
+        as proper attachments instead of polluting the input text.
+        """
+
+        def acceptableDragTypes(self):
+            return [
+                "public.utf8-plain-text",
+                "public.text",
+                "NSStringPboardType",
+            ]
+
+        def readSelectionFromPasteboard_type_(self, pb, ptype):
+            FILE_TYPES = (
+                "NSFilenamesPboardType",
+                "public.file-url",
+                "public.url",
+                "Apple URL pasteboard type",
+            )
+            if ptype in FILE_TYPES:
+                return False
+            try:
+                return NSTextView.readSelectionFromPasteboard_type_(self, pb, ptype)
+            except Exception:
+                return False
+
+    class _TsiflPanelDelegate(NSObject):
+        """NSWindowDelegate that vends `_TsiflFieldEditor` as the field
+        editor for the input NSTextField.
+
+        macOS calls `windowWillReturnFieldEditor:toObject:` whenever the
+        panel needs to provide a field editor for one of its controls.
+        Returning our custom subclass makes the panel use it for the
+        input field, which is how we block file URL drops at the source.
+        Returning None lets the panel fall back to default behavior for
+        any other object (e.g. the response NSTextField, which is
+        non-editable so it never asks for a field editor anyway).
+        """
+
+        def windowWillReturnFieldEditor_toObject_(self, window, obj):
+            try:
+                from AppKit import NSTextField
+                if not isinstance(obj, NSTextField):
+                    return None
+                from Foundation import NSMakeRect
+                fe = getattr(self, "_field_editor", None)
+                if fe is None:
+                    fe = _TsiflFieldEditor.alloc().initWithFrame_(
+                        NSMakeRect(0, 0, 0, 0)
+                    )
+                    fe.setFieldEditor_(True)
+                    self._field_editor = fe
+                return fe
+            except Exception as e:
+                sys.stderr.write(f"[tsifl-helper] field editor build failed: {e}\n")
+                return None
+
+    class _TsiflContentView(NSView):
+        """Content view that accepts file drops anywhere on the panel.
+
+        Files dropped here get base64-encoded and queued in
+        `_pending_images` (same destination as the + button). Combined
+        with the custom field editor blocking drops on the input itself,
+        this gives clean attach UX: drag a file → +N badge updates,
+        input stays clean.
+        """
+
+        def acceptsFirstResponder(self):
+            return False  # input field owns keyboard focus
+
+        def draggingEntered_(self, sender):
+            if self._has_files(sender):
+                return 1  # NSDragOperationCopy
+            return 0      # NSDragOperationNone
+
+        def draggingUpdated_(self, sender):
+            return self.draggingEntered_(sender)
+
+        def prepareForDragOperation_(self, sender):
+            return self._has_files(sender)
+
+        def performDragOperation_(self, sender):
+            try:
+                added = _queue_paths_as_images(self._extract_paths(sender))
+                return added > 0
+            except Exception as e:
+                _log_shortcut_error("drop failed", e)
+                return False
+
+        def _has_files(self, sender):
+            try:
+                return bool(self._extract_paths(sender))
+            except Exception:
+                return False
+
+        def _extract_paths(self, sender):
+            paths: list[str] = []
+            try:
+                pb = sender.draggingPasteboard()
+            except Exception:
+                return paths
+            # Try the legacy filenames type first — gives plain paths directly
+            try:
+                files = pb.propertyListForType_("NSFilenamesPboardType")
+                if files:
+                    return [str(f) for f in files]
+            except Exception:
+                pass
+            # Fall back to URL objects (modern UTI-based reads)
+            try:
+                from AppKit import NSURL
+                urls = pb.readObjectsForClasses_options_([NSURL], None) or []
+                for u in urls:
+                    p = u.path() if hasattr(u, "path") else None
+                    if p:
+                        paths.append(str(p))
+            except Exception:
+                pass
+            return paths
 
     class _PanelTarget(NSObject):
         """Single target object handling Enter (input field action),
@@ -419,56 +642,51 @@ def _define_panel_classes():
             if text:
                 _panel_submit(text)
 
+        def controlTextDidChange_(self, notification):
+            """Safety net for the URL-pollution bug.
+
+            Custom field editor blocks file URL drops at the source, but
+            paste / Services / odd UTI translations can still slip a
+            file:// URL into the input text. This handler runs on every
+            user-initiated change, strips file URLs, and auto-queues
+            them as proper attachments so the user's intent is preserved.
+
+            `setStringValue_` does NOT fire this method (only field-
+            editor mutations do), so the rewrite below cannot recurse.
+            """
+            if _panel_input is None or _panel_busy:
+                return
+            try:
+                current = str(_panel_input.stringValue() or "")
+                if "file://" not in current.lower():
+                    return  # fast path — no URL means nothing to do
+                cleaned, paths = _strip_and_extract_paths(current)
+                if cleaned != current:
+                    _panel_input.setStringValue_(cleaned)
+                if paths:
+                    _queue_paths_as_images(paths)
+            except Exception:
+                pass
+
         def attachClicked_(self, sender):
-            """Open NSOpenPanel — let user pick image files. Encoded
-            as base64 and queued in `_pending_images`; the next submit
+            """Open NSOpenPanel — let user pick image files. Each
+            selected file is base64-encoded and queued in
+            `_pending_images` via the shared helper; the next submit
             sends them with the chat request."""
-            global _pending_images
             try:
                 from AppKit import NSOpenPanel
                 panel = NSOpenPanel.openPanel()
                 panel.setAllowsMultipleSelection_(True)
                 panel.setCanChooseFiles_(True)
                 panel.setCanChooseDirectories_(False)
-                panel.setAllowedFileTypes_(
-                    ["png", "jpg", "jpeg", "gif", "webp", "heic", "pdf"]
-                )
+                panel.setAllowedFileTypes_(list(_ATTACH_EXTS))
                 panel.setMessage_("Attach an image or PDF for tsifl")
                 panel.setPrompt_("Attach")
                 if panel.runModal() != 1:  # 1 = NSModalResponseOK
                     return
                 urls = panel.URLs() or []
-                added = 0
-                import base64 as _b64
-                from pathlib import Path as _P
-                for url in urls:
-                    path = url.path()
-                    try:
-                        with open(path, "rb") as f:
-                            data = f.read()
-                        b64 = _b64.b64encode(data).decode("ascii")
-                        ext = _P(path).suffix.lower().lstrip(".")
-                        media_type = {
-                            "png": "image/png", "jpg": "image/jpeg",
-                            "jpeg": "image/jpeg", "gif": "image/gif",
-                            "webp": "image/webp", "heic": "image/heic",
-                            "pdf": "application/pdf",
-                        }.get(ext, "application/octet-stream")
-                        _pending_images.append({
-                            "data": b64,
-                            "media_type": media_type,
-                            "file_name": _P(path).name,
-                        })
-                        added += 1
-                    except Exception as e:
-                        sys.stderr.write(f"[tsifl-helper] read image {path} failed: {e}\n")
-                if added > 0 and _panel_attach_btn is not None:
-                    # Show count next to the + sign so the user knows attachments
-                    # are queued for the next submit.
-                    try:
-                        _panel_attach_btn.setTitle_(f"+{len(_pending_images)}")
-                    except Exception:
-                        pass
+                paths = [u.path() for u in urls if u.path()]
+                _queue_paths_as_images(paths)
                 if _panel_input is not None:
                     try:
                         _panel_input.becomeFirstResponder()
@@ -477,10 +695,15 @@ def _define_panel_classes():
             except Exception as e:
                 _log_shortcut_error("attach failed", e)
 
-    return _TsiflFloatingPanel, _PanelTarget
+    return _TsiflFloatingPanel, _PanelTarget, _TsiflContentView, _TsiflPanelDelegate
 
 
-_TsiflFloatingPanel, _PanelTargetClass = _define_panel_classes()
+(
+    _TsiflFloatingPanel,
+    _PanelTargetClass,
+    _TsiflContentViewClass,
+    _TsiflPanelDelegateClass,
+) = _define_panel_classes()
 
 
 # Thinking punchlines shown in the response area while waiting for backend.
@@ -582,14 +805,28 @@ def _build_floating_panel():
         100.0 / 255, 116.0 / 255, 139.0 / 255, 1.0
     )
 
-    # Content view = white pill with blue border + rounded corners
-    content = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, width, height))
+    # Content view = white pill with blue border + rounded corners.
+    # Use the drag-drop-aware subclass (`_TsiflContentView`) so dragging an
+    # image file onto the panel queues it as an attachment instead of
+    # letting the default field editor insert the URL as text.
+    view_cls = _TsiflContentViewClass or NSView
+    content = view_cls.alloc().initWithFrame_(NSMakeRect(0, 0, width, height))
     content.setWantsLayer_(True)
     layer = content.layer()
     layer.setBackgroundColor_(NSColor.whiteColor().CGColor())
     layer.setCornerRadius_(14.0)
     layer.setBorderWidth_(1.5)
     layer.setBorderColor_(blue.CGColor())
+    # Register for file URL drag types. Both legacy (NSFilenamesPboardType)
+    # and modern (public.file-url UTI) — Finder uses the legacy type but
+    # other source apps may use the UTI form.
+    if _TsiflContentViewClass is not None:
+        try:
+            content.registerForDraggedTypes_(
+                ["NSFilenamesPboardType", "public.file-url"]
+            )
+        except Exception as e:
+            sys.stderr.write(f"[tsifl-helper] register drag types failed: {e}\n")
     panel.setContentView_(content)
 
     # ── Top row: logo + input + attach + send ────────────────────────────
@@ -649,7 +886,9 @@ def _build_floating_panel():
         NSMakeRect(attach_x, attach_y, btn_size, btn_size)
     )
     attach_btn.setBordered_(False)
-    attach_btn.setTitle_("+")
+    # Restore +N badge if attachments were queued in a prior panel session
+    # (user closed the panel without submitting, then reopened).
+    attach_btn.setTitle_(f"+{len(_pending_images)}" if _pending_images else "+")
     attach_btn.setFont_(NSFont.systemFontOfSize_(18.0))
     try:
         attach_btn.setContentTintColor_(muted)
@@ -1092,6 +1331,31 @@ def _show_shortcut_panel():
         _panel_send_btn.setAction_("sendClicked:")
         _panel_attach_btn.setTarget_(_panel_target)
         _panel_attach_btn.setAction_("attachClicked:")
+
+        # Also wire the input as the target's delegate, so
+        # `controlTextDidChange_` fires on every user-initiated edit.
+        # That's the safety-net hook that strips any file:// URL the
+        # field editor failed to block, and auto-queues the file as a
+        # proper attachment.
+        try:
+            _panel_input.setDelegate_(_panel_target)
+        except Exception as e:
+            sys.stderr.write(f"[tsifl-helper] input delegate attach failed: {e}\n")
+
+        # Set the panel's window delegate so it vends our custom field
+        # editor (the one that rejects file URL drops at the source).
+        # Built lazily once per app lifetime.
+        global _panel_delegate
+        if _panel_delegate is None and _TsiflPanelDelegateClass is not None:
+            try:
+                _panel_delegate = _TsiflPanelDelegateClass.alloc().init()
+            except Exception as e:
+                sys.stderr.write(f"[tsifl-helper] panel delegate init failed: {e}\n")
+        if _panel_delegate is not None:
+            try:
+                _panel_ref.setDelegate_(_panel_delegate)
+            except Exception as e:
+                sys.stderr.write(f"[tsifl-helper] setDelegate_ failed: {e}\n")
 
         # Esc monitor: register once for the app's lifetime. The handler
         # dismisses whatever the current panel is.
