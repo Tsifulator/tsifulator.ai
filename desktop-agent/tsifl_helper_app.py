@@ -575,17 +575,18 @@ def _define_panel_classes():
     """Define all PyObjC subclasses used by the floating panel.
 
     Called once on module load. Returns:
-        (panel_class, target_class, content_view_class, panel_delegate_class)
+        (panel_class, target_class, content_view_class, panel_delegate_class,
+         input_field_class)
 
-    All four classes are registered with the Objective-C runtime on first
+    All five classes are registered with the Objective-C runtime on first
     call; subsequent panel rebuilds reuse them.
     """
     try:
-        from AppKit import NSPanel, NSView, NSTextView
+        from AppKit import NSPanel, NSView, NSTextView, NSTextField
         from Foundation import NSObject
     except Exception as _ie:
         sys.stderr.write(f"[tsifl-helper] AppKit/Foundation unavailable: {_ie}\n")
-        return None, None, None, None
+        return None, None, None, None, None
 
     class _TsiflFloatingPanel(NSPanel):
         """Floating panel that CAN become the key window, even when
@@ -598,6 +599,37 @@ def _define_panel_classes():
 
         def canBecomeMainWindow(self):
             return False  # menu-bar utility, not the app's main window
+
+    class _TsiflInputField(NSTextField):
+        """NSTextField subclass that refuses all drag-drop at the cell
+        level, so drops bubble up to the content view (which queues
+        them as attachments) instead of getting inserted as URL text.
+
+        Why subclass NSTextField (the cell-level container) and not
+        NSTextView (the field editor)? Because subclassing NSTextView
+        broke spacebar in v85 — key-event routing got confused. The
+        cell-level NSTextField doesn't intercept keyboard input, so
+        overriding only its drag methods is safe.
+
+        unregisterDraggedTypes is also called explicitly in
+        _build_floating_panel (belt-and-suspenders). This subclass
+        catches anything that re-registers types dynamically.
+        """
+
+        def acceptableDragTypes(self):
+            return []  # reject everything
+
+        def draggingEntered_(self, sender):
+            return 0  # NSDragOperationNone
+
+        def draggingUpdated_(self, sender):
+            return 0
+
+        def prepareForDragOperation_(self, sender):
+            return False
+
+        def performDragOperation_(self, sender):
+            return False
 
     class _TsiflFieldEditor(NSTextView):
         """Custom field editor used by the panel for the input NSTextField.
@@ -977,7 +1009,8 @@ def _define_panel_classes():
             except Exception as e:
                 _log_shortcut_error("attach failed", e)
 
-    return _TsiflFloatingPanel, _PanelTarget, _TsiflContentView, _TsiflPanelDelegate
+    return (_TsiflFloatingPanel, _PanelTarget, _TsiflContentView,
+            _TsiflPanelDelegate, _TsiflInputField)
 
 
 (
@@ -985,6 +1018,7 @@ def _define_panel_classes():
     _PanelTargetClass,
     _TsiflContentViewClass,
     _TsiflPanelDelegateClass,
+    _TsiflInputFieldClass,
 ) = _define_panel_classes()
 
 
@@ -1196,14 +1230,25 @@ def _build_floating_panel():
         pass
     content.addSubview_(attach_btn)
 
-    # 4. Input field (between logo and attach button)
+    # 4. Input field (between logo and attach button). Use the drag-
+    # rejecting NSTextField subclass so file drops bubble up to the
+    # content view (which queues them as attachments) instead of being
+    # inserted as URL text inside the input.
     input_x = logo_x + logo_size + 12.0
     input_width = attach_x - input_x - 8.0
     input_height = 24.0
     input_y = (INPUT_ROW_HEIGHT - input_height) / 2.0
-    input_field = NSTextField.alloc().initWithFrame_(
+    input_cls = _TsiflInputFieldClass or NSTextField
+    input_field = input_cls.alloc().initWithFrame_(
         NSMakeRect(input_x, input_y, input_width, input_height)
     )
+    # Belt-and-suspenders: also unregister any drag types AppKit might
+    # default-register on the field. Combined with the subclass overrides
+    # above, this gives us 6 layers of "no drops on the input".
+    try:
+        input_field.unregisterDraggedTypes()
+    except Exception:
+        pass
     input_field.setBezeled_(False)
     input_field.setBordered_(False)
     input_field.setDrawsBackground_(False)
@@ -1696,25 +1741,32 @@ def _show_shortcut_panel():
         _panel_input.selectText_(None)
 
         # Source-level URL-pollution fix: strip drag-type registrations
-        # on the panel's default field editor (which NSWindow lazily
-        # provides for whichever NSTextField is first responder). This
-        # makes the input field NOT accept file drops at all — drag-drop
-        # bubbles up to _TsiflContentView's handler, which queues the
-        # file as a proper attachment.
-        #
-        # We use the DEFAULT NSTextView field editor (not a subclass) —
-        # subclassing NSTextView and using it as a field editor broke
-        # the spacebar in v85 (key-event routing got confused). Just
-        # calling unregisterDraggedTypes on the default editor doesn't
-        # affect keyboard input at all.
-        try:
-            fe = _panel_ref.fieldEditor_forObject_(True, _panel_input)
-            if fe is not None:
-                fe.unregisterDraggedTypes()
-        except Exception as e:
-            sys.stderr.write(
-                f"[tsifl-helper] field editor drag-unregister failed: {e}\n"
-            )
+        # on the actual field editor in use. We hit it three ways for
+        # max coverage:
+        #   1. NSControl.currentEditor() — the field editor right now,
+        #      after makeFirstResponder. Most direct.
+        #   2. NSWindow.fieldEditor:forObject: — the panel's shared
+        #      cached field editor. May or may not be the same instance.
+        #   3. The NSTextField itself was already unregistered in
+        #      _build_floating_panel.
+        # Why no NSTextView subclass here? Because that broke spacebar
+        # in v85 (key-event routing got confused). Just calling
+        # unregisterDraggedTypes on the default editor is safe.
+        seen_editors = set()
+        for desc, get in (
+            ("currentEditor",       lambda: _panel_input.currentEditor()),
+            ("fieldEditor_forObject", lambda: _panel_ref.fieldEditor_forObject_(True, _panel_input)),
+        ):
+            try:
+                fe = get()
+                if fe is not None and id(fe) not in seen_editors:
+                    seen_editors.add(id(fe))
+                    fe.unregisterDraggedTypes()
+                    _log_shortcut_trace(f"field editor unregistered ({desc}): {fe}")
+            except Exception as e:
+                sys.stderr.write(
+                    f"[tsifl-helper] field editor unregister via {desc} failed: {e}\n"
+                )
     except Exception as e:
         # No more silent fallback to rumps.Window — surface the actual
         # error so we can debug. Writes to ~/Library/Logs/tsifl-shortcut.log
