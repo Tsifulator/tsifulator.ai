@@ -158,6 +158,34 @@ def _name_has_intent(name: str) -> bool:
     return any(kw in nlow for kw in _NEW_SHEET_INTENT)
 
 
+def _has_blanket_sheet_creation_intent(message: str) -> bool:
+    """True if the user asked for a new sheet/tab in generic terms,
+    delegating the actual name choice to the model.
+
+    Distinct from `_name_explicitly_created`, which requires the specific
+    sheet name to follow the verb. This catches phrasings like:
+        'create one sheet that has the averages'
+        'add a tab with top 10 players'
+        'give me another sheet showing breakdown by position'
+        'make a new worksheet'
+
+    Required pattern: a creation verb, optional filler / quantifier, then
+    'sheet' | 'tab' | 'worksheet' (singular or plural). Does NOT match
+    'add a summary row to the X tab' (which is bug 018: modify intent on
+    existing sheet) — the suffix anchors on 'sheet/tab/worksheet' as the
+    direct object, so 'row to the X tab' fails because 'row' interrupts.
+    """
+    if not message:
+        return False
+    pattern = (
+        r"\b(?:create|add|build|make|insert|generate|set ?up|gimme|give me)"
+        # Optional filler: article / quantifier / 'new'
+        r"(?:\s+(?:a|an|the|one|two|three|four|five|some|several|new|another|extra|fresh|me)){0,3}"
+        r"\s+(?:tab|sheet|worksheet)s?\b"
+    )
+    return re.search(pattern, message, flags=re.IGNORECASE) is not None
+
+
 _WRITE_TYPES_FOR_INTENT = {
     "write_cell", "write_formula", "write_range",
     "fill_down", "fill_right",
@@ -338,6 +366,10 @@ def _auto_inject_add_sheets(
     if not sheet_writes:
         return actions, []
 
+    # Detect blanket creation intent ONCE per message (cheap regex, but
+    # we'd repeat it per phantom-target otherwise).
+    blanket_intent = _has_blanket_sheet_creation_intent(user_message)
+
     injections: list = []
     injected_names: list = []
     for key, (canonical, count) in sheet_writes.items():
@@ -359,6 +391,13 @@ def _auto_inject_add_sheets(
             # confirmation doesn't echo the keyword but the model is
             # building a clear-intent sheet.
             or (count >= 5 and _name_has_intent(canonical))
+            # Blanket creation intent: user said "create a sheet" / "add
+            # a tab" / "give me another worksheet" anywhere in the
+            # message — they're delegating the name choice to us. Allow
+            # any phantom target with at least a few writes. Lower
+            # threshold than the catch-all (count>=10) because user
+            # already said yes-to-create explicitly.
+            or (blanket_intent and count >= min_writes_for_intent)
             # Hardest: very high write count is itself the signal. If the
             # model emits 10+ writes to a single non-existent sheet, the
             # intent is unambiguous regardless of name. Saves the user from

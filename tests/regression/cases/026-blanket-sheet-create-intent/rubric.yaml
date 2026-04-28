@@ -1,0 +1,31 @@
+_purpose: |
+  User asks for a multi-sheet analysis using blanket creation language
+  ("create one sheet that has...", "give me a sheet with..."), without
+  naming the sheets precisely. Pre-v92, _name_explicitly_created required
+  the exact name to follow the verb, so the model's invented sheet names
+  (e.g. "Right Winger Averages", "Top 10 Highest Rated") didn't qualify
+  for auto-creation, and 90+ writes got phantom-dropped.
+
+  v92 added _has_blanket_sheet_creation_intent: detects "create [filler]
+  (sheet|tab|worksheet)" anywhere in the message. When present, allows
+  any phantom-target with >= 3 writes to be auto-created.
+
+  Assertion: at least one add_sheet action gets injected, and at least
+  one write_* action survives the phantom-sheet guard. We don't assert
+  the exact sheet names — model is free to pick — only that work
+  actually flows through instead of being silently dropped.
+_project: "Blanket sheet-creation intent — auto-inject add_sheet"
+
+# At least one new sheet should be added, and writes should land on it.
+min_action_count: 5
+must_include_action_types:
+  - add_sheet
+
+# Reply must NOT contain the self-contradicting "All set" / "skipped"
+# language — the work should actually go through this time.
+reply_must_not_contain:
+  - "skipped"
+  - "don't exist"
+  - "doesn't exist"
+
+reply_not_empty: true
