@@ -333,14 +333,22 @@ def _auto_inject_add_sheets(
         for s in (context or {}).get("all_sheets") or []
         if isinstance(s, str)
     }
-    pending = set()
+    # Track add_sheet actions the model already emitted in this response.
+    # Map from casefolded-name → canonical name (for case-preserving output).
+    pending: dict[str, str] = {}
     for a in actions or []:
         if a.get("type") == "add_sheet":
             name = ((a.get("payload") or {}).get("name") or "").strip()
             if name:
-                pending.add(name.casefold())
+                pending.setdefault(name.casefold(), name)
 
-    # Count writes per non-existent sheet name
+    # Count writes per non-existent sheet name. Important: we count writes
+    # against `pending` names too — when the model emits both an add_sheet
+    # AND writes for an inventive name like "Best Buys RW", phantom-strip
+    # would otherwise drop both (because _name_mentioned fails on names
+    # the user didn't literally type). We need to qualify those add_sheets
+    # under the same rules as un-add_sheet'd phantoms, then mark them
+    # pre-approved so phantom-strip keeps them.
     sheet_writes: dict[str, list] = {}
     for a in actions or []:
         t = a.get("type", "")
@@ -358,10 +366,22 @@ def _auto_inject_add_sheets(
         if not sheet:
             continue
         key = sheet.casefold()
-        if key in existing or key in pending:
+        if key in existing:
+            # Real existing sheet — no auto-inject needed.
             continue
+        # NOTE: previously this also `continue`d when `key in pending`,
+        # which left phantom names ungauged when the model self-emitted
+        # an add_sheet. We now COUNT them so they go through the same
+        # qualification rules and end up in `injected_names` if approved.
         entry = sheet_writes.setdefault(key, [sheet, 0])
         entry[1] += 1
+
+    # Also include add_sheet'd names that have ZERO writes (rare but
+    # possible — model adds a sheet for clarity even if it writes nothing
+    # to it yet). Under blanket intent, those should still be approved.
+    for key, canonical in pending.items():
+        if key not in existing and key not in sheet_writes:
+            sheet_writes[key] = [canonical, 0]
 
     if not sheet_writes:
         return actions, []
