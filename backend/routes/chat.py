@@ -372,42 +372,55 @@ def _auto_inject_add_sheets(
 
     injections: list = []
     injected_names: list = []
+    decisions: list[str] = []  # per-sheet log line for the diagnostic print
     for key, (canonical, count) in sheet_writes.items():
-        qualifies = (
-            # User EXPLICITLY asked to create a sheet with this name.
-            # Tightened from `_name_mentioned` (bug 018): bare mention of
-            # the name doesn't imply creation intent — "add to the X tab"
-            # assumes X exists, only "create/build/make a X tab" does.
-            _name_explicitly_created(canonical, user_message)
-            # Allowlisted name (e.g. "Scenario Summary").
-            or key in _ADD_SHEET_ALLOWLIST
-            # Strict: name + user message share an intent keyword.
-            or (count >= min_writes_for_intent
-                and _has_new_sheet_intent(canonical, user_message))
-            # Softer: model emitted enough writes to clearly signal intent
-            # AND the sheet name itself contains an intent keyword
-            # (Dashboard / Summary / Analysis / etc). Catches "apply all the
-            # changes you mentioned" follow-ups where the user's short
-            # confirmation doesn't echo the keyword but the model is
-            # building a clear-intent sheet.
-            or (count >= 5 and _name_has_intent(canonical))
-            # Blanket creation intent: user said "create a sheet" / "add
-            # a tab" / "give me another worksheet" anywhere in the
-            # message — they're delegating the name choice to us. Allow
-            # any phantom target with at least a few writes. Lower
-            # threshold than the catch-all (count>=10) because user
-            # already said yes-to-create explicitly.
-            or (blanket_intent and count >= min_writes_for_intent)
-            # Hardest: very high write count is itself the signal. If the
-            # model emits 10+ writes to a single non-existent sheet, the
-            # intent is unambiguous regardless of name. Saves the user from
-            # losing 60+ actions because the guard refused to ratify a
-            # tab the model clearly intended to create.
-            or count >= 10
+        # Each rule, individually, so the diagnostic log can show WHICH
+        # rule fired. Cheaper than re-running them after the fact.
+        explicit  = _name_explicitly_created(canonical, user_message)
+        allowed   = key in _ADD_SHEET_ALLOWLIST
+        kw_match  = (count >= min_writes_for_intent
+                     and _has_new_sheet_intent(canonical, user_message))
+        soft_kw   = count >= 5 and _name_has_intent(canonical)
+        # Blanket intent: user said "create a sheet" / "add a tab" /
+        # "give me another worksheet" — delegating name choice to us.
+        # Trust them: auto-create ANY phantom-target the model wrote to,
+        # regardless of write count. v93 used `count >= 3` here, but
+        # that left low-write phantoms (e.g. "RW Averages" with one or
+        # two header writes) orphaned, so the user got partial work
+        # and the rest still phantom-dropped. The asymmetry of cost
+        # favors more permissive auto-creation when the user has
+        # explicitly opted in: an unwanted tab is one click to delete;
+        # a lost analysis is irrecoverable.
+        blanket   = blanket_intent
+        catch_all = count >= 10
+
+        qualifies = explicit or allowed or kw_match or soft_kw or blanket or catch_all
+        rule = (
+            "explicit" if explicit
+            else "allowlist" if allowed
+            else "kw_match" if kw_match
+            else "soft_kw" if soft_kw
+            else "blanket" if blanket
+            else "catch_all" if catch_all
+            else "REJECTED"
         )
+        decisions.append(f"{canonical!r}(count={count})→{rule}")
         if qualifies:
             injections.append({"type": "add_sheet", "payload": {"name": canonical}})
             injected_names.append(canonical)
+
+    # Diagnostic — surfaces the decision matrix in Railway logs so we
+    # can debug why a particular case did/didn't auto-inject.
+    if decisions:
+        try:
+            print(
+                f"[auto-inject] blanket_intent={blanket_intent} "
+                f"decisions=[{', '.join(decisions)}] "
+                f"injected={injected_names}",
+                flush=True,
+            )
+        except Exception:
+            pass
 
     if not injections:
         return actions, []
