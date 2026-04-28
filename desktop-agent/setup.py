@@ -87,7 +87,10 @@ OPTIONS = {
         "xlwings",
         "PIL",
         "appscript",     # xlwings's Mac backend
-        "pynput",        # global Cmd+Shift+T hotkey
+        # NOTE: removed `pynput` in favor of AppKit.NSEvent global monitor.
+        # AppKit ships with PyObjC (already a rumps dep) so no new package
+        # required. NSEvent is more reliable on macOS than pynput's
+        # CGEventTap path, especially across .app rebuilds.
     ],
     # Modules we explicitly include even if py2app doesn't auto-detect them.
     "includes": [

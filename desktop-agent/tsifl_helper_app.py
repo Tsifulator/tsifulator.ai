@@ -28,17 +28,22 @@ from pathlib import Path
 
 import rumps  # type: ignore[import-untyped]
 
-# pynput is used for the global Cmd+Shift+T hotkey. Imported lazily so that
-# a missing install doesn't kill the menu bar on startup — the hotkey just
-# becomes unavailable with a one-time warning. macOS requires Input
-# Monitoring permission for global key listening; users grant once in
-# System Settings → Privacy & Security → Input Monitoring.
+# Global hotkey listening: we use AppKit's NSEvent.addGlobalMonitorForEvents
+# directly via PyObjC. This is the same path Spotlight, Raycast, Alfred etc.
+# all use on macOS — it's the supported, stable API and works regardless of
+# whether the .app is code-signed or rebuilt with a different bundle hash.
+#
+# We previously tried `pynput` here. pynput uses CGEventTap under the hood
+# and depends on the Input Monitoring permission propagating cleanly to the
+# bundled .app — a flaky path on macOS Sonoma+, especially with unsigned
+# builds. NSEvent's global monitor is a higher-level API on the same OS
+# event system but with much better permission semantics.
 try:
-    from pynput import keyboard as _kb  # type: ignore[import-untyped]
-    _PYNPUT_AVAILABLE = True
+    from AppKit import NSEvent  # type: ignore[import-untyped]
+    _NSEVENT_AVAILABLE = True
 except Exception:
-    _kb = None  # type: ignore[assignment]
-    _PYNPUT_AVAILABLE = False
+    NSEvent = None  # type: ignore[assignment]
+    _NSEVENT_AVAILABLE = False
 
 # httpx for the panel → backend /chat round-trip
 try:
@@ -360,34 +365,77 @@ def _on_shortcut_pressed():
         sys.stderr.write(f"[tsifl-helper] shortcut dispatch failed: {e}\n")
 
 
-_hotkey_listener: "object | None" = None
+# NSEvent monitor handle. Kept module-level so it doesn't get GC'd —
+# PyObjC monitor refs are weak; if the Python ref is dropped, the monitor
+# stops firing.
+_event_monitor: "object | None" = None
+_event_monitor_local: "object | None" = None
+
+# AppKit constants. NSEvent flag values are stable across macOS versions
+# (these are documented public APIs).
+_NS_EVENT_MASK_KEY_DOWN = 1 << 10                  # NSEventMaskKeyDown
+_NS_EVENT_MODIFIER_FLAG_COMMAND = 1 << 20          # NSEventModifierFlagCommand
+_NS_EVENT_MODIFIER_FLAG_SHIFT = 1 << 17            # NSEventModifierFlagShift
+
+
+def _ns_event_handler(event):
+    """Called by AppKit when a key-down event fires globally (any app).
+
+    Returns nothing to AppKit (global monitor doesn't consume events; the
+    keystroke still passes through to whatever app was focused). For our
+    purposes that's fine — ⌘⇧T isn't a system shortcut, so nothing else
+    will react to it.
+    """
+    try:
+        flags = event.modifierFlags()
+        # Filter: only act when BOTH Cmd and Shift are pressed.
+        if not (flags & _NS_EVENT_MODIFIER_FLAG_COMMAND):
+            return
+        if not (flags & _NS_EVENT_MODIFIER_FLAG_SHIFT):
+            return
+        chars = event.charactersIgnoringModifiers()
+        if chars and str(chars).lower() == "t":
+            _on_shortcut_pressed()
+    except Exception as e:
+        sys.stderr.write(f"[tsifl-helper] NSEvent handler error: {e}\n")
 
 
 def _start_hotkey_listener() -> bool:
-    """Spawn the pynput global hotkey listener. Returns True on success.
+    """Register a global Cmd+Shift+T listener via AppKit's NSEvent API.
 
-    Failure modes (all non-fatal):
-      - pynput not installed → returns False, logs warning
-      - Input Monitoring permission missing → listener fails silently; user
-        sees nothing happen on Cmd+Shift+T. They'll need to grant it in
-        System Settings then relaunch.
+    Returns True if registration succeeded. Note that "succeeded" here just
+    means AppKit returned a non-nil monitor — if Input Monitoring permission
+    isn't granted, the monitor object exists but never fires. That's the
+    same trap pynput hit; the only mitigation is to ensure permission is
+    granted (which the user has now done) and to relaunch the app fresh
+    so the system picks up the entitlement.
+
+    We also register a LOCAL monitor (only fires when our app is frontmost,
+    which we never are since we're a menu bar app) — this is mostly
+    defensive: if the global monitor's permission scope ever changes, the
+    local one might still work for in-app testing.
     """
-    global _hotkey_listener
-    if not _PYNPUT_AVAILABLE:
-        sys.stderr.write("[tsifl-helper] pynput not available, hotkey disabled\n")
+    global _event_monitor, _event_monitor_local
+    if not _NSEVENT_AVAILABLE:
+        sys.stderr.write("[tsifl-helper] AppKit/NSEvent not available\n")
         return False
     try:
-        # GlobalHotKeys takes a dict {keycombo_str: callback}. The string
-        # form '<cmd>+<shift>+t' works on macOS — pynput maps <cmd> to the
-        # Command key automatically.
-        listener = _kb.GlobalHotKeys({
-            "<cmd>+<shift>+t": _on_shortcut_pressed,
-        })
-        listener.start()
-        _hotkey_listener = listener
+        _event_monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
+            _NS_EVENT_MASK_KEY_DOWN, _ns_event_handler,
+        )
+        _event_monitor_local = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
+            _NS_EVENT_MASK_KEY_DOWN,
+            lambda event: (_ns_event_handler(event), event)[1],  # local must return event
+        )
+        if _event_monitor is None:
+            sys.stderr.write(
+                "[tsifl-helper] NSEvent.addGlobalMonitor returned nil. "
+                "Likely Input Monitoring permission still not propagated to this build.\n"
+            )
+            return False
         return True
     except Exception as e:
-        sys.stderr.write(f"[tsifl-helper] hotkey listener failed to start: {e}\n")
+        sys.stderr.write(f"[tsifl-helper] NSEvent monitor failed to attach: {e}\n")
         return False
 
 
@@ -442,8 +490,9 @@ class TsiflHelperApp(rumps.App):
         _hotkey_ok = _start_hotkey_listener()
         if not _hotkey_ok:
             sys.stderr.write(
-                "[tsifl-helper] global ⌘⇧T disabled. Grant Input Monitoring "
-                "in System Settings → Privacy & Security and relaunch.\n"
+                "[tsifl-helper] global ⌘⇧T listener could not attach. Verify "
+                "Input Monitoring is ON for tsifl Helper in System Settings → "
+                "Privacy & Security, then quit and relaunch the app.\n"
             )
 
     @staticmethod
