@@ -668,29 +668,94 @@ def _define_panel_classes():
                 return False
 
         def _extract_paths(self, sender):
+            """Pull file paths off the drag pasteboard, or stage raw image
+            bytes (browser drags) to a temp file and return that path.
+
+            Three sources, in priority order:
+              1. NSFilenamesPboardType — Finder, real on-disk files.
+              2. NSURL objects (file://) — same idea, modern UTI form.
+              3. Raw image data on the pasteboard (PNG / JPEG / TIFF) —
+                 dragging an image FROM a browser like Chrome doesn't put
+                 a file path on the pasteboard; the image bytes are there
+                 directly. We stage them to /tmp and return that path.
+            """
             paths: list[str] = []
             try:
                 pb = sender.draggingPasteboard()
             except Exception:
                 return paths
-            # Try the legacy filenames type first — gives plain paths directly
+            # 1. Legacy filenames type (Finder)
             try:
                 files = pb.propertyListForType_("NSFilenamesPboardType")
                 if files:
                     return [str(f) for f in files]
             except Exception:
                 pass
-            # Fall back to URL objects (modern UTI-based reads)
+            # 2. NSURL objects (modern)
             try:
                 from AppKit import NSURL
                 urls = pb.readObjectsForClasses_options_([NSURL], None) or []
                 for u in urls:
                     p = u.path() if hasattr(u, "path") else None
-                    if p:
+                    # Only accept on-disk paths — http(s) URLs from
+                    # browser drags arrive here too but can't be opened.
+                    if p and not str(p).startswith(("http://", "https://")):
                         paths.append(str(p))
+                if paths:
+                    return paths
             except Exception:
                 pass
+            # 3. Raw image bytes (browser drags). Stage to a temp file.
+            try:
+                staged = self._stage_pasteboard_image(pb)
+                if staged:
+                    paths.append(staged)
+            except Exception as e:
+                sys.stderr.write(f"[tsifl-helper] stage pasteboard image failed: {e}\n")
             return paths
+
+        def _stage_pasteboard_image(self, pb):
+            """If the pasteboard carries raw image data (PNG/JPEG/TIFF),
+            write it to a temp file and return the path. Used for the
+            drag-from-browser case where there's no file URL.
+            """
+            import tempfile
+            # Try PNG and JPEG first (no conversion needed)
+            for img_type, ext in (
+                ("public.png",  "png"),
+                ("public.jpeg", "jpg"),
+            ):
+                try:
+                    data = pb.dataForType_(img_type)
+                    if data and data.length() > 0:
+                        raw = bytes(data)
+                        with tempfile.NamedTemporaryFile(
+                            delete=False, suffix=f".{ext}", prefix="tsifl_drop_"
+                        ) as f:
+                            f.write(raw)
+                            return f.name
+                except Exception:
+                    continue
+            # TIFF needs conversion to PNG (Claude doesn't accept TIFF)
+            try:
+                tiff = pb.dataForType_("public.tiff")
+                if tiff and tiff.length() > 0:
+                    from AppKit import NSBitmapImageRep, NSBitmapImageFileTypePNG
+                    rep = NSBitmapImageRep.imageRepWithData_(tiff)
+                    if rep is not None:
+                        png_data = rep.representationUsingType_properties_(
+                            NSBitmapImageFileTypePNG, None,
+                        )
+                        if png_data and png_data.length() > 0:
+                            raw = bytes(png_data)
+                            with tempfile.NamedTemporaryFile(
+                                delete=False, suffix=".png", prefix="tsifl_drop_"
+                            ) as f:
+                                f.write(raw)
+                                return f.name
+            except Exception:
+                pass
+            return None
 
     class _PanelTarget(NSObject):
         """Single target object handling Enter (input field action),
@@ -719,6 +784,12 @@ def _define_panel_classes():
             _LAST_DRAG_PATH (set when the content view sees a drop) —
             both safe to strip without false-positives on user prose.
 
+            CRITICAL: only mutate the input when `paths` came back non-
+            empty. If we mutated based on the cleaned-vs-current diff
+            alone, the .strip()/whitespace-collapse in the helper would
+            eat user-typed trailing spaces — making the spacebar appear
+            broken whenever an attachment was queued.
+
             `setStringValue_` does NOT re-fire this method (only field-
             editor mutations do), so the rewrite below cannot recurse.
             """
@@ -728,12 +799,15 @@ def _define_panel_classes():
                 current = str(_panel_input.stringValue() or "")
                 if not current:
                     return
-                # Fast-path bail: nothing to strip if there's no file://
-                # URL AND no recent drop to anchor a filename match on.
+                # Fast-path bail: no file:// URL AND no recent drop.
                 if "file://" not in current.lower() and not _LAST_DRAG_PATH:
                     return
                 cleaned, paths = _strip_and_extract_paths(current)
-                if cleaned != current:
+                # Only apply the cleaned text if we actually matched a
+                # file URL or filename pattern (paths non-empty). Pure
+                # typing produces no match → leave the user's text alone
+                # (including any trailing whitespace they're mid-typing).
+                if paths and cleaned != current:
                     _panel_input.setStringValue_(cleaned)
                 if paths:
                     _queue_paths_as_images(paths)
@@ -741,38 +815,38 @@ def _define_panel_classes():
                 pass
 
         def attachClicked_(self, sender):
-            """Attach button. Two modes:
-              - Plain click: opens file picker → adds to _pending_images
-              - ⌥-click (Option held): clears all queued attachments
-                — gives the user a way to undo a wrong attach without
-                opening + recreating the panel.
+            """Attach button. Behavior depends on current state:
+
+              - "+"  (no attachments) → click opens the file picker
+              - "+N" (attachments queued) → click CLEARS all attachments
+
+            Binary toggle. Picked over the v86 ⌥-click approach because
+            ⌥-click was undiscoverable + NSApp.currentEvent() doesn't
+            always carry the modifier flags at action-fire time.
+
+            To attach multiple files: NSOpenPanel allows multi-select
+            (Cmd+click in the picker), or drag-drop additional files
+            onto the panel — both still work.
             """
             global _pending_images, _LAST_DRAG_PATH
-            # Detect Option-modifier — shortcut to clear all attachments.
-            try:
-                from AppKit import NSApp
-                NS_EVENT_MOD_OPTION = 1 << 19  # NSEventModifierFlagOption
-                cur_event = NSApp().currentEvent()
-                if cur_event is not None and _pending_images:
-                    flags = int(cur_event.modifierFlags())
-                    if flags & NS_EVENT_MOD_OPTION:
-                        _pending_images = []
-                        _LAST_DRAG_PATH = None
-                        if _panel_attach_btn is not None:
-                            try:
-                                _panel_attach_btn.setTitle_("+")
-                            except Exception:
-                                pass
-                        if _panel_input is not None:
-                            try:
-                                _panel_input.becomeFirstResponder()
-                            except Exception:
-                                pass
-                        return
-            except Exception:
-                pass
 
-            # Default: open file picker → encode + queue
+            # If anything's queued, the click means "clear" (delete UX)
+            if _pending_images:
+                _pending_images = []
+                _LAST_DRAG_PATH = None
+                if _panel_attach_btn is not None:
+                    try:
+                        _panel_attach_btn.setTitle_("+")
+                    except Exception:
+                        pass
+                if _panel_input is not None:
+                    try:
+                        _panel_input.becomeFirstResponder()
+                    except Exception:
+                        pass
+                return
+
+            # Otherwise: open file picker → encode + queue
             try:
                 from AppKit import NSOpenPanel
                 panel = NSOpenPanel.openPanel()
@@ -994,12 +1068,11 @@ def _build_floating_panel():
         attach_btn.setContentTintColor_(muted)
     except Exception:
         pass
-    # Tooltip tells the user how to clear (otherwise the ⌥-click
-    # affordance is invisible). Hover lingers for ~1s before showing
-    # in macOS by default.
+    # Tooltip explains the binary-toggle behavior. Hover lingers for
+    # ~1s before showing in macOS by default.
     try:
         attach_btn.setToolTip_(
-            "Click to attach an image or PDF.  ⌥-click to clear all attachments."
+            "Click + to attach an image or PDF.  Click +N again to clear."
         )
     except Exception:
         pass
