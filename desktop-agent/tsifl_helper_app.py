@@ -375,7 +375,6 @@ _panel_delegate: "object | None" = None     # NSWindowDelegate that vends our cu
 
 
 # ── Attachment helpers (shared by + button, drag-drop, and URL-strip fallback)
-_FILE_URL_RE = None  # lazy-compiled below
 _ATTACH_EXTS = ("png", "jpg", "jpeg", "gif", "webp", "heic", "pdf")
 _MEDIA_TYPES = {
     "png": "image/png",   "jpg": "image/jpeg",
@@ -383,6 +382,13 @@ _MEDIA_TYPES = {
     "webp": "image/webp", "heic": "image/heic",
     "pdf": "application/pdf",
 }
+# Regex pre-compile (lazy on first use to avoid import overhead at module load)
+_FILE_URL_RE = None       # matches `file://...`
+_PCT_ATTACH_RE = None     # matches percent-encoded filenames ending in attachment ext
+_PLAIN_ATTACH_RE = None   # matches plain filenames ending in attachment ext (last-resort)
+_LAST_DRAG_PATH = None    # most-recent dropped path; used by safety-net to recover
+                          # the on-disk path when the input only has the rendered
+                          # filename (no file:// prefix) — see _stash_dropped_path
 
 
 def _queue_paths_as_images(paths) -> int:
@@ -391,25 +397,32 @@ def _queue_paths_as_images(paths) -> int:
 
     Centralized so the + button, the drag-drop handler, and the URL-strip
     safety net all share one code path. Filters by extension so a stray
-    text file dropped on the panel doesn't get encoded.
+    text file dropped on the panel doesn't get encoded. Dedupes by
+    filename so the safety-net text filter and the content-view drop
+    handler don't both queue the same file.
     """
     global _pending_images
     import base64 as _b64
     from pathlib import Path as _P
     added = 0
+    existing_names = {item.get("file_name") for item in _pending_images}
     for raw in paths:
         try:
             path = str(raw)
             ext = _P(path).suffix.lower().lstrip(".")
             if ext not in _ATTACH_EXTS:
                 continue
+            name = _P(path).name
+            if name in existing_names:
+                continue  # dedupe — already queued
             with open(path, "rb") as f:
                 data = f.read()
             _pending_images.append({
                 "data": _b64.b64encode(data).decode("ascii"),
                 "media_type": _MEDIA_TYPES.get(ext, "application/octet-stream"),
-                "file_name": _P(path).name,
+                "file_name": name,
             })
+            existing_names.add(name)
             added += 1
         except Exception as e:
             sys.stderr.write(f"[tsifl-helper] queue image {raw} failed: {e}\n")
@@ -421,26 +434,55 @@ def _queue_paths_as_images(paths) -> int:
     return added
 
 
-def _strip_and_extract_paths(text: str):
-    """Find file:// URLs in `text` and return (cleaned_text, [file_paths]).
+def _stash_dropped_path(path: str) -> None:
+    """Remember the most recent dropped file path.
 
-    The user-reported bug: dragging an image onto the input field made
-    NSTextView insert the file URL as text (e.g. file:///Users/.../Screenshot.png),
-    polluting what the user typed. Custom field editor blocks this at the
-    source, but if anything slips through we strip it here as a safety net
-    AND auto-queue the file as an attachment — so the user's intent
-    (attach image) is preserved.
+    Used by the safety-net text filter: when NSTextView inserts only the
+    *rendered filename* (no `file://` prefix), the regex can't recover
+    the on-disk path. But we just saw the drop in our content-view
+    handler, so we stash the path here and the safety net consults it.
+    """
+    global _LAST_DRAG_PATH
+    _LAST_DRAG_PATH = path
+
+
+def _strip_and_extract_paths(text: str):
+    """Detect filename / URL pollution in `text`, return (cleaned_text, paths).
+
+    The user-reported bug: dragging an image onto the input made the field
+    editor insert the file's display name (URL-encoded) as text. We detect
+    three patterns:
+
+      1. Explicit `file://...` URL (full URL inserted, can be decoded)
+      2. Percent-encoded filename ending in an attachment extension
+         (e.g. "Screenshot%202026-04-28%20at%202.35.07%E2%80%A6.png")
+      3. Plain filename ending in an attachment extension on its own line
+         (last-resort — only stripped if it matches `_LAST_DRAG_PATH`)
+
+    For pattern 1 the path is recovered from the URL. For 2/3 we can't
+    recover the disk path from text alone, so we cross-reference
+    `_LAST_DRAG_PATH` (set when the content view handles the drop).
     """
     import re
-    global _FILE_URL_RE
+    global _FILE_URL_RE, _PCT_ATTACH_RE, _PLAIN_ATTACH_RE
     if _FILE_URL_RE is None:
-        # Match file:// URLs (case-insensitive). NSTextView always
-        # inserts the full URL with prefix when dropping a file.
         _FILE_URL_RE = re.compile(r"file://\S+", re.IGNORECASE)
+        ext_alt = "|".join(_ATTACH_EXTS)
+        # Percent-encoded filename: at least one %XX escape, ends with attachment ext.
+        _PCT_ATTACH_RE = re.compile(
+            r"\S*%[0-9A-Fa-f]{2}\S*\.(?:" + ext_alt + r")\b",
+            re.IGNORECASE,
+        )
+        # Plain filename: word chars / spaces / dots, ends with attachment ext.
+        _PLAIN_ATTACH_RE = re.compile(
+            r"^[\w][\w\s\.\-]*\.(?:" + ext_alt + r")$",
+            re.IGNORECASE,
+        )
+
     paths: list[str] = []
 
-    def _replace(m):
-        url = m.group(0).rstrip(".,;)")  # trim trailing punctuation
+    def _replace_url(m):
+        url = m.group(0).rstrip(".,;)")
         try:
             from urllib.parse import urlparse, unquote
             parsed = urlparse(url)
@@ -452,9 +494,34 @@ def _strip_and_extract_paths(text: str):
             pass
         return ""
 
-    cleaned = _FILE_URL_RE.sub(_replace, text)
-    # Drop empty lines left behind so the user's typed text doesn't sit
-    # under a blank gap where the URL used to be.
+    cleaned = _FILE_URL_RE.sub(_replace_url, text)
+
+    # Pattern 2: percent-encoded filenames
+    if _PCT_ATTACH_RE.search(cleaned):
+        cleaned = _PCT_ATTACH_RE.sub("", cleaned)
+        if _LAST_DRAG_PATH:
+            paths.append(_LAST_DRAG_PATH)
+
+    # Pattern 3: plain filename on its own line — only kill it if it
+    # matches the last-known dropped path's filename. Avoids stripping
+    # legit user prose that happens to end in ".png".
+    if _LAST_DRAG_PATH:
+        from pathlib import Path as _P
+        last_name = _P(_LAST_DRAG_PATH).name.lower()
+        new_lines = []
+        stripped_any = False
+        for line in cleaned.splitlines():
+            stripped = line.strip()
+            if stripped.lower() == last_name and _PLAIN_ATTACH_RE.match(stripped):
+                stripped_any = True
+                continue
+            new_lines.append(line)
+        if stripped_any:
+            cleaned = "\n".join(new_lines)
+            if _LAST_DRAG_PATH not in paths:
+                paths.append(_LAST_DRAG_PATH)
+
+    # Tidy up blank lines left where pollution used to live
     cleaned = "\n".join(line for line in cleaned.splitlines() if line.strip())
     return cleaned.strip(), paths
 
@@ -497,23 +564,29 @@ def _define_panel_classes():
     class _TsiflFieldEditor(NSTextView):
         """Custom field editor used by the panel for the input NSTextField.
 
-        Default field editor is a vanilla NSTextView, which accepts file
-        URL drops and inserts them as text — that's the user-reported bug
-        ('the URL appears in the input when I attach an image'). We
-        narrow the acceptable drag types to plain text only AND reject
-        the pasteboard read at the lowest level for any file/URL type.
-
-        File drops are still accepted at the panel level (see
-        _TsiflContentView below) — they just route to `_pending_images`
-        as proper attachments instead of polluting the input text.
+        Rejects ALL drag operations — belt-and-suspenders, since the
+        user-reported bug was that NSTextView (the default field editor)
+        accepts file URL drops and inserts them as text. We override at
+        every layer (drag-types, draggingEntered, prepareFor/performDrag,
+        readSelectionFromPasteboard) so the field editor cannot accept
+        ANY drag-drop. File drops bubble up to `_TsiflContentView` which
+        queues them as proper attachments.
         """
 
         def acceptableDragTypes(self):
-            return [
-                "public.utf8-plain-text",
-                "public.text",
-                "NSStringPboardType",
-            ]
+            return []  # zero acceptable types → no drag operation
+
+        def draggingEntered_(self, sender):
+            return 0  # NSDragOperationNone
+
+        def draggingUpdated_(self, sender):
+            return 0
+
+        def prepareForDragOperation_(self, sender):
+            return False
+
+        def performDragOperation_(self, sender):
+            return False
 
         def readSelectionFromPasteboard_type_(self, pb, ptype):
             FILE_TYPES = (
@@ -531,22 +604,16 @@ def _define_panel_classes():
 
     class _TsiflPanelDelegate(NSObject):
         """NSWindowDelegate that vends `_TsiflFieldEditor` as the field
-        editor for the input NSTextField.
+        editor for the panel's input NSTextField.
 
         macOS calls `windowWillReturnFieldEditor:toObject:` whenever the
         panel needs to provide a field editor for one of its controls.
-        Returning our custom subclass makes the panel use it for the
-        input field, which is how we block file URL drops at the source.
-        Returning None lets the panel fall back to default behavior for
-        any other object (e.g. the response NSTextField, which is
-        non-editable so it never asks for a field editor anyway).
+        We always return our custom subclass — the response NSTextField
+        is non-editable so it never asks; only the input would.
         """
 
         def windowWillReturnFieldEditor_toObject_(self, window, obj):
             try:
-                from AppKit import NSTextField
-                if not isinstance(obj, NSTextField):
-                    return None
                 from Foundation import NSMakeRect
                 fe = getattr(self, "_field_editor", None)
                 if fe is None:
@@ -554,6 +621,14 @@ def _define_panel_classes():
                         NSMakeRect(0, 0, 0, 0)
                     )
                     fe.setFieldEditor_(True)
+                    # Belt-and-suspenders: also unregister all drag types
+                    # at the AppKit drag-system level. Combined with the
+                    # method overrides above, this gives 5+ layers of
+                    # defense against file URL drops being inserted.
+                    try:
+                        fe.unregisterDraggedTypes()
+                    except Exception:
+                        pass
                     self._field_editor = fe
                 return fe
             except Exception as e:
@@ -586,7 +661,14 @@ def _define_panel_classes():
 
         def performDragOperation_(self, sender):
             try:
-                added = _queue_paths_as_images(self._extract_paths(sender))
+                paths = self._extract_paths(sender)
+                added = _queue_paths_as_images(paths)
+                # Stash the most recent dropped path so the safety-net
+                # text filter can recover it if the field editor somehow
+                # still inserted the rendered filename (we'd then have
+                # text in the input we can't decode back to a disk path).
+                if paths:
+                    _stash_dropped_path(paths[0])
                 return added > 0
             except Exception as e:
                 _log_shortcut_error("drop failed", e)
@@ -646,10 +728,12 @@ def _define_panel_classes():
             """Safety net for the URL-pollution bug.
 
             Custom field editor blocks file URL drops at the source, but
-            paste / Services / odd UTI translations can still slip a
-            file:// URL into the input text. This handler runs on every
-            user-initiated change, strips file URLs, and auto-queues
-            them as proper attachments so the user's intent is preserved.
+            paste / Services / odd UTI translations can still slip a file
+            path into the input text. This handler runs on every user-
+            initiated change, strips polluting filenames / URLs, and
+            auto-queues the file as an attachment when we can recover
+            the path (either from a `file://` URL in the text, or from
+            `_LAST_DRAG_PATH` if the content view just saw the drop).
 
             `setStringValue_` does NOT fire this method (only field-
             editor mutations do), so the rewrite below cannot recurse.
@@ -658,8 +742,17 @@ def _define_panel_classes():
                 return
             try:
                 current = str(_panel_input.stringValue() or "")
-                if "file://" not in current.lower():
-                    return  # fast path — no URL means nothing to do
+                if not current:
+                    return
+                # Fast-path bail: no '%' (percent-encoding hint) AND no
+                # 'file://' (explicit URL). If neither, there's nothing
+                # to strip — pure typed text.
+                lower = current.lower()
+                if "file://" not in lower and "%" not in current:
+                    # Could still be a plain filename match against
+                    # _LAST_DRAG_PATH — check that briefly.
+                    if not _LAST_DRAG_PATH:
+                        return
                 cleaned, paths = _strip_and_extract_paths(current)
                 if cleaned != current:
                     _panel_input.setStringValue_(cleaned)
