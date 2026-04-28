@@ -481,31 +481,50 @@ def _strip_and_extract_paths(text: str):
 
     cleaned = file_url_re.sub(_replace_url, cleaned)
 
-    # Pattern 2: exact filename match against _LAST_DRAG_PATH (plain or
-    # URL-encoded form). We anchor on the known filename so user prose
-    # with `%` characters doesn't trigger a false strip.
+    # Pattern 2: match against _LAST_DRAG_PATH. Try forms in order from
+    # most-specific to least-specific so we strip the longest matching
+    # form first (otherwise we'd strip the filename and leave the
+    # directory portion behind, e.g. "/Users/.../Desktop/").
     if _LAST_DRAG_PATH:
         from pathlib import Path as _P
         from urllib.parse import quote
         last_name = _P(_LAST_DRAG_PATH).name
+        patterns: list[str] = []
+        # 2a. Full on-disk path (most specific)
+        patterns.append(re.escape(_LAST_DRAG_PATH))
+        # 2b. URL-encoded full path
+        try:
+            encoded_path = quote(_LAST_DRAG_PATH, safe="/")
+            if encoded_path != _LAST_DRAG_PATH:
+                patterns.append(re.escape(encoded_path))
+        except Exception:
+            pass
+        # 2c. file:// + URL-encoded path (occasionally inserted by
+        # different browsers/services)
+        try:
+            file_url = "file://" + quote(_LAST_DRAG_PATH, safe="/")
+            patterns.append(re.escape(file_url))
+        except Exception:
+            pass
+        # 2d. Filename only (last resort)
         if last_name:
-            patterns = [re.escape(last_name)]
+            patterns.append(re.escape(last_name))
             try:
-                encoded = quote(last_name)
-                if encoded and encoded != last_name:
-                    patterns.append(re.escape(encoded))
+                encoded_name = quote(last_name)
+                if encoded_name != last_name:
+                    patterns.append(re.escape(encoded_name))
             except Exception:
                 pass
-            stripped_any = False
-            for pat in patterns:
-                # Match the filename anywhere in the input, with optional
-                # surrounding whitespace, allowing for line-leading/trailing.
-                pat_re = re.compile(r"\s*" + pat + r"\s*", re.IGNORECASE)
-                if pat_re.search(cleaned):
-                    cleaned = pat_re.sub(" ", cleaned, count=1)
-                    stripped_any = True
-            if stripped_any and _LAST_DRAG_PATH not in paths:
-                paths.append(_LAST_DRAG_PATH)
+
+        stripped_any = False
+        for pat in patterns:
+            pat_re = re.compile(r"\s*" + pat + r"\s*", re.IGNORECASE)
+            if pat_re.search(cleaned):
+                cleaned = pat_re.sub(" ", cleaned, count=1)
+                stripped_any = True
+                break  # one match is enough — most-specific won
+        if stripped_any and _LAST_DRAG_PATH not in paths:
+            paths.append(_LAST_DRAG_PATH)
 
     # Tidy up: collapse multiple spaces, drop blank lines
     cleaned = "\n".join(line for line in cleaned.splitlines() if line.strip())
@@ -780,9 +799,16 @@ def _define_panel_classes():
             """Primary defense against URL pollution from drag-drop.
 
             Fires on every user-initiated change (typing, paste, drag-
-            drop). Strips file:// URLs and matches the exact filename of
+            drop). Strips file:// URLs and matches the full
             _LAST_DRAG_PATH (set when the content view sees a drop) —
             both safe to strip without false-positives on user prose.
+
+            Fallback: if a drop bypassed the content view (drop landed
+            on the input field directly, before unregisterDraggedTypes
+            took effect), the path inserted as text is itself a
+            recoverable file path. We detect it via the abs-path-with-
+            attachment-extension regex and use it as _LAST_DRAG_PATH so
+            the strip-and-extract logic kicks in.
 
             CRITICAL: only mutate the input when `paths` came back non-
             empty. If we mutated based on the cleaned-vs-current diff
@@ -793,15 +819,37 @@ def _define_panel_classes():
             `setStringValue_` does NOT re-fire this method (only field-
             editor mutations do), so the rewrite below cannot recurse.
             """
+            global _LAST_DRAG_PATH
             if _panel_input is None or _panel_busy:
                 return
             try:
                 current = str(_panel_input.stringValue() or "")
                 if not current:
                     return
+
+                # Fallback path-detect: if there's no _LAST_DRAG_PATH
+                # but the text contains an absolute path ending in an
+                # attachment extension AND that path exists on disk,
+                # promote it to _LAST_DRAG_PATH so the strip logic
+                # below has something to anchor on.
+                if not _LAST_DRAG_PATH and "/" in current:
+                    import re as _re
+                    ext_alt = "|".join(_ATTACH_EXTS)
+                    m = _re.search(
+                        r"(/[^\n]+?\.(?:" + ext_alt + r"))",
+                        current, _re.IGNORECASE,
+                    )
+                    if m:
+                        from pathlib import Path as _P
+                        candidate = m.group(1).rstrip(" .,;)")
+                        if _P(candidate).exists():
+                            _LAST_DRAG_PATH = candidate
+                            _queue_paths_as_images([candidate])
+
                 # Fast-path bail: no file:// URL AND no recent drop.
                 if "file://" not in current.lower() and not _LAST_DRAG_PATH:
                     return
+
                 cleaned, paths = _strip_and_extract_paths(current)
                 # Only apply the cleaned text if we actually matched a
                 # file URL or filename pattern (paths non-empty). Pure
@@ -1576,6 +1624,27 @@ def _show_shortcut_panel():
         _panel_ref.makeKeyWindow()
         _panel_ref.makeFirstResponder_(_panel_input)
         _panel_input.selectText_(None)
+
+        # Source-level URL-pollution fix: strip drag-type registrations
+        # on the panel's default field editor (which NSWindow lazily
+        # provides for whichever NSTextField is first responder). This
+        # makes the input field NOT accept file drops at all — drag-drop
+        # bubbles up to _TsiflContentView's handler, which queues the
+        # file as a proper attachment.
+        #
+        # We use the DEFAULT NSTextView field editor (not a subclass) —
+        # subclassing NSTextView and using it as a field editor broke
+        # the spacebar in v85 (key-event routing got confused). Just
+        # calling unregisterDraggedTypes on the default editor doesn't
+        # affect keyboard input at all.
+        try:
+            fe = _panel_ref.fieldEditor_forObject_(True, _panel_input)
+            if fe is not None:
+                fe.unregisterDraggedTypes()
+        except Exception as e:
+            sys.stderr.write(
+                f"[tsifl-helper] field editor drag-unregister failed: {e}\n"
+            )
     except Exception as e:
         # No more silent fallback to rumps.Window — surface the actual
         # error so we can debug. Writes to ~/Library/Logs/tsifl-shortcut.log
