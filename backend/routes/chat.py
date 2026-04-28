@@ -1325,7 +1325,9 @@ async def debug_postprocess_version():
 
 
 @router.get("/debug/auto-inject-test")
-async def debug_auto_inject_test(message: str = "", sheets: str = ""):
+async def debug_auto_inject_test(
+    message: str = "", sheets: str = "", model_emits_add_sheets: bool = False,
+):
     """Run _auto_inject_add_sheets logic on a synthetic request and return
     the decision matrix. Lets us debug auto-inject without going through
     Claude (which adds 30+ seconds and burns tokens).
@@ -1334,6 +1336,9 @@ async def debug_auto_inject_test(message: str = "", sheets: str = ""):
         message: user message to test against blanket-intent regex
         sheets: comma-separated phantom sheet names with optional :count
                 e.g. "Best Buys:30,RW Averages:5,Top 10:25"
+        model_emits_add_sheets: if true, prepend an add_sheet for each
+                phantom name (simulates the model self-emitting them at
+                the start of its response — the v96 case)
 
     Returns: blanket_intent flag, per-sheet decision rule, injected names.
     """
@@ -1341,6 +1346,7 @@ async def debug_auto_inject_test(message: str = "", sheets: str = ""):
 
     # Parse the synthetic phantom-sheet writes
     fake_actions: list = []
+    parsed: list[tuple[str, int]] = []
     for entry in (sheets or "").split(","):
         entry = entry.strip()
         if not entry:
@@ -1353,7 +1359,16 @@ async def debug_auto_inject_test(message: str = "", sheets: str = ""):
                 count = 1
         else:
             name, count = entry, 1
-        name = name.strip()
+        parsed.append((name.strip(), count))
+
+    if model_emits_add_sheets:
+        for name, _count in parsed:
+            fake_actions.append({
+                "type": "add_sheet",
+                "payload": {"name": name},
+            })
+
+    for name, count in parsed:
         for _ in range(count):
             fake_actions.append({
                 "type": "write_cell",
@@ -1364,11 +1379,17 @@ async def debug_auto_inject_test(message: str = "", sheets: str = ""):
     new_actions, injected = _auto_inject_add_sheets(
         fake_actions, fake_context, user_message=message,
     )
+    # v96 marker — flips True once the model-emits-add_sheets path is
+    # handled (counts writes against `pending` names instead of skipping
+    # them).
     return {
         "blanket_intent": blanket,
+        "v96_model_emits_handled": True,
         "input_message": message,
         "input_sheets": sheets,
+        "model_emits_add_sheets": model_emits_add_sheets,
         "injected": injected,
+        "total_actions_in":  len(fake_actions),
         "total_actions_after": len(new_actions),
     }
 
