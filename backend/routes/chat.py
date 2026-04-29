@@ -444,26 +444,31 @@ def _auto_inject_add_sheets(
         blanket   = blanket_intent
         catch_all = count >= 10
 
-        # Count-based heuristics (kw_match, soft_kw, catch_all) ONLY fire
-        # when the model did NOT self-emit an add_sheet for this name.
-        # When the model both creates AND populates a phantom sheet it
-        # invented (e.g. "DCF Model" on a FIFA player workbook), that's a
-        # hallucination — the heuristics are designed to infer intent from
-        # the USER's message, not from the model's autonomous decisions.
-        # Only explicit mention or blanket creation intent grants approval
-        # in that case. v97 fix: prevents catch_all(10+) from blowing
-        # through phantom-drop on hallucinated new-sheet sections.
+        # When the model self-emits an add_sheet for a name it invented,
+        # the only safe signals are:
+        #   1. blanket_intent — user said "create a sheet/tab/worksheet"
+        #      (the sheet-type noun appeared in the message)
+        #   2. allowlist — we hardcoded this name as always OK
+        # Count-based rules (catch_all, kw_match, soft_kw) are designed to
+        # infer user intent from their message, not from the model's choices.
+        # explicit check also fails: "please create a DCF" matches
+        # `_name_explicitly_created("DCF", ...)` but the user meant the
+        # financial analysis type, not a sheet named "DCF". Any genuine
+        # sheet-naming intent will include tab/sheet/worksheet which
+        # triggers blanket_intent; if that word is absent, assume the user
+        # was naming an analysis, not a sheet. v97: suppresses all four
+        # signals for model-pre-emitted add_sheets.
         in_pending = key in pending
         if in_pending:
-            qualifies = explicit or allowed or blanket
+            qualifies = allowed or blanket
         else:
             qualifies = explicit or allowed or kw_match or soft_kw or blanket or catch_all
         rule = (
-            "explicit" if explicit
-            else "allowlist" if allowed
+            "allowlist" if allowed
+            else "blanket" if blanket
+            else "explicit" if (explicit and not in_pending)
             else "kw_match" if (kw_match and not in_pending)
             else "soft_kw" if (soft_kw and not in_pending)
-            else "blanket" if blanket
             else "catch_all" if (catch_all and not in_pending)
             else "REJECTED"
         )
@@ -1364,10 +1369,12 @@ async def debug_postprocess_version():
         # v95 marker — flips True once auto-inject blanket-intent fix lands.
         # Probe with: curl /chat/debug/postprocess-version
         "v95_blanket_intent_no_threshold": True,
-        # v97: catch_all/kw_match/soft_kw suppressed for model-pre-emitted add_sheets;
-        # discuss-mode guard strips demo actions on empty workbooks.
+        # v97: all heuristics (explicit/kw_match/soft_kw/catch_all) suppressed for
+        # model-pre-emitted add_sheets; discuss-mode guard strips demo actions on
+        # empty workbooks. v97.1: also suppress explicit for pending names.
         "v97_pending_no_heuristic_qualify": True,
         "v97_discuss_mode_guard": True,
+        "v97_1_pending_no_explicit": True,
     }
 
 
