@@ -158,6 +158,36 @@ def _name_has_intent(name: str) -> bool:
     return any(kw in nlow for kw in _NEW_SHEET_INTENT)
 
 
+def _is_pure_discussion_question(message: str) -> bool:
+    """True if the message is clearly asking for information rather than
+    requesting workbook changes.
+
+    Matches openers like 'what is', 'explain', 'how does', 'when should I', etc.
+    Used to suppress model-emitted demonstration actions on empty workbooks —
+    when an analyst asks "what is a VLOOKUP?" they don't want example data
+    written into their blank workbook.
+
+    Deliberately narrow: only fires when the message STARTS with one of these
+    patterns. "what is the best way to do VLOOKUP on my data here?" still
+    correctly fires (starts with "what is"), but "could you add a VLOOKUP and
+    explain it" does not (imperative "add" is the opener).
+    """
+    if not message:
+        return False
+    low = message.strip().lower()
+    return bool(re.match(
+        r"^(what (is|are|does|do|was|were|can|would)\b|"
+        r"explain |"
+        r"tell me (about|what|how)\b|"
+        r"how (does|do|would|should|can)\b|"
+        r"why (does|do|would|should)\b|"
+        r"when (should|do|does|would|can)\b|"
+        r"(can|could) you explain\b|"
+        r"help me understand\b)",
+        low,
+    ))
+
+
 def _has_blanket_sheet_creation_intent(message: str) -> bool:
     """True if the user asked for a new sheet/tab in generic terms,
     delegating the actual name choice to the model.
@@ -414,14 +444,27 @@ def _auto_inject_add_sheets(
         blanket   = blanket_intent
         catch_all = count >= 10
 
-        qualifies = explicit or allowed or kw_match or soft_kw or blanket or catch_all
+        # Count-based heuristics (kw_match, soft_kw, catch_all) ONLY fire
+        # when the model did NOT self-emit an add_sheet for this name.
+        # When the model both creates AND populates a phantom sheet it
+        # invented (e.g. "DCF Model" on a FIFA player workbook), that's a
+        # hallucination — the heuristics are designed to infer intent from
+        # the USER's message, not from the model's autonomous decisions.
+        # Only explicit mention or blanket creation intent grants approval
+        # in that case. v97 fix: prevents catch_all(10+) from blowing
+        # through phantom-drop on hallucinated new-sheet sections.
+        in_pending = key in pending
+        if in_pending:
+            qualifies = explicit or allowed or blanket
+        else:
+            qualifies = explicit or allowed or kw_match or soft_kw or blanket or catch_all
         rule = (
             "explicit" if explicit
             else "allowlist" if allowed
-            else "kw_match" if kw_match
-            else "soft_kw" if soft_kw
+            else "kw_match" if (kw_match and not in_pending)
+            else "soft_kw" if (soft_kw and not in_pending)
             else "blanket" if blanket
-            else "catch_all" if catch_all
+            else "catch_all" if (catch_all and not in_pending)
             else "REJECTED"
         )
         decisions.append(f"{canonical!r}(count={count})→{rule}")
@@ -1321,6 +1364,10 @@ async def debug_postprocess_version():
         # v95 marker — flips True once auto-inject blanket-intent fix lands.
         # Probe with: curl /chat/debug/postprocess-version
         "v95_blanket_intent_no_threshold": True,
+        # v97: catch_all/kw_match/soft_kw suppressed for model-pre-emitted add_sheets;
+        # discuss-mode guard strips demo actions on empty workbooks.
+        "v97_pending_no_heuristic_qualify": True,
+        "v97_discuss_mode_guard": True,
     }
 
 
@@ -2081,6 +2128,25 @@ async def chat(request: ChatRequest):
                     f"render={_has_render}, fences_in_reply={_reply_has_fences})",
                     flush=True,
                 )
+
+    # Discuss-mode guard: when the user asks a pure conceptual question
+    # ("what is a VLOOKUP?", "explain SUMIF", "how does INDEX/MATCH work?")
+    # on an empty workbook, the model sometimes writes demo/example data the
+    # user did NOT ask for. Strip those actions here so the reply stays
+    # text-only. Only fires when BOTH conditions hold — a non-empty workbook
+    # might legitimately want a formula written as part of an explanation.
+    if app in ("excel", "google_sheets") and all_actions:
+        _ctx_empty = not any(
+            isinstance(s, dict) and s.get("rows", 0) > 0
+            for s in (request.context.get("sheet_summaries") or [])
+        )
+        if _ctx_empty and _is_pure_discussion_question(request.message):
+            print(
+                f"[discuss-guard] Pure question on empty workbook — "
+                f"stripping {len(all_actions)} demo action(s)",
+                flush=True,
+            )
+            all_actions = []
 
     # Auto-inject add_sheet: the LLM often emits write_cell/write_formula to a
     # new sheet without remembering to add_sheet first (Office.js doesn't
