@@ -1375,6 +1375,9 @@ async def debug_postprocess_version():
         "v97_pending_no_heuristic_qualify": True,
         "v97_discuss_mode_guard": True,
         "v97_1_pending_no_explicit": True,
+        # Flagship #1 — PDF financial extraction prompt section live in
+        # excel + google_sheets system prompts.
+        "flagship_v1_pdf_extraction": True,
     }
 
 
