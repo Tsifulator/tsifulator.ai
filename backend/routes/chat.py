@@ -1378,6 +1378,9 @@ async def debug_postprocess_version():
         # Flagship #1 — PDF financial extraction prompt section live in
         # excel + google_sheets system prompts.
         "flagship_v1_pdf_extraction": True,
+        # Flagship #2 — Comp tearsheet construction (peer comps with
+        # median/mean rows, sources block, formulas for all computed cells).
+        "flagship_v2_comp_tearsheet": True,
     }
 
 
