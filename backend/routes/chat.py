@@ -700,9 +700,15 @@ def _auto_inject_add_sheets(
             else "catch_all" if (catch_all and not in_pending)
             else "REJECTED"
         )
-        decisions.append(f"{canonical!r}(count={count})→{rule}")
+        decisions.append(f"{canonical!r}(count={count})→{rule}{'(model-owned)' if in_pending else ''}")
         if qualifies:
-            injections.append({"type": "add_sheet", "payload": {"name": canonical}})
+            # When the model already emitted its own add_sheet for this name
+            # (in_pending=True), we must NOT inject a second one — that causes
+            # the "1 failed: resource already exists" error on the client.
+            # We still append to injected_names so phantom-strip's pre_approved
+            # set lets the model's add_sheet (and its write actions) through.
+            if not in_pending:
+                injections.append({"type": "add_sheet", "payload": {"name": canonical}})
             injected_names.append(canonical)
 
     # Diagnostic — surfaces the decision matrix in Railway logs so we
@@ -718,7 +724,7 @@ def _auto_inject_add_sheets(
         except Exception:
             pass
 
-    if not injections:
+    if not injections and not injected_names:
         return actions, []
 
     return injections + list(actions or []), injected_names
@@ -1623,6 +1629,15 @@ async def debug_postprocess_version():
         # name like "Cloud SaaS Comps" and the auto-inject heuristic
         # refused to whitelist it.
         "flagship_v26_comp_blanket_intent": True,
+        # v2.7 — two comp tearsheet fixes:
+        #   (a) no-duplicate-add_sheet: when model already emitted its own
+        #       add_sheet (in_pending=True), auto-inject skips the injection
+        #       but still tracks the name as approved → eliminates the
+        #       "1 failed: resource already exists" error.
+        #   (b) system prompt: explicit ban on per-peer staging tabs
+        #       (<Ticker>_Data, <Ticker>_Raw, etc.) — all numbers go
+        #       directly to the "Comp Set" sheet.
+        "flagship_v27_no_dup_add_sheet_no_staging_tabs": True,
     }
 
 

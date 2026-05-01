@@ -1104,6 +1104,13 @@ A "comp" with hardcoded numbers gets thrown away.
 
 ### Anti-patterns
 - NEVER create one sheet per peer. ONE consolidated comp sheet.
+- NEVER create helper/staging/data tabs for individual peers.
+  This means: NO "DDOG_Data", "SNOW_Raw", "MDB_Staging", or any
+  sheet whose name follows the pattern <Ticker>_<anything>.
+  ALL extracted numbers go directly into the "Comp Set" sheet cells.
+  There are no intermediate worksheets. Zero. If you find yourself
+  thinking "I'll store DDOG's data in DDOG_Data first", stop and
+  write directly to "Comp Set" instead.
 - NEVER hardcode a margin or multiple as a number. Always a formula.
 - NEVER invent market cap, share price, or current trading data.
 - NEVER skip Median/Mean rows — they're how analysts read a comp set.
