@@ -187,6 +187,25 @@ app.include_router(transfer.router, prefix="/transfer")
 app.include_router(calendar.router, prefix="/calendar")
 app.include_router(computer_use.router)
 
+# --- Market Data (Polygon.io) ---
+from pydantic import BaseModel as _BaseModel
+
+class SnapshotRequest(_BaseModel):
+    tickers: list[str]
+
+@app.post("/market/snapshot")
+async def market_snapshot(req: SnapshotRequest):
+    """Fetch previous-close price + market cap for a list of tickers."""
+    from services.polygon import get_stocks_batch
+    results = await get_stocks_batch(req.tickers[:15])
+    return {"results": results}
+
+@app.get("/market/snapshot/{ticker}")
+async def market_snapshot_single(ticker: str):
+    """Fetch previous-close price + market cap for a single ticker."""
+    from services.polygon import get_stock_data
+    return await get_stock_data(ticker.upper())
+
 # --- Notes App (served as static HTML) ---
 NOTES_APP_PATH = Path(__file__).parent / "static" / "notes.html"
 

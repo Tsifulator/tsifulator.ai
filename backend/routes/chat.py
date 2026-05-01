@@ -2192,6 +2192,24 @@ async def chat(request: ChatRequest):
             if att is not None:
                 images.append(att)
 
+    # 5b. Polygon.io: auto-fetch market data when user asks for comps/multiples.
+    # Eliminates manual "paste prices from Google Finance" step.
+    # Only fires for excel/google_sheets + comp/price intent + detectable tickers.
+    if app in ("excel", "google_sheets"):
+        try:
+            from services.polygon import extract_tickers, has_price_intent, get_stocks_batch, format_for_context
+            if has_price_intent(request.message):
+                poly_tickers = extract_tickers(request.message)
+                if poly_tickers:
+                    logger.info(f"[polygon] auto-fetching market data for {poly_tickers}")
+                    poly_stocks = await get_stocks_batch(poly_tickers)
+                    poly_ctx = format_for_context(poly_stocks)
+                    if poly_ctx:
+                        message = f"{message}\n\n{poly_ctx}"
+                        logger.info(f"[polygon] injected market data for {len(poly_tickers)} ticker(s)")
+        except Exception as _poly_err:
+            logger.warning(f"[polygon] market data fetch failed (non-blocking): {_poly_err}")
+
     saved_file_paths = []
     remaining_images = []
     for img in images:
