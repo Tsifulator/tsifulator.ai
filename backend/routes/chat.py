@@ -2200,15 +2200,13 @@ async def chat(request: ChatRequest):
                 images.append(att)
 
     # 5b. Market data auto-injection for comp requests.
-    # Fires for excel/google_sheets + comp/price intent + detectable tickers.
-    # Fetches BOTH:
-    #   - Polygon.io: real-time prices + market caps
-    #   - FMP: LTM revenue, EBITDA, margins, net debt
-    # This eliminates hallucinated fundamentals and manual Google Finance lookups.
+    # Priority: FMP (paid, quarterly LTM) → yfinance (free, Yahoo Finance) → Polygon-only
+    # Fetches prices (Polygon) + fundamentals (FMP or yfinance) concurrently.
     if app in ("excel", "google_sheets"):
         try:
             from services.polygon import extract_tickers, has_price_intent, get_stocks_batch as poly_batch
-            from services.fmp import get_fundamentals_batch, format_fundamentals_for_context
+            from services.fmp import get_fundamentals_batch as fmp_batch, format_fundamentals_for_context
+            from services.yfinance_service import get_fundamentals_batch as yf_batch
 
             if has_price_intent(request.message):
                 mkt_tickers = extract_tickers(request.message)
@@ -2218,28 +2216,33 @@ async def chat(request: ChatRequest):
                     # Fetch Polygon + FMP concurrently
                     poly_stocks, fmp_data = await asyncio.gather(
                         poly_batch(mkt_tickers),
-                        get_fundamentals_batch(mkt_tickers),
+                        fmp_batch(mkt_tickers),
                         return_exceptions=True,
                     )
 
-                    # Graceful fallback if either fails
                     if isinstance(poly_stocks, Exception):
                         logger.warning(f"[polygon] batch failed: {poly_stocks}")
                         poly_stocks = []
                     if isinstance(fmp_data, Exception):
-                        logger.warning(f"[fmp] batch failed: {fmp_data}")
                         fmp_data = []
 
-                    # Use combined formatter if FMP data available, else Polygon-only
-                    if fmp_data and any(not f.get("error") for f in fmp_data):
-                        combined_ctx = format_fundamentals_for_context(fmp_data, poly_stocks)
+                    # If FMP returned no usable data, fall back to yfinance (free)
+                    fmp_ok = isinstance(fmp_data, list) and any(not f.get("error") for f in fmp_data)
+                    if not fmp_ok:
+                        logger.info(f"[market-data] FMP empty, falling back to yfinance")
+                        fund_data = await yf_batch(mkt_tickers)
+                    else:
+                        fund_data = fmp_data
+
+                    if fund_data and any(not f.get("error") for f in fund_data):
+                        combined_ctx = format_fundamentals_for_context(fund_data, poly_stocks)
                     else:
                         from services.polygon import format_for_context as poly_fmt
                         combined_ctx = poly_fmt(poly_stocks)
 
                     if combined_ctx:
                         message = f"{message}\n\n{combined_ctx}"
-                        logger.info(f"[market-data] injected fundamentals+prices for {len(mkt_tickers)} ticker(s)")
+                        logger.info(f"[market-data] injected for {len(mkt_tickers)} tickers (fmp_ok={fmp_ok})")
 
         except Exception as _mkt_err:
             logger.warning(f"[market-data] fetch failed (non-blocking): {_mkt_err}")

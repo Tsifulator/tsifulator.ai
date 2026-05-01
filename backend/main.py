@@ -208,9 +208,13 @@ async def market_snapshot_single(ticker: str):
 
 @app.get("/market/fundamentals/{ticker}")
 async def market_fundamentals_single(ticker: str):
-    """Fetch LTM fundamentals for a single ticker via FMP."""
-    from services.fmp import get_fundamentals
-    return await get_fundamentals(ticker.upper())
+    """Fetch LTM fundamentals — FMP first, yfinance fallback."""
+    from services.fmp import get_fundamentals as fmp_get
+    from services.yfinance_service import get_fundamentals as yf_get
+    result = await fmp_get(ticker.upper())
+    if result.get("error"):
+        result = await yf_get(ticker.upper())
+    return result
 
 @app.post("/market/fundamentals")
 async def market_fundamentals_batch(req: SnapshotRequest):
