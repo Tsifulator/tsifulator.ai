@@ -411,20 +411,35 @@ def _has_blanket_sheet_creation_intent(message: str) -> bool:
         'add a tab with top 10 players'
         'give me another sheet showing breakdown by position'
         'make a new worksheet'
+        'build me a comp set' (analyst flagship — comp tearsheet workflow)
+        'build me a trading comp set for these cloud peers'
+        'give me a peer comparison'
+        'create a tearsheet for these companies'
 
-    Required pattern: a creation verb, optional filler / quantifier, then
-    'sheet' | 'tab' | 'worksheet' (singular or plural). Does NOT match
+    Required pattern: a creation verb, optional filler (any 0-4 words),
+    then a sheet-equivalent noun (tab|sheet|worksheet|comp set|comp table|
+    tearsheet|peer comp|trading comp|comparison). Does NOT match
     'add a summary row to the X tab' (which is bug 018: modify intent on
-    existing sheet) — the suffix anchors on 'sheet/tab/worksheet' as the
-    direct object, so 'row to the X tab' fails because 'row' interrupts.
+    existing sheet) — the suffix anchors on the noun as the direct object,
+    so 'row to the X tab' fails because 'row' interrupts.
+
+    The comp-flavored nouns were added when the comp tearsheet flagship
+    shipped — analysts say "build me a comp set" not "create a sheet with
+    comps", and the legacy regex missed all of them.
     """
     if not message:
         return False
     pattern = (
-        r"\b(?:create|add|build|make|insert|generate|set ?up|gimme|give me)"
-        # Optional filler: article / quantifier / 'new'
-        r"(?:\s+(?:a|an|the|one|two|three|four|five|some|several|new|another|extra|fresh|me)){0,3}"
-        r"\s+(?:tab|sheet|worksheet)s?\b"
+        r"\b(?:create|add|build|make|insert|generate|set ?up|gimme|give me|"
+        r"i need|need|i want|want|produce|get me|put together|throw together)"
+        # Optional filler: any 0-4 words (allows "build me a trading comp set"
+        # where 'me a trading' are between the verb and the noun)
+        r"(?:\s+\S+){0,4}"
+        # Direct-object noun: sheet-equivalents OR comp-tearsheet vocabulary
+        r"\s+(?:tab|sheet|worksheet|"
+        r"comp[\s-]?set|comp[\s-]?table|comp[\s-]?sheet|"
+        r"tearsheet|peer[\s-]?comp(?:arison)?|trading[\s-]?comps?|"
+        r"comparison[\s-]?(?:table|sheet)?)s?\b"
     )
     return re.search(pattern, message, flags=re.IGNORECASE) is not None
 
@@ -1602,6 +1617,12 @@ async def debug_postprocess_version():
         # index page to the main filing body. Lets analysts paste search
         # URLs directly without clicking into the document first.
         "flagship_v251_url_auto_traverse": True,
+        # v2.6 — blanket-intent regex extended for comp tearsheet
+        # vocabulary (comp set, tearsheet, peer comparison, trading comps).
+        # Fixes the case where the model invented a non-canonical sheet
+        # name like "Cloud SaaS Comps" and the auto-inject heuristic
+        # refused to whitelist it.
+        "flagship_v26_comp_blanket_intent": True,
     }
 
 
