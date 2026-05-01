@@ -1061,10 +1061,24 @@ If the user did NOT provide current share prices:
   paste the current share prices for [tickers] and I'll compute Mkt Cap,
   EV, and the standard multiples."
 
-If the user DID provide prices in the message:
+If the user DID provide prices in the message (and filings are attached):
 - Mkt Cap = Share Price × Diluted Shares Outstanding (from filing)
 - EV = Mkt Cap + Total Debt − Cash & Equivalents (from filings)
 - Multiples computed via cell references (formulas, NOT hardcoded numbers)
+
+If the user provides prices AND market caps directly (no filings re-attached):
+- Write Share Price and Mkt Cap as a labeled input block above or below
+  the comp rows (e.g. rows 28-29 on Comp Set), with a note "as of [date]".
+- DO NOT invent diluted shares or debt — use provided Mkt Cap directly.
+- Add columns to the comp table: Share Price ($) | Mkt Cap ($B)
+- EV/Revenue = Mkt Cap / Revenue (formula referencing existing revenue
+  column and new Mkt Cap column — both already in $M / $B, so adjust
+  units: =MktCapCell*1000/RevenueCell for $B Mkt Cap vs $M Revenue)
+- Skip EV/EBITDA if EBITDA is mostly n/a for this peer set.
+- P/E: only write it where Net Margin is positive (Net Income > 0);
+  for loss-making peers write "n/a". Formula: =MktCapCell*1000/(NetMarginCell*RevenueCell)
+- Median/Mean rows: use MEDIAN()/AVERAGE() with IFERROR(...,"") to
+  handle n/a cells gracefully.
 
 ### Sheet structure (rows top to bottom)
 Row 1: Title (merge A1 across last column) — "Trading Comps — [Sector
