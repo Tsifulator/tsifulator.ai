@@ -1526,6 +1526,42 @@ async def debug_postprocess_version():
     }
 
 
+@router.get("/debug/url-fetch-test")
+async def debug_url_fetch_test(url: str = ""):
+    """Test the URL fetcher in isolation, without going through Claude.
+    Returns the cleaned text length, content type, and a 500-char preview
+    of what would be sent to Claude. Lets us validate the fetcher on
+    real SEC URLs without burning API credits.
+
+    Usage:
+      curl '<host>/chat/debug/url-fetch-test?url=https://www.sec.gov/Archives/...'
+    """
+    if not url:
+        return {"error": "missing 'url' query param"}
+    if not _URL_PATTERN.search(url):
+        return {
+            "error": "URL doesn't match SEC pattern (sec.gov/Archives or /cgi-bin)",
+            "url": url,
+        }
+    att = await _fetch_url_as_attachment(url)
+    if att is None:
+        return {"error": "fetch failed (see backend logs)", "url": url}
+    # Decode the cleaned text for the preview
+    try:
+        decoded = base64.b64decode(att["data"]).decode("utf-8", errors="replace")
+    except Exception:
+        decoded = "[binary, can't preview]"
+    return {
+        "url": url,
+        "media_type": att["media_type"],
+        "file_name": att["file_name"],
+        "raw_size_b64": len(att["data"]),
+        "decoded_size": len(decoded),
+        "preview_first_500": decoded[:500],
+        "preview_middle_500": decoded[len(decoded)//2 : len(decoded)//2 + 500] if len(decoded) > 1000 else "",
+    }
+
+
 @router.get("/debug/auto-inject-test")
 async def debug_auto_inject_test(
     message: str = "", sheets: str = "", model_emits_add_sheets: bool = False,
