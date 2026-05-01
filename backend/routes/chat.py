@@ -72,6 +72,144 @@ def _set_cached_response(key: str, data: dict):
     _response_cache[key] = {"data": data, "ts": time.time()}
 
 
+# ── URL fetcher: pull SEC filings server-side so analysts don't print-to-PDF ─
+
+# Matches SEC EDGAR archive URLs (the actual filing documents) and the
+# CGI search URLs. Future: broaden to investor relations PDFs, broker reports
+# behind public URLs, etc.
+_URL_PATTERN = re.compile(
+    r'https?://www\.sec\.gov/(?:Archives|cgi-bin)/[^\s<>"\)\]]+',
+    re.IGNORECASE,
+)
+
+# SEC's User-Agent rules require a clearly-identifying string. They
+# explicitly call this out: https://www.sec.gov/os/accessing-edgar-data
+_SEC_UA = "tsifulator.ai research-agent contact@tsifulator.ai"
+
+# Bound how much HTML body text we send Claude per filing. SEC 10-Q HTML
+# can balloon to 5MB raw; cleaned, the body is usually 100-300KB. Cap at
+# 800KB to stay well under context window even with 5 filings.
+_URL_FETCH_TEXT_CAP = 800_000
+
+
+def _extract_urls_from_message(message: str) -> list[str]:
+    """Find SEC filing URLs in the user's message. De-duped, max 5."""
+    if not message:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for match in _URL_PATTERN.finditer(message):
+        url = match.group(0).rstrip(".,;:)\"'")  # strip trailing punctuation
+        if url not in seen:
+            seen.add(url)
+            out.append(url)
+        if len(out) >= 5:
+            break
+    return out
+
+
+def _clean_html_to_text(html_bytes: bytes, source_url: str = "") -> str:
+    """Strip HTML to readable plain text, preserving table layout when possible.
+
+    SEC inline filings have heavy XBRL tagging, inline styles, and nested
+    tables. BeautifulSoup's get_text with newline separator handles them
+    well enough — we lose subtle formatting but keep the data structure
+    (numbers in their relative position, statement labels intact).
+    """
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        # Fallback: very crude regex strip if bs4 isn't installed yet
+        text = html_bytes.decode("utf-8", errors="replace")
+        text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"\s+", " ", text)
+        return text[:_URL_FETCH_TEXT_CAP]
+
+    try:
+        soup = BeautifulSoup(html_bytes, "html.parser")
+        # Drop noise tags we never want
+        for tag in soup(["script", "style", "noscript", "meta", "link"]):
+            tag.decompose()
+        # get_text with newline separator preserves table-row structure
+        text = soup.get_text(separator="\n", strip=True)
+        # Collapse 3+ newlines (SEC HTML has TONS of empty divs)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        # Cap to avoid token explosion
+        if len(text) > _URL_FETCH_TEXT_CAP:
+            text = text[:_URL_FETCH_TEXT_CAP] + "\n\n[... content truncated to fit context window]"
+        # Prepend source URL so the model knows where this came from
+        if source_url:
+            text = f"[Source URL: {source_url}]\n\n{text}"
+        return text
+    except Exception as e:
+        logger.warning(f"[url-fetch] HTML parse failed for {source_url}: {e}")
+        return html_bytes.decode("utf-8", errors="replace")[:_URL_FETCH_TEXT_CAP]
+
+
+async def _fetch_url_as_attachment(url: str) -> dict | None:
+    """Fetch a URL and return it as an attachment dict compatible with
+    the existing `images` pipeline. Returns None on any failure (we don't
+    want one bad URL to fail the whole request).
+
+    HTML responses get cleaned to plain text and attached as text/plain.
+    PDF responses pass through as application/pdf (Claude vision-API
+    handles them natively).
+    """
+    try:
+        import httpx
+        async with httpx.AsyncClient(
+            timeout=30.0,
+            follow_redirects=True,
+            headers={"User-Agent": _SEC_UA, "Accept": "text/html,application/pdf,*/*"},
+        ) as client:
+            r = await client.get(url)
+            r.raise_for_status()
+            ctype = r.headers.get("content-type", "").lower()
+            url_lower = url.lower()
+
+            # Deduce filename from URL tail
+            tail = url.rstrip("/").rsplit("/", 1)[-1] or "filing"
+            if "?" in tail:
+                tail = tail.split("?", 1)[0]
+            filename = tail or "filing.txt"
+
+            if "pdf" in ctype or url_lower.endswith(".pdf"):
+                # Pass PDF through as-is
+                data_b64 = base64.b64encode(r.content).decode("utf-8")
+                if not filename.lower().endswith(".pdf"):
+                    filename = filename + ".pdf"
+                logger.info(f"[url-fetch] PDF {url} → {len(r.content):,} bytes")
+                return {
+                    "media_type": "application/pdf",
+                    "data": data_b64,
+                    "file_name": filename,
+                }
+
+            # HTML / XHTML / anything textual → clean to plain text
+            cleaned = _clean_html_to_text(r.content, source_url=url)
+            data_b64 = base64.b64encode(cleaned.encode("utf-8")).decode("utf-8")
+            # Normalize filename to .txt so the existing pipeline routes it
+            # through the TEXT_TYPES inlining path.
+            if "." in filename:
+                filename = filename.rsplit(".", 1)[0] + ".txt"
+            else:
+                filename = filename + ".txt"
+            logger.info(
+                f"[url-fetch] HTML {url} → {len(r.content):,}B raw → "
+                f"{len(cleaned):,} chars cleaned"
+            )
+            return {
+                "media_type": "text/plain",
+                "data": data_b64,
+                "file_name": filename,
+            }
+    except Exception as e:
+        logger.warning(f"[url-fetch] failed for {url}: {e}")
+        return None
+
+
 # ── Post-processing: drop actions targeting phantom sheets ────────────────────
 
 # Sheet names the LLM is allowed to create *without* the user asking. Keep
@@ -1381,6 +1519,10 @@ async def debug_postprocess_version():
         # Flagship #2 — Comp tearsheet construction (peer comps with
         # median/mean rows, sources block, formulas for all computed cells).
         "flagship_v2_comp_tearsheet": True,
+        # Flagship #2.5 — SEC URL fetcher: paste sec.gov/Archives or
+        # cgi-bin/browse-edgar URLs in the message and we fetch + clean
+        # the HTML server-side. Eliminates the print-to-PDF friction.
+        "flagship_v25_url_fetcher": True,
     }
 
 
@@ -1885,6 +2027,20 @@ async def chat(request: ChatRequest):
     # 5. Save uploaded data files (CSV, TSV, etc.) to /tmp/ so import_csv can use them
     images = [{"media_type": img.media_type, "data": img.data, "file_name": img.file_name} for img in request.images] if request.images else []
     message = request.message
+
+    # 5a. URL fetcher: detect SEC filing URLs in the message, pull them
+    # server-side, and append them as attachments. Lets the analyst paste
+    # 5 SEC links instead of print-to-PDF'ing each one. Failures are
+    # logged but don't block the request — the model can still answer
+    # from whatever attachments DID succeed.
+    fetched_urls = _extract_urls_from_message(request.message)
+    if fetched_urls:
+        logger.info(f"[url-fetch] detected {len(fetched_urls)} URL(s) in message")
+        for url in fetched_urls:
+            att = await _fetch_url_as_attachment(url)
+            if att is not None:
+                images.append(att)
+
     saved_file_paths = []
     remaining_images = []
     for img in images:

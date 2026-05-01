@@ -23,5 +23,9 @@ openpyxl==3.1.5
 
 # Utilities
 httpx==0.27.2
+# HTML→text parser for the SEC URL fetcher (10-K/10-Q HTML can hit 5MB raw;
+# we strip to clean text before sending to Claude so we don't blow the
+# context window).
+beautifulsoup4==4.12.3
 pydantic==2.8.2
 psutil==5.9.8
