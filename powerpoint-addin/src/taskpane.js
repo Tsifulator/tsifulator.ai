@@ -42,6 +42,7 @@ Office.onReady(async (info) => {
       const resp = await fetch(`${BACKEND_URL}/transfer/pending/powerpoint`);
       if (!resp.ok) return;
       const { pending = [] } = await resp.json();
+      // ── Handle image transfers ────────────────────────────────────────────
       const images = pending.filter(
         p => p.data_type === "image" && !seenTransferIds.has(p.transfer_id)
       );
@@ -64,6 +65,47 @@ Office.onReady(async (info) => {
           );
         } catch (e) {
           console.warn("[tsifl] PowerPoint auto-import failed:", e);
+        }
+      }
+
+      // ── Handle PPT action queues from Excel ───────────────────────────────
+      // When the Excel add-in's "Build Deck" fires, it stores a ppt_actions
+      // transfer here. We execute each action automatically so the user just
+      // switches to PowerPoint and sees the deck appear.
+      const actionTransfers = pending.filter(
+        p => p.data_type === "ppt_actions" && !seenTransferIds.has(p.transfer_id)
+      );
+      for (const item of actionTransfers) {
+        seenTransferIds.add(item.transfer_id);
+        try {
+          const tResp = await fetch(`${BACKEND_URL}/transfer/${item.transfer_id}`);
+          if (!tResp.ok) continue;
+          const transfer = await tResp.json();
+          let actions;
+          try { actions = JSON.parse(transfer.data || "[]"); } catch (_) { continue; }
+          if (!Array.isArray(actions) || !actions.length) continue;
+
+          const slideCount = actions.filter(a => a.type === "create_slide").length;
+          const meta = transfer.metadata || {};
+          appendMessage(
+            "assistant",
+            `📊 Deck from Excel received — building ${slideCount} slide${slideCount !== 1 ? "s" : ""} for "${meta.title || "comp"}"...`
+          );
+
+          let done = 0;
+          for (const action of actions) {
+            try { await executeAction(action); } catch (e) {
+              console.warn(`[tsifl] ppt_actions: ${action.type} failed:`, e.message);
+            }
+            done++;
+          }
+
+          appendMessage(
+            "assistant",
+            `✅ Tearsheet built — ${slideCount} slide${slideCount !== 1 ? "s" : ""} created from Excel comp.`
+          );
+        } catch (e) {
+          console.warn("[tsifl] ppt_actions transfer failed:", e);
         }
       }
     } catch (_) { /* polling is best-effort */ }

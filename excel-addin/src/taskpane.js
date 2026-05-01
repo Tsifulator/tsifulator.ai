@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v92";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v93";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -262,6 +262,12 @@ function showChatScreen(user) {
   const ibBtn = document.getElementById("ib-format-btn");
   if (ibBtn) {
     ibBtn.addEventListener("click", handleIBFormat);
+  }
+
+  // Build Deck button — Excel comp → PowerPoint tearsheet
+  const deckBtn = document.getElementById("build-deck-btn");
+  if (deckBtn) {
+    deckBtn.addEventListener("click", handleBuildDeck);
   }
 
   // History panel toggle (Improvement 12)
@@ -1083,6 +1089,16 @@ async function handleSubmit() {
   appendMessage("user", message, images);
   setStatus("Reading workbook...");
   input.style.height = "auto";
+
+  // Detect "build deck / build slides / send to PPT / make a presentation" intent
+  const deckPattern = /\b(build|make|create|generate|send|export|push)\b.{0,30}\b(deck|slides?|presentation|ppt|powerpoint|tearsheet)\b|\b(deck|slides?|tearsheet)\b.{0,20}\b(from|of|for)\b.{0,20}\b(comp|excel|this|sheet)/i;
+  if (deckPattern.test(message)) {
+    try {
+      await handleBuildDeck();
+    } catch (_) { /* handleBuildDeck shows its own error */ }
+    setSubmitEnabled(true);
+    return;
+  }
 
   // Detect cross-app R request: "from R", "in R", "use R", "R plot", "generate in R"
   const rJobPattern = /\b(from r\b|in r\b|use r\b|with r\b|r plot|r-?generated|generate.*in r|run.*in r|rstudio|r addin|r studio)\b/i;
@@ -3675,6 +3691,123 @@ async function handleIBFormat() {
     appendMessage("Format failed: " + e.message, "assistant");
   } finally {
     if (btn) { btn.classList.remove("running"); btn.textContent = "⚡ IB Format"; }
+  }
+}
+
+// ── Build Deck: Excel comp → PowerPoint tearsheet ────────────────────────────
+// Reads the active sheet, sends data to Claude in PPT mode, stores the
+// generated actions as a ppt_actions transfer. The PPT add-in polls for
+// ppt_actions every 4s and auto-executes them when found.
+async function handleBuildDeck() {
+  const btn = document.getElementById("build-deck-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "⏳ Building..."; }
+  setStatus("Reading comp...");
+
+  try {
+    // 1. Read the active sheet's used range (values, capped at 60 rows × 30 cols)
+    let compData = null;
+    await Excel.run(async (ctx) => {
+      const sheet = ctx.workbook.worksheets.getActiveWorksheet();
+      sheet.load("name");
+      const range = sheet.getUsedRange();
+      range.load(["values", "rowCount", "columnCount"]);
+      await ctx.sync();
+
+      const vals = range.values;
+      const rows = Math.min(vals.length, 60);
+      const cols = Math.min(vals[0]?.length || 0, 30);
+      compData = {
+        sheetName: sheet.name,
+        values: vals.slice(0, rows).map(r => r.slice(0, cols)),
+      };
+    });
+
+    if (!compData || !compData.values.length) {
+      showToast("No data in active sheet", "error", 3000);
+      return;
+    }
+
+    // 2. Format as TSV for Claude
+    const tsv = compData.values
+      .map(row => row.map(c => (c === null || c === undefined) ? "" : String(c)).join("\t"))
+      .join("\n");
+
+    const deckPrompt =
+      `Build a professional investment banking tearsheet presentation from the comp table below.\n\n` +
+      `Requirements:\n` +
+      `- Slide 1: Title slide — "Trading Comp Tearsheet" with subtitle "${compData.sheetName}"\n` +
+      `- Slide 2: Trading comps summary — full peer table (use add_table with ALL rows and columns from the data)\n` +
+      `- Slide 3: Valuation snapshot — key median multiples as large KPI text boxes (EV/Revenue, EV/EBITDA, P/E if present)\n` +
+      `- Slide 4: Key takeaways — 3-5 bullets drawn from the data\n\n` +
+      `CRITICAL: Use the EXACT data below — no made-up numbers. Every multiple and name must match.\n\n` +
+      `Source: Excel sheet "${compData.sheetName}"\n\`\`\`\n${tsv}\n\`\`\``;
+
+    setStatus("Generating deck...");
+    showTypingIndicator("thinking");
+
+    // 3. Call backend in PowerPoint mode
+    const resp = await fetch(`${BACKEND_URL}/chat/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: CURRENT_USER.id,
+        message: deckPrompt,
+        context: { app: "powerpoint", force_model: "sonnet" },
+        session_id: `deck_${Date.now()}`,
+      }),
+    });
+
+    hideTypingIndicator();
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: `HTTP ${resp.status}` }));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+
+    const data = await resp.json();
+    const actions = data.actions?.length ? data.actions
+      : (data.action?.type && data.action.type !== "none" ? [data.action] : []);
+
+    if (!actions.length) {
+      showToast("No slides generated — try again", "error", 3000);
+      appendMessage("assistant", data.reply || "No slides were returned. Try again.");
+      return;
+    }
+
+    // 4. Store actions as ppt_actions transfer (TTL: 1 hour)
+    const slideCount = actions.filter(a => a.type === "create_slide").length;
+    const transferResp = await fetch(`${BACKEND_URL}/transfer/store`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from_app: "excel",
+        to_app: "powerpoint",
+        data_type: "ppt_actions",
+        data: JSON.stringify(actions),
+        metadata: {
+          title: `${compData.sheetName} Tearsheet`,
+          slide_count: slideCount,
+          source_sheet: compData.sheetName,
+        },
+      }),
+    });
+
+    if (!transferResp.ok) throw new Error("Failed to queue deck transfer");
+
+    setStatus("Deck queued ✓");
+    appendMessage(
+      "assistant",
+      `Deck queued — **${slideCount} slides** built from "${compData.sheetName}". ` +
+      `Open the tsifl add-in in **PowerPoint** and the deck will build automatically.`
+    );
+    showToast(`📊 ${slideCount} slides queued — open tsifl in PowerPoint`, "success", 7000);
+
+  } catch (err) {
+    console.error("[tsifl] Build deck error:", err);
+    setStatus("Deck failed");
+    showToast("Deck build failed: " + err.message, "error", 4000);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "📊 Build Deck"; }
   }
 }
 

@@ -794,6 +794,27 @@ body {
   border-color: var(--blue);
 }
 
+#build-deck-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+#build-deck-btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--blue);
+}
+#build-deck-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Image preview bar */
 #image-preview-bar {
   display: flex;
