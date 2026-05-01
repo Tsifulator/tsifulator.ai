@@ -84,16 +84,30 @@ async def get_fundamentals(ticker: str) -> dict:
     if not _api_key():
         return {"ticker": ticker, "error": "FMP_API_KEY not set"}
 
-    # Fetch quarterly income statement (last 8 quarters — need 8 for LTM + prior LTM)
+    # Try quarterly first (paid), fall back to annual (free tier)
     income_data = await _get(
         f"/income-statement/{ticker}",
         {"period": "quarter", "limit": 8},
     )
-    # Fetch quarterly balance sheet (last 2 quarters)
+    use_annual = False
+    if not income_data:
+        income_data = await _get(
+            f"/income-statement/{ticker}",
+            {"limit": 2},  # annual, last 2 years
+        )
+        use_annual = True
+
+    # Balance sheet — quarterly first, fall back to annual
     balance_data = await _get(
         f"/balance-sheet-statement/{ticker}",
         {"period": "quarter", "limit": 2},
     )
+    if not balance_data:
+        balance_data = await _get(
+            f"/balance-sheet-statement/{ticker}",
+            {"limit": 1},
+        )
+
     # Company profile for name
     profile_data = await _get(f"/profile/{ticker}")
 
@@ -104,18 +118,25 @@ async def get_fundamentals(ticker: str) -> dict:
     bal = balance_data if isinstance(balance_data, list) else []
     profile = (profile_data[0] if isinstance(profile_data, list) and profile_data else {})
 
-    # LTM = last 4 quarters
-    rev_ltm = _sum_quarters(stmts, "revenue", 4)
-    gp_ltm = _sum_quarters(stmts, "grossProfit", 4)
-    op_ltm = _sum_quarters(stmts, "operatingIncome", 4)
-    ebitda_ltm = _sum_quarters(stmts, "ebitda", 4)
-    ni_ltm = _sum_quarters(stmts, "netIncome", 4)
+    # LTM: sum last 4 quarters (paid) or use most recent annual (free)
+    n = 1 if use_annual else 4
+    rev_ltm = _sum_quarters(stmts, "revenue", n)
+    gp_ltm = _sum_quarters(stmts, "grossProfit", n)
+    op_ltm = _sum_quarters(stmts, "operatingIncome", n)
+    ebitda_ltm = _sum_quarters(stmts, "ebitda", n)
+    ni_ltm = _sum_quarters(stmts, "netIncome", n)
 
-    # Prior LTM = quarters 5-8 (for YoY growth)
-    rev_prior = _sum_quarters(stmts[4:], "revenue", 4) if len(stmts) >= 8 else None
+    # Prior year revenue for YoY growth
+    if use_annual:
+        rev_prior = _sum_quarters(stmts[1:], "revenue", 1) if len(stmts) >= 2 else None
+    else:
+        rev_prior = _sum_quarters(stmts[4:], "revenue", 4) if len(stmts) >= 8 else None
 
-    # Most recent quarter period label
-    period_label = stmts[0].get("period", "") + " " + str(stmts[0].get("calendarYear", "")) if stmts else "LTM"
+    # Period label
+    if use_annual:
+        period_label = "FY " + str(stmts[0].get("calendarYear", "")) if stmts else "FY"
+    else:
+        period_label = stmts[0].get("period", "") + " " + str(stmts[0].get("calendarYear", "")) if stmts else "LTM"
 
     # Balance sheet — most recent quarter
     total_debt = None
