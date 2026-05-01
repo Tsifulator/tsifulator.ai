@@ -766,6 +766,34 @@ body {
   cursor: not-allowed;
 }
 
+/* Quick action buttons (IB Format, etc.) */
+#quick-actions {
+  display: flex;
+  gap: 6px;
+  padding: 4px 0 2px 0;
+}
+
+#ib-format-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+#ib-format-btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--blue);
+}
+#ib-format-btn.running {
+  color: var(--blue);
+  border-color: var(--blue);
+}
+
 /* Image preview bar */
 #image-preview-bar {
   display: flex;

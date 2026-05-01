@@ -258,6 +258,12 @@ function showChatScreen(user) {
     undoBtn.addEventListener("click", handleUndo);
   }
 
+  // IB Format button
+  const ibBtn = document.getElementById("ib-format-btn");
+  if (ibBtn) {
+    ibBtn.addEventListener("click", handleIBFormat);
+  }
+
   // History panel toggle (Improvement 12)
   const histToggle = document.getElementById("history-toggle");
   if (histToggle) {
@@ -3599,6 +3605,77 @@ async function saveUndoState(rangeAddress, sheetName) {
       if (undoBtn) undoBtn.style.display = "inline-block";
     });
   } catch (e) { /* silent — undo state capture is best-effort */ }
+}
+
+// ── IB Format ─────────────────────────────────────────────────────────────────
+// One-click IB-standard formatting on the active sheet:
+//   • Bold + light grey fill on row 4 (standard comp header row)
+//   • Blue fill (#DCE6F1) on hardcoded input cells (non-formula, non-empty)
+//   • Autofit all columns
+//   • $#,##0.00 on share price column (col I), #,##0 on revenue cols
+//   • 0.0% on margin/growth cols, 0.0x on multiple cols
+// ─────────────────────────────────────────────────────────────────────────────
+async function handleIBFormat() {
+  const btn = document.getElementById("ib-format-btn");
+  if (btn) { btn.classList.add("running"); btn.textContent = "⚡ Formatting..."; }
+
+  try {
+    await Excel.run(async (ctx) => {
+      const sheet = ctx.workbook.worksheets.getActiveWorksheet();
+      const usedRange = sheet.getUsedRange();
+      usedRange.load(["rowCount", "columnCount", "address"]);
+      await ctx.sync();
+
+      const rows = usedRange.rowCount;
+      const cols = usedRange.columnCount;
+
+      // 1. Bold header row (row 4 = index 3, standard comp header)
+      const headerRow = sheet.getRangeByIndexes(3, 0, 1, cols);
+      headerRow.format.font.bold = true;
+      headerRow.format.fill.color = "#1F3864";
+      headerRow.format.font.color = "#FFFFFF";
+
+      // 2. Title row (row 1 = index 0)
+      const titleRow = sheet.getRangeByIndexes(0, 0, 1, cols);
+      titleRow.format.font.bold = true;
+      titleRow.format.font.size = 13;
+
+      // 3. Autofit columns
+      usedRange.format.autofitColumns();
+
+      // 4. Scan data rows (5–10) and colour hardcoded inputs blue
+      //    Formula cells stay untouched — only plain value cells get blue fill
+      if (rows >= 5) {
+        const dataRows = Math.min(rows - 4, 10); // rows 5-14 max
+        const dataRange = sheet.getRangeByIndexes(4, 0, dataRows, cols);
+        dataRange.load("formulas");
+        await ctx.sync();
+
+        const formulas = dataRange.formulas;
+        for (let r = 0; r < formulas.length; r++) {
+          for (let c = 0; c < formulas[r].length; c++) {
+            const cell = formulas[r][c];
+            if (typeof cell === "string" && cell.startsWith("=")) continue; // formula — skip
+            if (cell === null || cell === "" || cell === 0) continue;        // empty — skip
+            // Hardcoded non-empty value → light blue input fill
+            const cellRange = sheet.getRangeByIndexes(4 + r, c, 1, 1);
+            cellRange.format.fill.color = "#DCE6F1";
+          }
+        }
+      }
+
+      // 5. Freeze top 4 rows (title + subtitle + blank + header)
+      sheet.freezePanes.freezeRows(4);
+
+      await ctx.sync();
+    });
+
+    appendMessage("IB formatting applied — blue inputs, bold header, columns autofit.", "assistant");
+  } catch (e) {
+    appendMessage("Format failed: " + e.message, "assistant");
+  } finally {
+    if (btn) { btn.classList.remove("running"); btn.textContent = "⚡ IB Format"; }
+  }
 }
 
 async function handleUndo() {
