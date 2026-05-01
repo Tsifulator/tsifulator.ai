@@ -1776,7 +1776,38 @@ function sanitizeFormula(val) {
  * Sanitize a 2D array of values.
  */
 function sanitize2D(arr) {
-  return arr.map(row => row.map(v => sanitizeFormula(v)));
+  return arr.map(row => row.map(v => {
+    const f = sanitizeFormula(v);
+    if (typeof f === "string" && !f.startsWith("=")) return sanitizeCurrencyValue(f);
+    return f;
+  }));
+}
+
+/**
+ * Strip currency symbols and fix European decimal commas so numeric values
+ * are always written as numbers, not text strings.
+ * "€132,19" → 132.19 | "1.234,56" → 1234.56 | "$46.78" → 46.78
+ */
+function sanitizeCurrencyValue(val) {
+  if (typeof val !== "string") return val;
+  if (val.startsWith("=")) return val;
+
+  let s = val.trim().replace(/^[€$£¥₹\s]+/, "").replace(/[€$£¥\s]+$/, "");
+
+  // Skip strings with non-numeric suffixes (labels like "B", "M", "x", "%")
+  if (/[a-zA-Z%x]/.test(s)) return val;
+
+  // European format: "1.234,56" → comma is decimal, dots are thousands
+  const lastDot = s.lastIndexOf(".");
+  const lastComma = s.lastIndexOf(",");
+  if (lastComma > lastDot) {
+    s = s.replace(/\./g, "").replace(",", ".");
+  } else if (lastComma !== -1 && lastDot === -1) {
+    s = s.replace(",", ".");
+  }
+
+  const num = parseFloat(s);
+  return (!isNaN(num) && isFinite(num)) ? num : val;
 }
 
 /**
@@ -1895,6 +1926,9 @@ async function executeAction(action) {
       }
       const rawVal = payload.formula ?? payload.value ?? "";
       let val = sanitizeFormula(rawVal);
+      if (typeof val === "string" && !val.startsWith("=")) {
+        val = sanitizeCurrencyValue(val);
+      }
       if (typeof val === "string" && val.startsWith("=")) {
         val = _ensureXlfnPrefix(val);
         range.formulas = [[val]];
