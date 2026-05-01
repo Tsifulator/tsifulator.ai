@@ -100,9 +100,11 @@ Office.onReady(async (info) => {
             done++;
           }
 
+          const deckTitle = meta.title || `${meta.source_sheet || "Comp"} Tearsheet`;
           appendMessage(
             "assistant",
-            `✅ Tearsheet built — ${slideCount} slide${slideCount !== 1 ? "s" : ""} created from Excel comp.`
+            `✅ Tearsheet built — ${slideCount} slide${slideCount !== 1 ? "s" : ""} created.\n\n` +
+            `**Save as:** \`${deckTitle}.pptx\` → **Cmd+Shift+S**`
           );
         } catch (e) {
           console.warn("[tsifl] ppt_actions transfer failed:", e);

@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v93";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v94";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -3794,12 +3794,36 @@ async function handleBuildDeck() {
 
     if (!transferResp.ok) throw new Error("Failed to queue deck transfer");
 
+    const deckTitle = `${compData.sheetName} Tearsheet`;
     setStatus("Deck queued ✓");
+
     appendMessage(
       "assistant",
       `Deck queued — **${slideCount} slides** built from "${compData.sheetName}". ` +
-      `Open the tsifl add-in in **PowerPoint** and the deck will build automatically.`
+      `Switch to PowerPoint with tsifl open and it builds automatically.`
     );
+
+    // Inject "Open PowerPoint" button into the last chat message
+    const chatHistory = document.getElementById("chat-history");
+    const lastMsg = chatHistory?.lastElementChild;
+    if (lastMsg) {
+      const openBtn = document.createElement("button");
+      openBtn.className = "open-ppt-btn";
+      openBtn.textContent = "🚀 Open PowerPoint";
+      openBtn.title = `Open PowerPoint — deck will auto-build as "${deckTitle}.pptx"`;
+      openBtn.addEventListener("click", () => {
+        // macOS: ms-powerpoint: URI opens the app. On Windows this also works.
+        // Falls back gracefully if the protocol handler isn't registered.
+        window.open("ms-powerpoint:", "_blank");
+        openBtn.textContent = "✓ Opening...";
+        openBtn.disabled = true;
+        setTimeout(() => {
+          openBtn.textContent = `Save as: ${deckTitle}.pptx`;
+        }, 2500);
+      });
+      lastMsg.appendChild(openBtn);
+    }
+
     showToast(`📊 ${slideCount} slides queued — open tsifl in PowerPoint`, "success", 7000);
 
   } catch (err) {

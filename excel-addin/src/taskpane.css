@@ -815,6 +815,22 @@ body {
   cursor: not-allowed;
 }
 
+/* "Open PowerPoint" button injected into chat after Build Deck */
+.open-ppt-btn {
+  display: inline-block;
+  margin-top: 8px;
+  background: var(--blue);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+.open-ppt-btn:hover { background: var(--blue-hover); }
+.open-ppt-btn:disabled { opacity: 0.6; cursor: default; }
+
 /* Image preview bar */
 #image-preview-bar {
   display: flex;
