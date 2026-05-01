@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v94";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v95";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -1771,6 +1771,21 @@ let _strippedFormulaCount = 0;  // track how many formulas got stripped per batc
 
 function sanitizeFormula(val) {
   if (typeof val !== "string" || !val.startsWith("=")) return val;
+
+  // ── #NAME? guard: =n/a, =N/A, =na → write "n/a" text, not a formula ───────
+  // Claude sometimes writes =n/a for missing data. Excel treats "n/a" as an
+  // undefined named range → #NAME? error. Convert to plain text string.
+  if (/^=\s*[nN]\s*\/\s*[aA]\s*$/.test(val)) return "n/a";
+  // Also catch =N/A() (Excel's own NA function written wrong), =#N/A
+  if (/^=\s*#?[nN]\/?[aA][\s()]*$/.test(val)) return "n/a";
+
+  // ── #NAME? guard: formula is ONLY a named-range-style identifier ────────────
+  // Catch =Revenue, =EBITDA_Margin, =Market_Cap etc. — no operators or parens.
+  // Real formulas always have () or +/-/* etc. Pure alpha/underscore = mistake.
+  if (/^=[A-Za-z][A-Za-z0-9_]*$/.test(val)) {
+    console.warn("[tsifl] Stripped likely-named-range formula:", val);
+    return "";
+  }
 
   // Block cross-sheet references ONLY if the sheet doesn't exist
   if (val.includes("!")) {

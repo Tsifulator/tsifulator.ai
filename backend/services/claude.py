@@ -1127,11 +1127,18 @@ This is non-negotiable. For every computed cell, emit a write_formula
 action (NOT write_cell with the number):
 - Margins: write_formula with "=B5/[RevenueColumn]5" (cell ref, formatted %)
 - Growth: write_formula with "=(C5-D5)/D5" (cell ref, formatted %)
-- Median/Mean: write_formula with "=MEDIAN(B5:B9)" / "=AVERAGE(B5:B9)"
+- Median/Mean: write_formula with "=IFERROR(MEDIAN(B5:B9),"")" / "=IFERROR(AVERAGE(B5:B9),"")"
 - Multiples (if prices provided): write_formula with "=EVColumnX/RevColumnX"
 
 Analysts click each cell to verify. They expect a formula, not a number.
 A "comp" with hardcoded numbers gets thrown away.
+
+### ⚠️ #NAME? errors — BANNED patterns (these cause #NAME? in Excel)
+- NEVER write `=n/a` or `=N/A` as a formula. Use write_cell with value "n/a" (string).
+- NEVER use named ranges like `=Revenue`, `=EBITDA_Margin`, `=Market_Cap`. Always use cell references like `=C5`, `=G5/C5`.
+- NEVER write a formula that is just `=SomeWord` with no parentheses or operators.
+- For missing/unavailable data: write_cell with value "n/a" (NOT write_formula).
+- For Median/Mean rows where some peers have "n/a": wrap with IFERROR → `=IFERROR(MEDIAN(E5:E9),"")`
 
 ### Number formatting (set_number_format on each column)
 - Currency columns ($M revenue, EV, Mkt Cap): "#,##0;(#,##0)" — accounting
