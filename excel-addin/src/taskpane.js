@@ -9,7 +9,7 @@ import { getCurrentUser, signIn, signUp, signOut, resetPassword, supabase, syncS
 const BACKEND_URL  = "https://focused-solace-production-6839.up.railway.app";
 const LOCAL_URL    = "/local-api";              // proxied through webpack dev server (avoids HTTPS mixed content)
 const PREFS_KEY    = "tsifl_preferences";
-const BUILD_VER    = "v95";  // bump this on every deploy so user can confirm fresh code
+const BUILD_VER    = "v96";  // bump this on every deploy so user can confirm fresh code
 
 let CURRENT_USER       = null;
 let lastNavigatedSheet = null;   // tracks sheet after navigate_sheet so writes auto-target it
@@ -1257,8 +1257,19 @@ async function handleSubmit() {
     }
 
     if (data.tasks_remaining >= 0) {
-      document.getElementById("tasks-remaining").textContent =
-        `${data.tasks_remaining} tasks left`;
+      const tasksEl = document.getElementById("tasks-remaining");
+      if (data.tasks_remaining === 999999 || data.subscribed) {
+        tasksEl.textContent = "Pro ✓";
+        tasksEl.style.color = "var(--green)";
+      } else if (data.tasks_remaining <= 5) {
+        // Near limit — show subscribe prompt
+        tasksEl.textContent = `${data.tasks_remaining} left`;
+        tasksEl.style.color = "var(--red)";
+        _showSubscribeBanner();
+      } else {
+        tasksEl.textContent = `${data.tasks_remaining} tasks left`;
+        tasksEl.style.color = "";
+      }
     }
 
     if (allActions.length > 0) {
@@ -3847,6 +3858,51 @@ async function handleBuildDeck() {
     showToast("Deck build failed: " + err.message, "error", 4000);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = "📊 Build Deck"; }
+  }
+}
+
+// ── Subscribe flow ────────────────────────────────────────────────────────────
+let _subscribeBannerShown = false;
+
+function _showSubscribeBanner() {
+  if (_subscribeBannerShown) return;
+  _subscribeBannerShown = true;
+
+  const chatHistory = document.getElementById("chat-history");
+  const banner = document.createElement("div");
+  banner.className = "subscribe-banner";
+  banner.innerHTML = `
+    <div class="subscribe-banner-text">
+      <strong>You're almost out of tasks.</strong><br>
+      Upgrade to tsifl Pro — $99/month, unlimited everything.
+    </div>
+    <button class="subscribe-btn" id="subscribe-cta-btn">Subscribe →</button>
+  `;
+  if (chatHistory) chatHistory.appendChild(banner);
+  chatHistory?.scrollTo(0, chatHistory.scrollHeight);
+
+  document.getElementById("subscribe-cta-btn")?.addEventListener("click", handleSubscribe);
+}
+
+async function handleSubscribe() {
+  const btn = document.getElementById("subscribe-cta-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "Loading..."; }
+
+  try {
+    const resp = await fetch(`${BACKEND_URL}/billing/checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: CURRENT_USER?.id || "unknown",
+        email: CURRENT_USER?.email || "",
+      }),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const { url } = await resp.json();
+    if (url) window.open(url, "_blank");
+  } catch (err) {
+    showToast("Couldn't start checkout: " + err.message, "error", 4000);
+    if (btn) { btn.disabled = false; btn.textContent = "Subscribe →"; }
   }
 }
 

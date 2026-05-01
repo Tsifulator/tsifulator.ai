@@ -30,3 +30,4 @@ beautifulsoup4==4.12.3
 pydantic==2.8.2
 psutil==5.9.8
 yfinance==0.2.54
+stripe==11.4.1

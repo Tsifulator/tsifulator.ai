@@ -35,11 +35,24 @@ def _get_month_key():
     return datetime.utcnow().strftime("%Y-%m")
 
 
+def _is_subscribed(user_id: str) -> bool:
+    """Check Stripe subscription — subscribed users get unlimited tasks."""
+    try:
+        from routes.billing import is_subscribed
+        return is_subscribed(user_id)
+    except Exception:
+        return False
+
+
 async def check_and_increment_usage(user_id: str) -> dict:
     """
     Check if user is under their limit, then increment their count.
     Returns: {"allowed": bool, "remaining": int, "used": int}
     """
+    # Subscribed users get unlimited tasks — bypass all limits
+    if _is_subscribed(user_id):
+        return {"allowed": True, "remaining": 999999, "used": 0, "subscribed": True}
+
     month_key = _get_month_key()
     cache_key = f"{user_id}:{month_key}"
 
