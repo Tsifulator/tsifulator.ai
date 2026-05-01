@@ -206,6 +206,18 @@ async def market_snapshot_single(ticker: str):
     from services.polygon import get_stock_data
     return await get_stock_data(ticker.upper())
 
+@app.get("/market/fundamentals/{ticker}")
+async def market_fundamentals_single(ticker: str):
+    """Fetch LTM fundamentals for a single ticker via FMP."""
+    from services.fmp import get_fundamentals
+    return await get_fundamentals(ticker.upper())
+
+@app.post("/market/fundamentals")
+async def market_fundamentals_batch(req: SnapshotRequest):
+    """Fetch LTM fundamentals for multiple tickers."""
+    from services.fmp import get_fundamentals_batch
+    return {"results": await get_fundamentals_batch(req.tickers[:15])}
+
 # --- Notes App (served as static HTML) ---
 NOTES_APP_PATH = Path(__file__).parent / "static" / "notes.html"
 

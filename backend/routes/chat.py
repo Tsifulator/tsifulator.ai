@@ -4,6 +4,7 @@ Receives a message from any tsifl integration, pulls session-scoped history,
 sends to Claude, saves response, returns action(s).
 """
 
+import asyncio
 import hashlib
 import time
 import base64
@@ -2198,23 +2199,50 @@ async def chat(request: ChatRequest):
             if att is not None:
                 images.append(att)
 
-    # 5b. Polygon.io: auto-fetch market data when user asks for comps/multiples.
-    # Eliminates manual "paste prices from Google Finance" step.
-    # Only fires for excel/google_sheets + comp/price intent + detectable tickers.
+    # 5b. Market data auto-injection for comp requests.
+    # Fires for excel/google_sheets + comp/price intent + detectable tickers.
+    # Fetches BOTH:
+    #   - Polygon.io: real-time prices + market caps
+    #   - FMP: LTM revenue, EBITDA, margins, net debt
+    # This eliminates hallucinated fundamentals and manual Google Finance lookups.
     if app in ("excel", "google_sheets"):
         try:
-            from services.polygon import extract_tickers, has_price_intent, get_stocks_batch, format_for_context
+            from services.polygon import extract_tickers, has_price_intent, get_stocks_batch as poly_batch
+            from services.fmp import get_fundamentals_batch, format_fundamentals_for_context
+
             if has_price_intent(request.message):
-                poly_tickers = extract_tickers(request.message)
-                if poly_tickers:
-                    logger.info(f"[polygon] auto-fetching market data for {poly_tickers}")
-                    poly_stocks = await get_stocks_batch(poly_tickers)
-                    poly_ctx = format_for_context(poly_stocks)
-                    if poly_ctx:
-                        message = f"{message}\n\n{poly_ctx}"
-                        logger.info(f"[polygon] injected market data for {len(poly_tickers)} ticker(s)")
-        except Exception as _poly_err:
-            logger.warning(f"[polygon] market data fetch failed (non-blocking): {_poly_err}")
+                mkt_tickers = extract_tickers(request.message)
+                if mkt_tickers:
+                    logger.info(f"[market-data] auto-fetching for {mkt_tickers}")
+
+                    # Fetch Polygon + FMP concurrently
+                    poly_stocks, fmp_data = await asyncio.gather(
+                        poly_batch(mkt_tickers),
+                        get_fundamentals_batch(mkt_tickers),
+                        return_exceptions=True,
+                    )
+
+                    # Graceful fallback if either fails
+                    if isinstance(poly_stocks, Exception):
+                        logger.warning(f"[polygon] batch failed: {poly_stocks}")
+                        poly_stocks = []
+                    if isinstance(fmp_data, Exception):
+                        logger.warning(f"[fmp] batch failed: {fmp_data}")
+                        fmp_data = []
+
+                    # Use combined formatter if FMP data available, else Polygon-only
+                    if fmp_data and any(not f.get("error") for f in fmp_data):
+                        combined_ctx = format_fundamentals_for_context(fmp_data, poly_stocks)
+                    else:
+                        from services.polygon import format_for_context as poly_fmt
+                        combined_ctx = poly_fmt(poly_stocks)
+
+                    if combined_ctx:
+                        message = f"{message}\n\n{combined_ctx}"
+                        logger.info(f"[market-data] injected fundamentals+prices for {len(mkt_tickers)} ticker(s)")
+
+        except Exception as _mkt_err:
+            logger.warning(f"[market-data] fetch failed (non-blocking): {_mkt_err}")
 
     saved_file_paths = []
     remaining_images = []
