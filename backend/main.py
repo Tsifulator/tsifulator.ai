@@ -68,18 +68,12 @@ async def log_requests(request: Request, call_next):
     global _total_requests, _last_error_time
     _total_requests += 1
     start = time.time()
+    # NOTE: do NOT read request.body() after call_next — the ASGI stream is
+    # consumed by the handler and a second read blocks the connection, causing
+    # all POST requests to hang. Read user_id from query params only (safe).
+    user_id = request.query_params.get("user_id", "")
     response = await call_next(request)
     latency_ms = round((time.time() - start) * 1000, 1)
-    user_id = ""
-    if request.method == "POST":
-        # Extract user_id from cached body if available
-        try:
-            body_bytes = await request.body()
-            if body_bytes:
-                body = json.loads(body_bytes)
-                user_id = body.get("user_id", "")
-        except Exception:
-            pass
     if response.status_code >= 500:
         _last_error_time = datetime.utcnow().isoformat()
     log_entry = {
