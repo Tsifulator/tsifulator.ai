@@ -436,9 +436,12 @@ def _has_blanket_sheet_creation_intent(message: str) -> bool:
         # where 'me a trading' are between the verb and the noun)
         r"(?:\s+\S+){0,4}"
         # Direct-object noun: sheet-equivalents OR comp-tearsheet vocabulary
+        # "comps?" catches bare "build me a comp for DDOG, SNOW..." phrasing
         r"\s+(?:tab|sheet|worksheet|"
+        r"comps?\b|"
         r"comp[\s-]?set|comp[\s-]?table|comp[\s-]?sheet|"
-        r"tearsheet|peer[\s-]?comp(?:arison)?|trading[\s-]?comps?|"
+        r"tearsheet|tear[\s-]?sheet|"
+        r"peer[\s-]?comp(?:arison)?|trading[\s-]?comps?|"
         r"comparison[\s-]?(?:table|sheet)?)s?\b"
     )
     return re.search(pattern, message, flags=re.IGNORECASE) is not None
@@ -483,9 +486,12 @@ _STALL_MENU_PATTERNS = (
     r"reply with (a |the )?number",
     r"here are some options",
     r"i haven['']?t (built|done|made|created|added|fixed|applied) (anything|it|them) yet",
-    r"want me to (do|fix|apply|build|run) [^.?!\n]{0,40}\?",
+    r"want me to (do|fix|apply|build|run|create) [^.?!\n]{0,40}\?",
     r"which (one|of these|option) (would|do) you",
     r"let me know which",
+    r"want me to create [^.?!\n]{0,40}first",   # "Want me to create 'Comp Set' first?"
+    r"rephrase the request",
+    r"should i (create|add|make|build) [^.?!\n]{0,40}(first|tab|sheet)\?",
 )
 
 
