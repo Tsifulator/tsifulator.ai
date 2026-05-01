@@ -148,14 +148,84 @@ def _clean_html_to_text(html_bytes: bytes, source_url: str = "") -> str:
         return html_bytes.decode("utf-8", errors="replace")[:_URL_FETCH_TEXT_CAP]
 
 
+async def _resolve_sec_filing_url(url: str, client, depth: int = 0) -> str:
+    """Given any sec.gov URL, walk the hop chain to the actual filing
+    document (the main .htm body, not the EDGAR search page or filing
+    index). Bounded at 3 hops to prevent infinite recursion.
+
+    Hop hierarchy:
+      cgi-bin/browse-edgar (search results)
+        → /Archives/.../-index.htm (filing index page)
+          → /Archives/.../<doc>.htm (main filing body — the goal)
+
+    Returns the resolved URL. Falls back to the input URL if traversal
+    fails — better to fetch SOMETHING than block the whole request.
+    """
+    if depth >= 3:
+        logger.warning(f"[url-fetch] hop limit reached at {url}")
+        return url
+
+    # Direct filing body — already at the destination
+    if "/Archives/" in url and "-index.htm" not in url and "browse-edgar" not in url:
+        return url
+
+    try:
+        r = await client.get(url)
+        r.raise_for_status()
+    except Exception as e:
+        logger.warning(f"[url-fetch] traversal hop failed for {url}: {e}")
+        return url
+
+    html = r.text
+
+    # Hop 1: search results → first filing's index page
+    if "browse-edgar" in url:
+        m = re.search(
+            r'href="(/Archives/edgar/data/\d+/\d+/[\d-]+-index\.htm)"',
+            html,
+        )
+        if m:
+            next_url = "https://www.sec.gov" + m.group(1)
+            logger.info(f"[url-fetch] hop {depth+1}: search → {next_url}")
+            return await _resolve_sec_filing_url(next_url, client, depth + 1)
+
+    # Hop 2: filing index → main filing body (skip exhibits, skip
+    # certifications — those start with "ex-" by SEC convention)
+    if "-index.htm" in url:
+        # Pull every Archives .htm link from the index page
+        candidates = re.findall(
+            r'href="(/Archives/edgar/data/\d+/\d+/([^"]+\.htm))"',
+            html,
+        )
+        for full_path, filename in candidates:
+            base = filename.lower()
+            # Skip exhibits (ex-31, ex-32, etc.) and the index itself
+            if base.startswith("ex-") or base == "index.htm":
+                continue
+            # First non-exhibit .htm — that's the main filing document
+            next_url = "https://www.sec.gov" + full_path
+            logger.info(f"[url-fetch] hop {depth+1}: index → {next_url}")
+            return next_url
+        # Fallback: try the inline-XBRL viewer URL pattern
+        m = re.search(
+            r'href="/ix\?doc=(/Archives/edgar/data/\d+/\d+/[^"]+\.htm)"',
+            html,
+        )
+        if m:
+            return "https://www.sec.gov" + m.group(1)
+
+    # Unknown URL shape — let it through
+    return url
+
+
 async def _fetch_url_as_attachment(url: str) -> dict | None:
     """Fetch a URL and return it as an attachment dict compatible with
     the existing `images` pipeline. Returns None on any failure (we don't
     want one bad URL to fail the whole request).
 
-    HTML responses get cleaned to plain text and attached as text/plain.
-    PDF responses pass through as application/pdf (Claude vision-API
-    handles them natively).
+    First resolves the URL to the actual filing document (auto-traverses
+    from search pages and index pages). Then fetches and processes:
+    HTML → clean text/plain, PDF → passthrough.
     """
     try:
         import httpx
@@ -164,13 +234,18 @@ async def _fetch_url_as_attachment(url: str) -> dict | None:
             follow_redirects=True,
             headers={"User-Agent": _SEC_UA, "Accept": "text/html,application/pdf,*/*"},
         ) as client:
-            r = await client.get(url)
+            # Resolve the URL to the actual filing body before fetching
+            resolved_url = await _resolve_sec_filing_url(url, client)
+            if resolved_url != url:
+                logger.info(f"[url-fetch] resolved {url} → {resolved_url}")
+
+            r = await client.get(resolved_url)
             r.raise_for_status()
             ctype = r.headers.get("content-type", "").lower()
-            url_lower = url.lower()
+            url_lower = resolved_url.lower()
 
             # Deduce filename from URL tail
-            tail = url.rstrip("/").rsplit("/", 1)[-1] or "filing"
+            tail = resolved_url.rstrip("/").rsplit("/", 1)[-1] or "filing"
             if "?" in tail:
                 tail = tail.split("?", 1)[0]
             filename = tail or "filing.txt"
@@ -180,7 +255,7 @@ async def _fetch_url_as_attachment(url: str) -> dict | None:
                 data_b64 = base64.b64encode(r.content).decode("utf-8")
                 if not filename.lower().endswith(".pdf"):
                     filename = filename + ".pdf"
-                logger.info(f"[url-fetch] PDF {url} → {len(r.content):,} bytes")
+                logger.info(f"[url-fetch] PDF {resolved_url} → {len(r.content):,} bytes")
                 return {
                     "media_type": "application/pdf",
                     "data": data_b64,
@@ -188,7 +263,7 @@ async def _fetch_url_as_attachment(url: str) -> dict | None:
                 }
 
             # HTML / XHTML / anything textual → clean to plain text
-            cleaned = _clean_html_to_text(r.content, source_url=url)
+            cleaned = _clean_html_to_text(r.content, source_url=resolved_url)
             data_b64 = base64.b64encode(cleaned.encode("utf-8")).decode("utf-8")
             # Normalize filename to .txt so the existing pipeline routes it
             # through the TEXT_TYPES inlining path.
@@ -197,7 +272,7 @@ async def _fetch_url_as_attachment(url: str) -> dict | None:
             else:
                 filename = filename + ".txt"
             logger.info(
-                f"[url-fetch] HTML {url} → {len(r.content):,}B raw → "
+                f"[url-fetch] HTML {resolved_url} → {len(r.content):,}B raw → "
                 f"{len(cleaned):,} chars cleaned"
             )
             return {
@@ -1523,6 +1598,10 @@ async def debug_postprocess_version():
         # cgi-bin/browse-edgar URLs in the message and we fetch + clean
         # the HTML server-side. Eliminates the print-to-PDF friction.
         "flagship_v25_url_fetcher": True,
+        # v2.5.1 — auto-traverses search-edgar URLs through the filing
+        # index page to the main filing body. Lets analysts paste search
+        # URLs directly without clicking into the document first.
+        "flagship_v251_url_auto_traverse": True,
     }
 
 
