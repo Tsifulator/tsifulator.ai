@@ -129,8 +129,15 @@ async def startup_create_tables():
     except Exception as e:
         logger.info(json.dumps({"event": "startup_table_check_error", "error": str(e)}))
 
+LANDING_PAGE_PATH = Path(__file__).parent / "static" / "index.html"
+
 @app.get("/")
-def health_check():
+async def root(request: Request):
+    """Serve landing page for browsers, JSON health check for API clients."""
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept:
+        if LANDING_PAGE_PATH.exists():
+            return FileResponse(LANDING_PAGE_PATH, media_type="text/html")
     return {
         "status": "Tsifulator.ai is running",
         "version": "0.3.0",
