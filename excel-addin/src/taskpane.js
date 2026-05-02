@@ -3796,12 +3796,17 @@ async function handleBuildComps() {
 
     // Inject into Excel
     await Excel.run(async (ctx) => {
-      // Create a new sheet (or use existing with same name)
+      // Create a new sheet (or reuse existing with same name)
+      // Office.js proxies don't throw until ctx.sync() — must sync inside try
       let sheet;
       try {
         sheet = ctx.workbook.worksheets.getItem(sheet_name);
+        sheet.load("name");
+        await ctx.sync();
+        // Sheet exists — clear it for fresh data
         sheet.getRange().clear();
       } catch (_) {
+        // Sheet doesn't exist — create it
         sheet = ctx.workbook.worksheets.add(sheet_name);
       }
       sheet.activate();
