@@ -479,13 +479,13 @@ async def build_comp_payload(tickers: list[str], title: str = None) -> dict:
     from datetime import datetime
     from services.fmp import get_fundamentals as fmp_get
     from services.yfinance_service import get_fundamentals as yf_get
-    from services.polygon import get_stocks_batch
+    from routes.terminal import _build_quote
 
     upper = [t.upper() for t in tickers]
 
-    # 1. Prices from Polygon
-    mkt_list = await get_stocks_batch(upper)
-    mkt = {m["ticker"]: m for m in mkt_list if not m.get("error")}
+    # 1. Prices from terminal's cached Polygon layer (shares 5-min cache)
+    quotes = await asyncio.gather(*[_build_quote(t) for t in upper])
+    mkt = {q["ticker"]: q for q in quotes if q.get("price", 0) > 0}
 
     # 2. Fundamentals (yfinance primary, FMP fallback)
     async def get_fund(ticker):

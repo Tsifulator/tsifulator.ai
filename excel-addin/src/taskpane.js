@@ -258,6 +258,12 @@ function showChatScreen(user) {
     undoBtn.addEventListener("click", handleUndo);
   }
 
+  // Build Comps — PRIMARY action: ticker → inject comp table into sheet
+  const buildCompsBtn = document.getElementById("build-comps-btn");
+  if (buildCompsBtn) {
+    buildCompsBtn.addEventListener("click", handleBuildComps);
+  }
+
   // IB Format button
   const ibBtn = document.getElementById("ib-format-btn");
   if (ibBtn) {
@@ -1098,6 +1104,22 @@ async function handleSubmit() {
   appendMessage("user", message, images);
   setStatus("Reading workbook...");
   input.style.height = "auto";
+
+  // Detect "build comps / comp table / comps for NVDA" intent
+  const compPattern = /\b(build|make|create|generate|run)\b.{0,20}\b(comp|comps|comp table|trading comp)\b|\b(comp|comps|comp table|trading comp)\b.{0,20}\b(for|on|of)\b/i;
+  const tickerInMsg = message.match(/\b([A-Z]{2,5})\b/g);
+  if (compPattern.test(message) && tickerInMsg && tickerInMsg.length >= 1) {
+    // Hijack the input and run Build Comps directly
+    const tickersFromMsg = tickerInMsg.filter(t => !["FOR","THE","AND","NOT","ALL","ARE","THIS","COMP","COMPS","BUILD","MAKE","CREATE","RUN","TABLE","TRADING"].includes(t));
+    if (tickersFromMsg.length >= 1) {
+      input.value = tickersFromMsg.join(", ");
+      try {
+        await handleBuildComps();
+      } catch (_) { /* handleBuildComps shows its own error */ }
+      setSubmitEnabled(true);
+      return;
+    }
+  }
 
   // Detect "build deck / build slides / send to PPT / make a presentation" intent
   const deckPattern = /\b(build|make|create|generate|send|export|push)\b.{0,30}\b(deck|slides?|presentation|ppt|powerpoint|tearsheet)\b|\b(deck|slides?|tearsheet)\b.{0,20}\b(from|of|for)\b.{0,20}\b(comp|excel|this|sheet)/i;
@@ -3708,6 +3730,190 @@ async function saveUndoState(rangeAddress, sheetName) {
     });
   } catch (e) { /* silent — undo state capture is best-effort */ }
 }
+
+// ── Build Comps — inject comp table directly into the active sheet ───────────
+// The killer feature: type a ticker → get a full IB-quality comp table
+// written directly into a new sheet in your workbook. No downloads, no fuss.
+//
+// Flow:
+//   1. Prompt user for ticker(s) (or grab from chat input)
+//   2. Call /generate/comp-inject (auto-finds peers if 1 ticker)
+//   3. Create new sheet "Comps NVDA"
+//   4. Write title, headers, data rows, summary stats
+//   5. Apply IB formatting (bold headers, number formats, freeze panes)
+// ─────────────────────────────────────────────────────────────────────────────
+async function handleBuildComps() {
+  const btn = document.getElementById("build-comps-btn");
+
+  // Get tickers from chat input
+  const inputEl = document.getElementById("user-input");
+  let rawInput = (inputEl?.value || "").trim();
+
+  // If input is empty, focus the input and show hint
+  if (!rawInput) {
+    if (inputEl) {
+      inputEl.placeholder = "Type ticker(s) here → e.g. NVDA or NVDA, AMD, INTC";
+      inputEl.focus();
+    }
+    showToast("Type a ticker in the input box, then click Build Comps", "info", 3000);
+    return;
+  }
+
+  // Parse tickers from the input
+  const tickers = rawInput
+    .toUpperCase()
+    .replace(/[^A-Z,\s]/g, "")
+    .split(/[\s,]+/)
+    .filter(t => t.length >= 1 && t.length <= 5);
+
+  if (!tickers.length) {
+    showToast("Enter at least one ticker (e.g. NVDA)", "error", 3000);
+    return;
+  }
+
+  // Clear the input
+  if (inputEl) inputEl.value = "";
+
+  // Disable button + show progress
+  if (btn) { btn.disabled = true; btn.textContent = "Building..."; }
+  setStatus(`Building comps for ${tickers.join(", ")}...`);
+
+  try {
+    // Call the backend
+    const resp = await fetch(`${BACKEND_URL}/generate/comp-inject`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tickers }),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+
+    const data = await resp.json();
+    const { title, sheet_name, date, headers, rows, stats, count } = data;
+
+    // Inject into Excel
+    await Excel.run(async (ctx) => {
+      // Create a new sheet (or use existing with same name)
+      let sheet;
+      try {
+        sheet = ctx.workbook.worksheets.getItem(sheet_name);
+        sheet.getRange().clear();
+      } catch (_) {
+        sheet = ctx.workbook.worksheets.add(sheet_name);
+      }
+      sheet.activate();
+
+      // Row 1: Title
+      const titleCell = sheet.getRange("A1");
+      titleCell.values = [[title]];
+      titleCell.format.font.bold = true;
+      titleCell.format.font.size = 14;
+
+      // Row 2: Date + currency
+      const dateCell = sheet.getRange("A2");
+      dateCell.values = [[date + " | USD ($M unless noted)"]];
+      dateCell.format.font.size = 10;
+      dateCell.format.font.color = "#64748B";
+
+      // Row 4: Headers
+      const headerRange = sheet.getRangeByIndexes(3, 0, 1, headers.length);
+      headerRange.values = [headers];
+      headerRange.format.font.bold = true;
+      headerRange.format.font.size = 11;
+      headerRange.format.fill.color = "#1E293B";
+      headerRange.format.font.color = "#FFFFFF";
+      headerRange.format.borders.getItem("EdgeBottom").style = "Continuous";
+      headerRange.format.borders.getItem("EdgeBottom").color = "#0D5EAF";
+
+      // Rows 5+: Data
+      if (rows.length > 0) {
+        const dataRange = sheet.getRangeByIndexes(4, 0, rows.length, headers.length);
+        dataRange.values = rows;
+        dataRange.format.font.size = 11;
+
+        // Alternating row shading
+        for (let i = 0; i < rows.length; i++) {
+          if (i % 2 === 1) {
+            const rowRange = sheet.getRangeByIndexes(4 + i, 0, 1, headers.length);
+            rowRange.format.fill.color = "#F8FAFC";
+          }
+        }
+
+        // Ticker column bold
+        const tickerCol = sheet.getRangeByIndexes(4, 1, rows.length, 1);
+        tickerCol.format.font.bold = true;
+        tickerCol.format.font.color = "#0D5EAF";
+      }
+
+      // Separator row before stats
+      const sepRow = 4 + rows.length;
+      const sepRange = sheet.getRangeByIndexes(sepRow, 0, 1, headers.length);
+      sepRange.format.borders.getItem("EdgeTop").style = "Continuous";
+      sepRange.format.borders.getItem("EdgeTop").color = "#334155";
+
+      // Stats rows (High/Low/Median/Mean)
+      if (stats.length > 0) {
+        const statsStart = sepRow + 1;
+        const statsRange = sheet.getRangeByIndexes(statsStart, 0, stats.length, headers.length);
+        statsRange.values = stats;
+        statsRange.format.font.size = 11;
+        statsRange.format.font.italic = true;
+        statsRange.format.font.color = "#475569";
+
+        // Bold the Median row
+        const medianRange = sheet.getRangeByIndexes(statsStart + 2, 0, 1, headers.length);
+        medianRange.format.font.bold = true;
+        medianRange.format.font.italic = false;
+        medianRange.format.font.color = "#0D5EAF";
+      }
+
+      // Number formats for data columns
+      if (rows.length > 0) {
+        const nRows = rows.length + stats.length + 1; // data + separator + stats
+        // Price (col C, index 2)
+        sheet.getRangeByIndexes(4, 2, rows.length, 1).numberFormat = [["$#,##0.00"]];
+        // Mkt Cap, Net Debt, EV (cols D-F, index 3-5)
+        sheet.getRangeByIndexes(4, 3, rows.length, 3).numberFormat = [["$#,##0.0"]];
+        // Revenue, EBITDA (cols G-H, index 6-7)
+        sheet.getRangeByIndexes(4, 6, rows.length, 2).numberFormat = [["$#,##0"]];
+      }
+
+      // Autofit columns
+      const usedRange = sheet.getUsedRange();
+      usedRange.format.autofitColumns();
+      usedRange.format.autofitRows();
+
+      // Freeze panes: freeze above row 5 (headers stay visible)
+      sheet.freezePanes.freezeRows(4);
+
+      await ctx.sync();
+    });
+
+    // Success
+    if (btn) { btn.classList.add("success"); btn.textContent = `✓ ${count} comps`; }
+    setStatus(`Done — ${count} companies in "${sheet_name}"`);
+    showToast(`Comp table built: ${count} companies`, "success", 4000);
+
+    // Reset button after 3s
+    setTimeout(() => {
+      if (btn) {
+        btn.classList.remove("success");
+        btn.textContent = "Build Comps";
+        btn.disabled = false;
+      }
+    }, 3000);
+
+  } catch (err) {
+    console.error("[tsifl] Build Comps error:", err);
+    showToast("Build Comps failed: " + err.message, "error", 5000);
+    setStatus("Build failed — " + err.message);
+    if (btn) { btn.disabled = false; btn.textContent = "Build Comps"; }
+  }
+}
+
 
 // ── IB Format ─────────────────────────────────────────────────────────────────
 // One-click IB-standard formatting on the active sheet:

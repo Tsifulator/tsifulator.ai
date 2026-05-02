@@ -79,6 +79,106 @@ async def generate_comp_pptx(req: CompRequest):
     )
 
 
+# ── Inject — returns structured data for direct Excel injection ──────────────
+
+@router.post("/comp-inject")
+async def generate_comp_inject(req: CompRequest):
+    """
+    Build comp data and return it as a 2D array ready to write into Excel.
+    If only 1 ticker is given, auto-find peers first.
+    Returns: { title, sheet_name, headers, rows, stats, tickers_used }
+    """
+    from services.templates import build_comp_payload
+    from routes.terminal import terminal_peers
+
+    tickers = req.tickers or []
+    if not tickers:
+        raise HTTPException(400, "Provide at least one ticker")
+
+    # Auto-peer: if user gives 1 ticker, find peers automatically
+    if len(tickers) == 1:
+        primary = tickers[0].upper()
+        peer_data = await terminal_peers(primary)
+        peers = peer_data.get("peers", [])[:7]
+        tickers = [primary] + peers
+
+    payload = await build_comp_payload(tickers, title=req.title)
+    companies = payload.get("companies", [])
+
+    if not companies:
+        raise HTTPException(422, "Could not fetch data for any of the provided tickers. Try again in a minute (rate limit may have reset).")
+
+    # Build the 2D array for Excel injection
+    headers = [
+        "Company", "Ticker", "Price ($)", "Mkt Cap ($B)",
+        "Net Debt ($B)", "EV ($B)", "Revenue ($M)", "EBITDA ($M)",
+        "Gross %", "EBITDA %", "EV/Rev", "EV/EBITDA", "P/E"
+    ]
+
+    def _fmt(v, decimals=1):
+        if v is None:
+            return "N/A"
+        if isinstance(v, (int, float)):
+            return round(v, decimals)
+        return v
+
+    def _pct(v):
+        if v is None:
+            return "N/A"
+        return round(v * 100, 1)
+
+    rows = []
+    for c in sorted(companies, key=lambda x: x.get("market_cap") or 0, reverse=True):
+        rows.append([
+            c.get("name", c["ticker"]),
+            c["ticker"],
+            _fmt(c.get("share_price"), 2),
+            _fmt(c.get("market_cap"), 1),
+            _fmt(c.get("net_debt_B"), 1),
+            _fmt(c.get("ev"), 1),
+            _fmt(c.get("revenue_M"), 0),
+            _fmt(c.get("ebitda_M"), 0),
+            _pct(c.get("gross_margin")),
+            _pct(c.get("ebitda_margin")),
+            _fmt(c.get("ev_revenue"), 1),
+            _fmt(c.get("ev_ebitda"), 1),
+            _fmt(c.get("pe"), 1),
+        ])
+
+    # Summary stats (High / Low / Median / Mean) for numeric columns
+    import statistics
+    stat_cols = list(range(2, 13))  # columns C through M (0-indexed: 2-12)
+    stat_rows = []
+    for stat_name in ["High", "Low", "Median", "Mean"]:
+        row = [stat_name, "", "", "", "", "", "", "", "", "", "", "", ""]
+        for ci in stat_cols:
+            vals = [r[ci] for r in rows if isinstance(r[ci], (int, float))]
+            if not vals:
+                row[ci] = "N/A"
+            elif stat_name == "High":
+                row[ci] = round(max(vals), 1)
+            elif stat_name == "Low":
+                row[ci] = round(min(vals), 1)
+            elif stat_name == "Median":
+                row[ci] = round(statistics.median(vals), 1)
+            elif stat_name == "Mean":
+                row[ci] = round(statistics.mean(vals), 1)
+        stat_rows.append(row)
+
+    primary_ticker = (req.tickers[0] if req.tickers else tickers[0]).upper()
+
+    return {
+        "title":        payload.get("title", f"Trading Comps — {primary_ticker}"),
+        "sheet_name":   f"Comps {primary_ticker}",
+        "date":         payload.get("date", ""),
+        "headers":      headers,
+        "rows":         rows,
+        "stats":        stat_rows,
+        "tickers_used": [c["ticker"] for c in companies],
+        "count":        len(companies),
+    }
+
+
 # ── Combined — both files in one call (used by Build Deck) ───────────────────
 
 @router.post("/comp-package")

@@ -771,6 +771,38 @@ body {
   display: flex;
   gap: 6px;
   padding: 4px 0 2px 0;
+  flex-wrap: wrap;
+}
+
+/* ── Build Comps — PRIMARY action button ── */
+#build-comps-btn {
+  background: var(--blue);
+  border: 1px solid var(--blue);
+  color: #FFFFFF;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+#build-comps-btn:hover {
+  background: var(--blue-hover);
+  transform: translateY(-1px);
+}
+#build-comps-btn:active {
+  transform: translateY(0);
+}
+#build-comps-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+#build-comps-btn.success {
+  background: var(--green);
+  border-color: var(--green);
 }
 
 #ib-format-btn {
