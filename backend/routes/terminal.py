@@ -283,7 +283,7 @@ _PEER_MAP = {
     # Technology
     "3674": ["NVDA", "AMD", "INTC", "AVGO", "QCOM", "TXN", "MRVL", "MU", "ADI", "KLAC"],  # Semiconductors
     "7372": ["MSFT", "ORCL", "CRM", "ADBE", "NOW", "INTU", "SNPS", "CDNS", "PANW", "WDAY"],  # Software
-    "3571": ["AAPL", "HPQ", "DELL", "LNVGY"],  # Computers
+    "3571": ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "HPQ", "DELL", "LNVGY"],  # Computers / big tech
     "7370": ["GOOGL", "META", "SNAP", "PINS", "TTD", "RBLX"],  # Internet services
     "7374": ["AMZN", "SHOP", "MELI", "SE", "BABA", "JD", "PDD", "EBAY", "ETSY", "W"],  # E-commerce / data processing
     "3711": ["TSLA", "F", "GM", "TM", "HMC", "RIVN", "LCID", "NIO", "XPEV", "STLA"],  # Motor vehicles
@@ -343,18 +343,19 @@ async def terminal_peers(ticker: str):
     if sic and sic in _PEER_MAP:
         peers = [t for t in _PEER_MAP[sic] if t != ticker]
 
-    # 3. Try SIC prefix (first 2 digits = industry group)
-    if not peers and sic:
+    # 3. Try SIC prefix (first 2 digits = industry group) if < 5 peers
+    if len(peers) < 5 and sic:
         prefix = sic[:2]
+        existing = set(peers)
         for code, tickers_list in _PEER_MAP.items():
-            if code[:2] == prefix and ticker not in tickers_list:
-                peers.extend(t for t in tickers_list if t != ticker)
-        # Deduplicate while preserving order
-        seen = set()
-        peers = [t for t in peers if not (t in seen or seen.add(t))]
+            if code[:2] == prefix:
+                for t in tickers_list:
+                    if t != ticker and t not in existing:
+                        peers.append(t)
+                        existing.add(t)
 
-    # 4. Fallback: match by sector keyword in SIC description
-    if not peers and sic_desc:
+    # 4. Fallback: match by sector keyword in SIC description (if still < 5)
+    if len(peers) < 5 and sic_desc:
         for sector, tickers_list in _SECTOR_MAP.items():
             # Check if any sector keyword appears in SIC description
             keywords = {
