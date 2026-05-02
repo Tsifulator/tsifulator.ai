@@ -1290,6 +1290,8 @@ async function handleSubmit() {
       let applied = 0;
       let failed  = 0;
       let failedNames = [];
+      _excelBusy = true;   // block quick-action buttons during action loop
+      try {
       for (const action of allActions) {
         try {
           // Save undo state for write actions (Improvement 11)
@@ -1311,6 +1313,9 @@ async function handleSubmit() {
           failedNames.push(`${action.type}(${action.payload?.sheet || action.payload?.cell || action.payload?.range || ''}): ${err.message}`);
           console.error(`${action.type} failed:`, err.message, action.payload);
         }
+      }
+      } finally {
+        _excelBusy = false;
       }
       hideProgress();
       hideTypingIndicator();
@@ -1834,6 +1839,9 @@ function sanitizeFormula(val) {
  */
 function sanitize2D(arr) {
   return arr.map(row => row.map(v => {
+    // Mac Excel VBA error 13 (Type mismatch) triggers on null/undefined/NaN/Infinity
+    if (v === null || v === undefined) return "";
+    if (typeof v === "number" && !isFinite(v)) return "";   // NaN / Infinity
     const f = sanitizeFormula(v);
     if (typeof f === "string" && !f.startsWith("=")) return sanitizeCurrencyValue(f);
     return f;
@@ -1938,6 +1946,27 @@ const SHEET_AWARE_TYPES = new Set([
   "goal_seek", "run_toolpak", "create_data_table",
 ]);
 
+// Serialise all Excel mutations — prevents concurrent Excel.run calls on Mac
+// which are the primary cause of VBA runtime error 13 (Type mismatch).
+let _excelActionQueue = Promise.resolve();
+function _serialised(fn) {
+  _excelActionQueue = _excelActionQueue.then(() => fn()).catch(() => {});
+  return _excelActionQueue;
+}
+
+// Global "Excel is busy" guard for quick-action buttons (IB Format, Build Deck, Export).
+// Prevents them from firing while the main action loop is running, which is the
+// second most common trigger for VBA error 13 on Mac.
+let _excelBusy = false;
+function _guardedExcelOp(label, fn) {
+  if (_excelBusy) {
+    showToast(`⏳ Still running — please wait`, 2500);
+    return Promise.resolve();
+  }
+  _excelBusy = true;
+  return Promise.resolve().then(fn).finally(() => { _excelBusy = false; });
+}
+
 async function executeAction(action) {
   const type = action.type;
   // Auto-inject last navigated sheet so write actions land on the right sheet
@@ -2039,7 +2068,7 @@ async function executeAction(action) {
       if (isFormula) sized.formulas = padded;
       else           sized.values   = padded;
 
-      _applyFormat(sized, payload);
+      _applyFormat(sized, payload, rows, cols);
       await ctx.sync();
     });
   }
@@ -3158,7 +3187,7 @@ function _localeSafeFmt(fmt) {
 
 // ── Format helper (shared by write_cell, write_range, format_range) ──────────
 
-function _applyFormat(range, p) {
+function _applyFormat(range, p, knownRows, knownCols) {
   if (p.bold        !== undefined) range.format.font.bold       = p.bold;
   if (p.italic      !== undefined) range.format.font.italic     = p.italic;
   if (p.color)                     range.format.fill.color      = p.color;
@@ -3179,8 +3208,9 @@ function _applyFormat(range, p) {
         typeof p.number_format === "string" ? p.number_format : null
       ) || p.number_format;
       if (typeof fmtStr === "string") {
-        const rows = range.rowCount || 1;
-        const cols = range.columnCount || 1;
+        // Use caller-supplied dims first, then proxy (may be 0 if not loaded), then 1
+        const rows = (knownRows > 0 ? knownRows : null) || range.rowCount || 1;
+        const cols = (knownCols > 0 ? knownCols : null) || range.columnCount || 1;
         range.numberFormat = Array.from({ length: rows }, () =>
           Array.from({ length: cols }, () => fmtStr)
         );
@@ -3688,6 +3718,7 @@ async function saveUndoState(rangeAddress, sheetName) {
 //   • 0.0% on margin/growth cols, 0.0x on multiple cols
 // ─────────────────────────────────────────────────────────────────────────────
 async function handleIBFormat() {
+  if (_excelBusy) { showToast("⏳ Still running — please wait", 2500); return; }
   const btn = document.getElementById("ib-format-btn");
   if (btn) { btn.classList.add("running"); btn.textContent = "⚡ Formatting..."; }
 
@@ -3782,6 +3813,7 @@ function _extractTickersFromValues(values) {
 }
 
 async function handleBuildDeck() {
+  if (_excelBusy) { showToast("⏳ Still running — please wait", 2500); return; }
   const btn = document.getElementById("build-deck-btn");
   if (btn) { btn.disabled = true; btn.textContent = "⏳ Building..."; }
   setStatus("Reading comp...");
