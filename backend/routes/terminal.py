@@ -79,6 +79,11 @@ async def terminal_history(ticker: str, period: str = "1y", interval: str = "1d"
     interval: 1m | 5m | 15m | 1h | 1d | 1wk
     """
     ticker = ticker.upper().strip()
+    # Whitelist periods/intervals to prevent abuse
+    if period not in ("1d","5d","1mo","3mo","6mo","1y","2y","5y","max"):
+        period = "1y"
+    if interval not in ("1m","5m","15m","1h","1d","1wk","1mo"):
+        interval = "1d"
     try:
         import yfinance as yf
         import asyncio

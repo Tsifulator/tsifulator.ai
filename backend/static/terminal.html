@@ -108,23 +108,21 @@
     .watch-x:hover { color: var(--red); }
     .up { color: var(--green); }
     .dn { color: var(--red); }
-    #watchlist-actions {
-      border-top: 1px solid var(--border); display: flex; flex-direction: column;
-    }
     #watchlist-add {
-      padding: 6px 12px; font-size: 11px; color: var(--muted);
-      cursor: pointer; text-align: center; transition: color 0.1s;
+      padding: 8px 12px; border-top: 1px solid var(--border);
+      font-size: 11px; color: var(--muted); cursor: pointer;
+      text-align: center; transition: color 0.1s;
     }
     #watchlist-add:hover { color: var(--accent); }
     #build-comp-btn {
-      margin: 6px 10px 10px; padding: 8px 10px; background: var(--navy);
-      border: 1px solid var(--blue); color: white; font-family: inherit;
-      font-size: 12px; font-weight: 700; border-radius: 4px; cursor: pointer;
-      letter-spacing: 0.5px; transition: all 0.15s;
+      padding: 6px 14px; background: var(--green); border: 1px solid var(--green);
+      color: #0B0E13; font-family: inherit; font-size: 12px; font-weight: 700;
+      border-radius: 4px; cursor: pointer; white-space: nowrap;
+      letter-spacing: 0.3px; transition: all 0.15s;
     }
-    #build-comp-btn:hover { background: var(--blue); }
+    #build-comp-btn:hover { background: #00E0A0; border-color: #00E0A0; }
     #build-comp-btn:disabled { opacity: 0.4; cursor: default; }
-    #build-comp-btn.success { background: var(--green); border-color: var(--green); }
+    #build-comp-btn.success { background: var(--accent); border-color: var(--accent); }
 
     /* ── CENTER PANEL ── */
     #center { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -210,12 +208,14 @@
   </div>
 
   <div id="period-btns">
-    <button class="period-btn" data-p="1d"  data-i="5m">1D</button>
     <button class="period-btn" data-p="5d"  data-i="15m">5D</button>
+    <button class="period-btn" data-p="1mo" data-i="1d">1M</button>
+    <button class="period-btn" data-p="6mo" data-i="1d">6M</button>
     <button class="period-btn active" data-p="1y"  data-i="1d">1Y</button>
     <button class="period-btn" data-p="5y"  data-i="1wk">5Y</button>
   </div>
 
+  <button id="build-comp-btn" title="Build comp table + PPT from watchlist tickers">⚡ Build Comp</button>
   <button id="send-excel-btn" disabled>📊 Send to Excel</button>
 </div>
 
@@ -226,10 +226,7 @@
   <div id="watchlist">
     <div id="watchlist-header">Watchlist</div>
     <div id="watchlist-list"></div>
-    <div id="watchlist-actions">
-      <div id="watchlist-add">+ Add ticker</div>
-      <button id="build-comp-btn" title="Build comp table + PPT from watchlist tickers">⚡ Build Comp</button>
-    </div>
+    <div id="watchlist-add">+ Add ticker</div>
   </div>
 
   <!-- CENTER -->
@@ -301,7 +298,7 @@ let currentTicker = null;
 let chart = null;
 let candleSeries = null;
 let volumeSeries = null;
-let currentPeriod = "1y";
+let currentPeriod   = "1y";
 let currentInterval = "1d";
 let watchlist = JSON.parse(localStorage.getItem("tsifl_watchlist") || '["AAPL","MSFT","GOOGL","META"]');
 let searchTimeout = null;
@@ -405,11 +402,17 @@ async function loadTicker(ticker) {
     set("s-sector",   quoteRes.sector   || "—");
     set("s-industry", quoteRes.industry || "—");
 
-    // Chart
-    if (histRes.bars && histRes.bars.length) {
-      candleSeries.setData(histRes.bars);
-      // Volume bars — colored by candle direction
-      volumeSeries.setData(histRes.bars.map(b => ({
+    // Chart — if no bars (weekend, holiday), auto-fallback to 1Y
+    let bars = histRes.bars || [];
+    if (bars.length === 0 && currentPeriod !== "1y") {
+      try {
+        const fb = await fetch(`${API}/terminal/history/${ticker}?period=1y&interval=1d`).then(r => r.json());
+        bars = fb.bars || [];
+      } catch(_) {}
+    }
+    if (bars.length) {
+      candleSeries.setData(bars);
+      volumeSeries.setData(bars.map(b => ({
         time:  b.time,
         value: b.volume,
         color: b.close >= b.open ? "rgba(0,196,140,0.2)" : "rgba(255,71,87,0.2)",
