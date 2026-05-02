@@ -273,3 +273,115 @@ async def terminal_search(query: str):
         ]}
     except Exception:
         return {"results": []}
+
+
+# ── Peer suggestion ──────────────────────────────────────────────────────────
+
+# Curated peer groups by SIC code prefix → well-known tickers
+# This gives instant, high-quality peers without burning API calls
+_PEER_MAP = {
+    # Technology
+    "3674": ["NVDA", "AMD", "INTC", "AVGO", "QCOM", "TXN", "MRVL", "MU", "ADI", "KLAC"],  # Semiconductors
+    "7372": ["MSFT", "ORCL", "CRM", "ADBE", "NOW", "INTU", "SNPS", "CDNS", "PANW", "WDAY"],  # Software
+    "3571": ["AAPL", "HPQ", "DELL", "LNVGY"],  # Computers
+    "7370": ["GOOGL", "META", "SNAP", "PINS", "TTD", "RBLX"],  # Internet services
+    "7374": ["AMZN", "SHOP", "MELI", "SE", "BABA", "JD", "PDD", "EBAY", "ETSY", "W"],  # E-commerce / data processing
+    "3711": ["TSLA", "F", "GM", "TM", "HMC", "RIVN", "LCID", "NIO", "XPEV", "STLA"],  # Motor vehicles
+    # Finance
+    "6022": ["JPM", "BAC", "WFC", "C", "USB", "PNC", "TFC", "FITB", "KEY", "CFG"],  # Banks
+    "6199": ["GS", "MS", "SCHW", "RJF", "IBKR", "LPLA", "EVR", "PJT", "MC", "LAZ"],  # Investment banks
+    "6311": ["BLK", "BX", "KKR", "APO", "ARES", "CG", "OWL", "BAM", "TPG", "HLNE"],  # Asset management
+    "6321": ["UNH", "CI", "ELV", "HUM", "CNC", "MOH", "OSCR"],  # Health insurance
+    # Healthcare
+    "2836": ["LLY", "JNJ", "PFE", "MRK", "ABBV", "BMY", "AMGN", "GILD", "REGN", "VRTX"],  # Pharma
+    "3841": ["ABT", "MDT", "SYK", "BSX", "EW", "ISRG", "DXCM", "HOLX", "ALGN"],  # Medical devices
+    # Consumer
+    "5912": ["WMT", "COST", "TGT", "DG", "DLTR", "KR", "ACI"],  # Retail
+    "5812": ["MCD", "SBUX", "CMG", "YUM", "DPZ", "QSR", "WING", "CAVA"],  # Restaurants
+    "2080": ["KO", "PEP", "MNST", "CELH", "KDP"],  # Beverages
+    # Energy
+    "1311": ["XOM", "CVX", "COP", "EOG", "PXD", "DVN", "FANG", "OXY", "MPC", "VLO"],  # Oil & gas
+    # Industrials
+    "3721": ["BA", "LMT", "RTX", "NOC", "GD", "LHX", "TDG", "HWM", "HEI"],  # Aerospace
+    "4512": ["DAL", "UAL", "LUV", "AAL", "ALK", "JBLU", "SAVE"],  # Airlines
+    # Media / Streaming
+    "7812": ["NFLX", "DIS", "WBD", "PARA", "CMCSA", "FOX"],  # Entertainment
+}
+
+# Broader sector grouping for when exact SIC match isn't found
+_SECTOR_MAP = {
+    "technology":    ["AAPL", "MSFT", "GOOGL", "META", "AMZN", "NVDA", "AVGO", "CRM", "ORCL", "ADBE", "AMD", "INTC", "QCOM", "NOW", "INTU"],
+    "financials":    ["JPM", "BAC", "GS", "MS", "WFC", "BLK", "BX", "C", "SCHW", "USB", "PNC", "AXP", "COF", "MMC"],
+    "healthcare":    ["LLY", "UNH", "JNJ", "MRK", "ABBV", "PFE", "TMO", "ABT", "AMGN", "GILD", "ISRG", "VRTX", "REGN", "BSX"],
+    "consumer":      ["WMT", "COST", "MCD", "NKE", "SBUX", "TGT", "HD", "LOW", "TJX", "CMG", "YUM", "KO", "PEP", "PG", "CL"],
+    "energy":        ["XOM", "CVX", "COP", "EOG", "SLB", "OXY", "MPC", "VLO", "PSX", "DVN", "FANG", "HAL", "BKR"],
+    "industrials":   ["CAT", "DE", "GE", "HON", "UPS", "BA", "LMT", "RTX", "UNP", "MMM", "GD", "NOC", "WM", "ETN"],
+    "real_estate":   ["PLD", "AMT", "EQIX", "SPG", "O", "DLR", "PSA", "WELL", "AVB", "EQR"],
+    "communication": ["GOOGL", "META", "NFLX", "DIS", "CMCSA", "T", "VZ", "TMUS", "CHTR"],
+}
+
+
+@router.get("/peers/{ticker}")
+async def terminal_peers(ticker: str):
+    """
+    Suggest peer companies for a given ticker.
+    Uses SIC code matching + curated peer groups.
+    Returns 6-10 tickers in the same industry/sector.
+    """
+    ticker = ticker.upper().strip()
+
+    # 1. Get the target company's SIC code from Polygon reference (cached)
+    ref_data = await _polygon_get(f"/v3/reference/tickers/{ticker}")
+    ref = ref_data.get("results", {})
+    sic = ref.get("sic_code", "")
+    sic_desc = ref.get("sic_description", "").lower()
+    name = ref.get("name", ticker)
+
+    peers = []
+
+    # 2. Try exact SIC code match in curated map
+    if sic and sic in _PEER_MAP:
+        peers = [t for t in _PEER_MAP[sic] if t != ticker]
+
+    # 3. Try SIC prefix (first 2 digits = industry group)
+    if not peers and sic:
+        prefix = sic[:2]
+        for code, tickers_list in _PEER_MAP.items():
+            if code[:2] == prefix and ticker not in tickers_list:
+                peers.extend(t for t in tickers_list if t != ticker)
+        # Deduplicate while preserving order
+        seen = set()
+        peers = [t for t in peers if not (t in seen or seen.add(t))]
+
+    # 4. Fallback: match by sector keyword in SIC description
+    if not peers and sic_desc:
+        for sector, tickers_list in _SECTOR_MAP.items():
+            # Check if any sector keyword appears in SIC description
+            keywords = {
+                "technology": ["computer", "software", "semiconductor", "electronic", "data processing"],
+                "financials": ["bank", "financ", "invest", "insurance", "security"],
+                "healthcare": ["pharma", "medical", "health", "biotech", "drug"],
+                "consumer":   ["retail", "food", "restaurant", "beverage", "apparel"],
+                "energy":     ["oil", "gas", "petrol", "energy", "mining"],
+                "industrials":["manufact", "aerospace", "defense", "transport", "vehicle"],
+                "communication": ["broadcast", "telecom", "motion picture", "entertainment"],
+            }
+            for kw in keywords.get(sector, []):
+                if kw in sic_desc:
+                    peers = [t for t in tickers_list if t != ticker]
+                    break
+            if peers:
+                break
+
+    # 5. Last resort: mega-cap tech (most common use case)
+    if not peers:
+        peers = [t for t in ["AAPL", "MSFT", "GOOGL", "META", "AMZN", "NVDA"]
+                 if t != ticker]
+
+    return {
+        "ticker":   ticker,
+        "name":     name,
+        "sic_code": sic,
+        "sic_desc": ref.get("sic_description", ""),
+        "peers":    peers[:10],
+    }

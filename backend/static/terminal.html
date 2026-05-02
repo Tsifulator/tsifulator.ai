@@ -114,6 +114,15 @@
       text-align: center; transition: color 0.1s;
     }
     #watchlist-add:hover { color: var(--accent); }
+    #find-peers-btn {
+      padding: 6px 14px; background: var(--bg3); border: 1px solid var(--accent);
+      color: var(--accent); font-family: inherit; font-size: 12px; font-weight: 600;
+      border-radius: 4px; cursor: pointer; white-space: nowrap;
+      transition: all 0.15s;
+    }
+    #find-peers-btn:hover { background: var(--accent); color: #0B0E13; }
+    #find-peers-btn:disabled { opacity: 0.4; cursor: default; }
+
     #build-comp-btn {
       padding: 6px 14px; background: var(--green); border: 1px solid var(--green);
       color: #0B0E13; font-family: inherit; font-size: 12px; font-weight: 700;
@@ -215,8 +224,9 @@
     <button class="period-btn" data-p="5y"  data-i="1wk">5Y</button>
   </div>
 
+  <button id="find-peers-btn" disabled title="Find comparable companies for current ticker">Find Peers</button>
   <button id="build-comp-btn" title="Build comp table + PPT from watchlist tickers">⚡ Build Comp</button>
-  <button id="send-excel-btn" disabled>📊 Send to Excel</button>
+  <button id="send-excel-btn" disabled>Send to Excel</button>
 </div>
 
 <!-- ── MAIN ── -->
@@ -374,6 +384,7 @@ async function loadTicker(ticker) {
   document.getElementById("loading").style.display = "flex";
   document.getElementById("ticker-header").style.display = "flex";
   document.getElementById("send-excel-btn").disabled = false;
+  document.getElementById("find-peers-btn").disabled = false;
 
   // Highlight in watchlist
   document.querySelectorAll(".watch-item").forEach(el => {
@@ -651,6 +662,46 @@ document.getElementById("send-excel-btn").addEventListener("click", async () => 
     showToast("Could not send — is Excel open?");
   } finally {
     btn.textContent = "Send to Excel"; btn.disabled = false;
+  }
+});
+
+// ── Find Peers — auto-suggest comparable companies ────────────────────────
+document.getElementById("find-peers-btn").addEventListener("click", async () => {
+  if (!currentTicker) return;
+  const btn = document.getElementById("find-peers-btn");
+  btn.textContent = "Finding..."; btn.disabled = true;
+
+  try {
+    const res = await fetch(`${API}/terminal/peers/${currentTicker}`).then(r => r.json());
+    const peers = res.peers || [];
+    if (!peers.length) {
+      showToast("No peers found for " + currentTicker);
+      return;
+    }
+
+    // Replace watchlist with current ticker + peers
+    watchlist = [currentTicker, ...peers.filter(t => t !== currentTicker)];
+    localStorage.setItem("tsifl_watchlist", JSON.stringify(watchlist));
+    renderWatchlist();
+
+    showToast(`Found ${peers.length} peers for ${currentTicker} (${res.sic_desc || "same sector"})`, 4000);
+
+    // Batch-fetch prices for the new watchlist
+    try {
+      const tickers = watchlist.join(",");
+      const batchRes = await fetch(`${API}/terminal/batch-quotes?tickers=${tickers}`);
+      if (batchRes.ok) {
+        const data = await batchRes.json();
+        for (const [t, q] of Object.entries(data.results || {})) {
+          if (q.price > 0) updateWatchlistItem(t, q.price, q.change_pct || 0);
+        }
+      }
+    } catch(_) {}
+
+  } catch(e) {
+    showToast("Peer lookup failed");
+  } finally {
+    btn.textContent = "Find Peers"; btn.disabled = false;
   }
 });
 
