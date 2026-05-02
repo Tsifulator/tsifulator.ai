@@ -120,6 +120,10 @@ def _fetch_sync(ticker: str) -> dict:
             year = str(latest_col)[:4]
             period_label = f"FY {year}" if use_annual else f"LTM {year}"
 
+        # Market cap + price from info (fallback when Polygon is rate-limited)
+        mc_raw = info.get("marketCap")
+        price_raw = info.get("currentPrice") or info.get("previousClose") or info.get("regularMarketPrice")
+
         return {
             "ticker": ticker,
             "name": info.get("longName") or info.get("shortName") or ticker,
@@ -133,6 +137,9 @@ def _fetch_sync(ticker: str) -> dict:
             "total_debt_M": _to_M(total_debt),
             "cash_M": _to_M(cash),
             "net_debt_M": _to_M(net_debt),
+            # Bonus: price + market cap so templates can fall back if Polygon rate-limits
+            "market_cap_B": round(mc_raw / 1e9, 2) if mc_raw else None,
+            "price": round(float(price_raw), 2) if price_raw else None,
         }
 
     except Exception as e:

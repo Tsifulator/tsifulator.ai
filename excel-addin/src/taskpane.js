@@ -3771,7 +3771,8 @@ function _extractTickersFromValues(values) {
     if (tickerCol !== -1) {
       const v = String(row[tickerCol] ?? "").trim().toUpperCase();
       // Valid ticker: 1-5 uppercase letters, not a label row, no duplicates
-      if (/^[A-Z]{1,5}$/.test(v) && !["MEDIAN","MEAN","AVG"].includes(v) && !seen.has(v)) {
+      const SKIP = ["MEDIAN","MEAN","AVG","EV","PE","LTM","NTM","USD","EUR","GBP","YOY","TTM","NA","N/A","NM"];
+      if (/^[A-Z]{1,5}$/.test(v) && !SKIP.includes(v) && !seen.has(v)) {
         seen.add(v);
         tickers.push(v);
       }

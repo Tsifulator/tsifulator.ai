@@ -529,9 +529,9 @@ async def build_comp_payload(tickers: list[str], title: str = None) -> dict:
         if f.get("error") and not m:
             continue  # no data at all — skip
 
-        # Price + market cap from Polygon
-        price     = _safe_float(m.get("price"))
-        mkt_cap_b = _safe_float(m.get("market_cap_B"))
+        # Price + market cap: Polygon primary, yfinance fallback (Polygon free tier rate-limits)
+        price     = _safe_float(m.get("price"))     or _safe_float(f.get("price"))
+        mkt_cap_b = _safe_float(m.get("market_cap_B")) or _safe_float(f.get("market_cap_B"))
 
         # Fundamentals — both FMP and yfinance use _ltm_M / _pct naming
         rev_m    = _safe_float(f.get("revenue_ltm_M"))

@@ -141,11 +141,17 @@ async def get_stock_data(ticker: str) -> dict:
 
 
 async def get_stocks_batch(tickers: list[str]) -> list[dict]:
-    """Fetch multiple tickers concurrently."""
+    """Fetch multiple tickers with semaphore (Polygon free tier = 5 req/min)."""
     if not tickers:
         return []
+    sem = asyncio.Semaphore(2)  # max 2 in-flight — avoids rate-limit on free tier
+
+    async def _guarded(t):
+        async with sem:
+            return await get_stock_data(t)
+
     results = await asyncio.gather(
-        *[get_stock_data(t) for t in tickers],
+        *[_guarded(t) for t in tickers],
         return_exceptions=True,
     )
     out = []
