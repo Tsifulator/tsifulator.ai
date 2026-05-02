@@ -7,6 +7,7 @@ All chat, memory, auth, and actions route through here.
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 import os
 import time
@@ -195,6 +196,11 @@ app.include_router(calendar.router, prefix="/calendar")
 app.include_router(computer_use.router)
 app.include_router(billing.router, prefix="/billing")
 app.include_router(generate.router, prefix="/generate")
+
+# --- Add-in static files (production build served at /addin/*) ---------------
+_ADDIN_DIR = Path(__file__).parent / "static" / "addin"
+if _ADDIN_DIR.exists():
+    app.mount("/addin", StaticFiles(directory=str(_ADDIN_DIR), html=True), name="addin")
 
 # --- Market Data (Polygon.io) ---
 from pydantic import BaseModel as _BaseModel
