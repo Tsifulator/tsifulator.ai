@@ -300,7 +300,8 @@ let candleSeries = null;
 let volumeSeries = null;
 let currentPeriod   = "1y";
 let currentInterval = "1d";
-let watchlist = JSON.parse(localStorage.getItem("tsifl_watchlist") || '["AAPL","MSFT","GOOGL","META","AMZN"]');
+const DEFAULT_WATCHLIST = ["AAPL","MSFT","GOOGL","META","AMZN","NVDA","JPM","TSLA"];
+let watchlist = JSON.parse(localStorage.getItem("tsifl_watchlist") || "null") || [...DEFAULT_WATCHLIST];
 let searchTimeout = null;
 let searchResults = [];
 let searchIdx = -1;
@@ -308,6 +309,11 @@ let searchIdx = -1;
 // ── Chart init ─────────────────────────────────────────────────────────────
 function initChart() {
   const wrap = document.getElementById("chart-wrap");
+  if (!wrap || wrap.clientWidth < 10) {
+    // Retry on next frame if layout not ready
+    requestAnimationFrame(initChart);
+    return;
+  }
   chart = LightweightCharts.createChart(document.getElementById("chart"), {
     layout: { background: { color: "#0B0E13" }, textColor: "#94A3B8" },
     grid: { vertLines: { color: "#1E2535" }, horzLines: { color: "#1E2535" } },
@@ -315,7 +321,7 @@ function initChart() {
     rightPriceScale: { borderColor: "#1E2535" },
     timeScale: { borderColor: "#1E2535", timeVisible: true },
     width: wrap.clientWidth - 1,
-    height: wrap.clientHeight,
+    height: wrap.clientHeight || 400,
   });
   candleSeries = chart.addCandlestickSeries({
     upColor: "#00C48C", downColor: "#FF4757",
@@ -324,22 +330,38 @@ function initChart() {
   });
   volumeSeries = chart.addHistogramSeries({
     priceFormat: { type: "volume" },
-    priceScaleId: "", // overlay on same pane
+    priceScaleId: "",
     color: "#1A6EFF30",
   });
   volumeSeries.priceScale().applyOptions({
-    scaleMargins: { top: 0.8, bottom: 0 }, // volume bars in bottom 20%
+    scaleMargins: { top: 0.8, bottom: 0 },
   });
-  // ResizeObserver is more reliable than window.resize for flex containers
+  // ResizeObserver — handles flex layout changes reliably
   const ro = new ResizeObserver(() => {
     const w = wrap.clientWidth - 1;
     const h = wrap.clientHeight;
-    if (w > 0 && h > 0) {
+    if (w > 50 && h > 50 && chart) {
       chart.applyOptions({ width: w, height: h });
     }
   });
   ro.observe(wrap);
 }
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function set(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+
+const fmtB   = (v) => v != null && v !== 0 ? `$${v.toFixed(1)}B` : "—";
+const fmtM   = (v) => v != null && v !== 0 ? `$${(v/1e3).toFixed(1)}B` : "—";
+const fmtPct = (v) => v != null ? `${v.toFixed(1)}%` : "—";
+const fmtVol = (v) => {
+  if (v == null || v === 0) return "—";
+  if (v >= 1e9) return `${(v/1e9).toFixed(1)}B`;
+  if (v >= 1e6) return `${(v/1e6).toFixed(1)}M`;
+  return `${(v/1e3).toFixed(0)}K`;
+};
 
 // ── Load ticker ────────────────────────────────────────────────────────────
 async function loadTicker(ticker) {
@@ -353,40 +375,40 @@ async function loadTicker(ticker) {
   document.getElementById("ticker-header").style.display = "flex";
   document.getElementById("send-excel-btn").disabled = false;
 
-  // Highlight watchlist
+  // Highlight in watchlist
   document.querySelectorAll(".watch-item").forEach(el => {
     el.classList.toggle("active", el.dataset.ticker === ticker);
   });
 
   try {
+    // Fire all 3 requests in parallel — backend caches Polygon calls
     const [quoteRes, fundRes, histRes] = await Promise.all([
-      fetch(`${API}/terminal/quote/${ticker}`).then(r => r.json()),
-      fetch(`${API}/terminal/fundamentals/${ticker}`).then(r => r.ok ? r.json() : {}),
-      fetch(`${API}/terminal/history/${ticker}?period=${currentPeriod}&interval=${currentInterval}`).then(r => r.json()),
+      fetch(`${API}/terminal/quote/${ticker}`).then(r => r.json()).catch(() => ({})),
+      fetch(`${API}/terminal/fundamentals/${ticker}`).then(r => r.ok ? r.json() : {}).catch(() => ({})),
+      fetch(`${API}/terminal/history/${ticker}?period=${currentPeriod}&interval=${currentInterval}`).then(r => r.json()).catch(() => ({bars:[]})),
     ]);
 
-    // Header
+    // ── Header ──
     document.getElementById("ticker-symbol").textContent = ticker;
     document.getElementById("ticker-name").textContent = quoteRes.name || "";
-    const price = quoteRes.price || 0;
-    const chg = quoteRes.change || 0;
+    const price  = quoteRes.price || 0;
+    const chg    = quoteRes.change || 0;
     const chgPct = quoteRes.change_pct || 0;
-    document.getElementById("ticker-price").textContent = `$${price.toFixed(2)}`;
+    document.getElementById("ticker-price").textContent = price > 0 ? `$${price.toFixed(2)}` : "—";
     const chgEl = document.getElementById("ticker-change");
-    chgEl.textContent = `${chg >= 0 ? "+" : ""}${chg.toFixed(2)}  (${chg >= 0 ? "+" : ""}${chgPct.toFixed(2)}%)`;
-    chgEl.className = chg >= 0 ? "up" : "dn";
+    if (price > 0) {
+      chgEl.textContent = `${chg >= 0 ? "+" : ""}${chg.toFixed(2)}  (${chg >= 0 ? "+" : ""}${chgPct.toFixed(2)}%)`;
+      chgEl.className = chg >= 0 ? "up" : "dn";
+    } else {
+      chgEl.textContent = ""; chgEl.className = "";
+    }
     document.getElementById("ticker-meta").textContent =
       [quoteRes.sector, quoteRes.industry].filter(Boolean).join("  ·  ");
 
-    // Stats panel
-    const fmtN = (v, dec=2) => v != null ? v.toFixed(dec) : "—";
-    const fmtB = (v) => v != null ? `$${v.toFixed(1)}B` : "—";
-    const fmtM = (v) => v != null ? `$${(v/1e3).toFixed(1)}B` : "—";
-    const fmtPct = (v) => v != null ? `${v.toFixed(1)}%` : "—";
-    const fmtVol = (v) => v != null ? (v >= 1e6 ? `${(v/1e6).toFixed(1)}M` : `${(v/1e3).toFixed(0)}K`) : "—";
-
-    // Compute 52W high/low + avg volume from chart bars (saves an API call)
+    // ── Stats panel ──
     let bars = histRes.bars || [];
+
+    // 52W high/low + avg volume from chart bars
     if (bars.length) {
       const lastBar = bars[bars.length - 1];
       set("s-open", `$${lastBar.open.toFixed(2)}`);
@@ -396,35 +418,42 @@ async function loadTicker(ticker) {
       set("s-52l", `$${Math.min(...lows).toFixed(2)}`);
       const totalVol = bars.reduce((s, b) => s + (b.volume || 0), 0);
       set("s-avgvol", fmtVol(Math.round(totalVol / bars.length)));
+    } else {
+      set("s-open", "—"); set("s-52h", "—"); set("s-52l", "—"); set("s-avgvol", "—");
     }
-    set("s-vol",   fmtVol(quoteRes.volume));
-    set("s-mc",    fmtB(quoteRes.market_cap_B));
 
-    // P/E and EPS — compute from fundamentals if quote doesn't have them
-    const ni_m  = fundRes.net_income_ltm_M;
-    const mcap  = quoteRes.market_cap_B;
-    const pe_computed = (mcap && ni_m && ni_m > 0) ? mcap * 1e3 / ni_m : null;
-    set("s-pe",    pe_computed != null ? pe_computed.toFixed(1) + "x" : "—");
-    set("s-eps",   "—"); // needs shares outstanding
+    set("s-vol", fmtVol(quoteRes.volume));
+    set("s-mc",  fmtB(quoteRes.market_cap_B));
 
-    const rev_m = fundRes.revenue_ltm_M;
+    // P/E computed from fundamentals + market cap
+    const ni_m = fundRes.net_income_ltm_M;
+    const mcap = quoteRes.market_cap_B;
+    const pe   = (mcap && ni_m && ni_m > 0) ? mcap * 1e3 / ni_m : null;
+    set("s-pe",  pe != null ? pe.toFixed(1) + "x" : "—");
+    // EPS = net income / shares
+    const shares = mcap && price > 0 ? (mcap * 1e9) / price : null;
+    const eps = (ni_m && shares) ? (ni_m * 1e6) / shares : null;
+    set("s-eps", eps != null ? `$${eps.toFixed(2)}` : "—");
+
+    const rev_m    = fundRes.revenue_ltm_M;
     const ebitda_m = fundRes.ebitda_ltm_M;
-    set("s-rev",   rev_m   != null ? fmtM(rev_m)   : "—");
-    set("s-ebitda",ebitda_m!= null ? fmtM(ebitda_m): "—");
+    set("s-rev",    rev_m    != null ? fmtM(rev_m)    : "—");
+    set("s-ebitda", ebitda_m != null ? fmtM(ebitda_m) : "—");
     set("s-gm",    fmtPct(fundRes.gross_margin_pct));
-    set("s-em",    rev_m && ebitda_m ? fmtPct(ebitda_m/rev_m*100) : "—");
+    set("s-em",    rev_m && ebitda_m ? fmtPct(ebitda_m / rev_m * 100) : "—");
     set("s-nm",    fmtPct(fundRes.operating_margin_pct));
     set("s-sector",   quoteRes.sector   || "—");
     set("s-industry", quoteRes.industry || "—");
 
-    // Chart — if no bars (weekend, holiday), auto-fallback to 1Y
+    // ── Chart ──
+    // If no bars for short period (weekend/holiday), auto-fallback to 1Y
     if (bars.length === 0 && currentPeriod !== "1y") {
       try {
         const fb = await fetch(`${API}/terminal/history/${ticker}?period=1y&interval=1d`).then(r => r.json());
         bars = fb.bars || [];
       } catch(_) {}
     }
-    if (bars.length) {
+    if (bars.length && chart) {
       candleSeries.setData(bars);
       volumeSeries.setData(bars.map(b => ({
         time:  b.time,
@@ -434,19 +463,15 @@ async function loadTicker(ticker) {
       chart.timeScale().fitContent();
     }
 
-    // Update watchlist prices
+    // Update watchlist change %
     updateWatchlistItem(ticker, price, chgPct);
 
   } catch(e) {
+    console.error("loadTicker error:", e);
     showToast("Failed to load " + ticker);
   } finally {
     document.getElementById("loading").style.display = "none";
   }
-}
-
-function set(id, val) {
-  const el = document.getElementById(id);
-  if (el) el.textContent = val;
 }
 
 // ── Period buttons ─────────────────────────────────────────────────────────
@@ -468,7 +493,7 @@ searchInput.addEventListener("input", () => {
   clearTimeout(searchTimeout);
   const q = searchInput.value.trim();
   if (!q) { searchDrop.style.display = "none"; return; }
-  searchTimeout = setTimeout(() => doSearch(q), 200);
+  searchTimeout = setTimeout(() => doSearch(q), 300);
 });
 
 async function doSearch(q) {
@@ -523,7 +548,7 @@ document.addEventListener("click", e => {
   }
 });
 
-// ── Keyboard shortcut: ⌘K focuses search ──────────────────────────────────
+// ── Keyboard shortcut: Cmd+K focuses search ───────────────────────────────
 document.addEventListener("keydown", e => {
   if ((e.metaKey || e.ctrlKey) && e.key === "k") {
     e.preventDefault();
@@ -538,11 +563,11 @@ function renderWatchlist() {
     <div class="watch-item${t === currentTicker ? " active" : ""}" data-ticker="${t}">
       <span class="watch-sym">${t}</span>
       <span class="watch-chg" id="wchg-${t}">—</span>
-      <span class="watch-x" data-rm="${t}">×</span>
+      <span class="watch-x" data-rm="${t}">&times;</span>
     </div>`).join("");
   list.querySelectorAll(".watch-item").forEach(el => {
     el.addEventListener("click", (e) => {
-      if (e.target.classList.contains("watch-x")) return; // handled by X
+      if (e.target.classList.contains("watch-x")) return;
       searchInput.value = el.dataset.ticker;
       loadTicker(el.dataset.ticker);
     });
@@ -556,7 +581,6 @@ function renderWatchlist() {
       renderWatchlist();
     });
   });
-  // Update comp btn count
   const compBtn = document.getElementById("build-comp-btn");
   if (compBtn) compBtn.textContent = `⚡ Build Comp (${watchlist.length})`;
 }
@@ -564,8 +588,10 @@ function renderWatchlist() {
 function updateWatchlistItem(ticker, price, chgPct) {
   const el = document.getElementById(`wchg-${ticker}`);
   if (!el) return;
-  el.textContent = `${chgPct >= 0 ? "+" : ""}${chgPct.toFixed(1)}%`;
-  el.className = "watch-chg " + (chgPct >= 0 ? "up" : "dn");
+  if (price > 0) {
+    el.textContent = `${chgPct >= 0 ? "+" : ""}${chgPct.toFixed(1)}%`;
+    el.className = "watch-chg " + (chgPct >= 0 ? "up" : "dn");
+  }
 }
 
 function maybeAddToWatchlist(ticker) {
@@ -585,7 +611,7 @@ document.getElementById("watchlist-add").addEventListener("click", () => {
 document.getElementById("send-excel-btn").addEventListener("click", async () => {
   if (!currentTicker) return;
   const btn = document.getElementById("send-excel-btn");
-  btn.textContent = "⏳ Sending..."; btn.disabled = true;
+  btn.textContent = "Sending..."; btn.disabled = true;
 
   try {
     const [q, f] = await Promise.all([
@@ -605,7 +631,6 @@ document.getElementById("send-excel-btn").addEventListener("click", async () => 
       pe:           q.pe,
     };
 
-    // Push via transfer endpoint — Excel add-in polls this and writes to sheet
     const BACKEND = "https://focused-solace-production-6839.up.railway.app";
     const resp = await fetch(`${BACKEND}/transfer/store`, {
       method: "POST",
@@ -621,25 +646,21 @@ document.getElementById("send-excel-btn").addEventListener("click", async () => 
       }),
     });
 
-    if (resp.ok) {
-      showToast(`✅ ${currentTicker} sent to Excel`);
-    } else {
-      showToast("⚠️ Make sure tsifl add-in is open in Excel");
-    }
+    showToast(resp.ok ? `Sent ${currentTicker} to Excel` : "Open tsifl add-in in Excel first");
   } catch(e) {
-    showToast("⚠️ Could not send — is Excel open?");
+    showToast("Could not send — is Excel open?");
   } finally {
-    btn.textContent = "📊 Send to Excel"; btn.disabled = false;
+    btn.textContent = "Send to Excel"; btn.disabled = false;
   }
 });
 
-// ── Build Comp — one click: watchlist → comp .xlsx + .pptx ────────────────
+// ── Build Comp — one click: watchlist -> comp .xlsx + .pptx ────────────────
 document.getElementById("build-comp-btn").addEventListener("click", async () => {
   if (watchlist.length < 2) { showToast("Add at least 2 tickers to watchlist"); return; }
 
   const btn = document.getElementById("build-comp-btn");
-  const tickers = watchlist.slice(0, 10); // max 10
-  btn.disabled = true; btn.textContent = "⏳ Building...";
+  const tickers = watchlist.slice(0, 10);
+  btn.disabled = true; btn.textContent = "Building...";
   showToast(`Building comp for ${tickers.join(", ")}...`, 5000);
 
   const BACKEND = "https://focused-solace-production-6839.up.railway.app";
@@ -647,43 +668,36 @@ document.getElementById("build-comp-btn").addEventListener("click", async () => 
   const body = JSON.stringify({ tickers, title });
 
   try {
-    // Fire both downloads in parallel
     const [xlsxRes, pptxRes] = await Promise.all([
       fetch(`${BACKEND}/generate/comp-table.xlsx`, { method: "POST", headers: {"Content-Type":"application/json"}, body }),
       fetch(`${BACKEND}/generate/comp-slide.pptx`, { method: "POST", headers: {"Content-Type":"application/json"}, body }),
     ]);
 
     let downloaded = 0;
-
-    if (xlsxRes.ok) {
-      const blob = await xlsxRes.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = `${title}.xlsx`; a.click();
-      URL.revokeObjectURL(url);
-      downloaded++;
-    }
-
-    if (pptxRes.ok) {
-      const blob = await pptxRes.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = `${title}.pptx`; a.click();
-      URL.revokeObjectURL(url);
-      downloaded++;
+    for (const [res, ext] of [[xlsxRes, "xlsx"], [pptxRes, "pptx"]]) {
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = `${title}.${ext}`; a.click();
+        URL.revokeObjectURL(url);
+        downloaded++;
+      }
     }
 
     if (downloaded === 2) {
-      btn.textContent = "✅ Done"; btn.classList.add("success");
-      showToast(`✅ Downloaded ${title}.xlsx + .pptx`);
+      btn.textContent = "Done!"; btn.classList.add("success");
+      showToast(`Downloaded ${title}.xlsx + .pptx`);
     } else {
-      showToast("⚠️ Partial download — check console");
+      showToast("Partial download — check console");
     }
   } catch(e) {
-    showToast("⚠️ Build failed: " + e.message);
+    showToast("Build failed: " + e.message);
   } finally {
     setTimeout(() => {
-      btn.disabled = false; btn.textContent = "⚡ Build Comp"; btn.classList.remove("success");
+      btn.disabled = false;
+      btn.textContent = `⚡ Build Comp (${watchlist.length})`;
+      btn.classList.remove("success");
     }, 3000);
   }
 });
@@ -692,35 +706,36 @@ document.getElementById("build-comp-btn").addEventListener("click", async () => 
 function showToast(msg, ms = 3000) {
   const t = document.getElementById("toast");
   t.textContent = msg; t.style.display = "block";
-  setTimeout(() => { t.style.display = "none"; }, ms);
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => { t.style.display = "none"; }, ms);
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 initChart();
 renderWatchlist();
 
-// Auto-load first watchlist item — this is the ONLY load on boot
-// (no watchlist bulk-refresh — Polygon free tier = 5 calls/min)
+// Load first ticker + batch-update all watchlist prices
 if (watchlist.length) {
   searchInput.value = watchlist[0];
   loadTicker(watchlist[0]);
-}
 
-// Lazy-load watchlist prices one by one after main ticker loads (staggered)
-setTimeout(async () => {
-  for (const t of watchlist.slice(0, 8)) {
-    if (t === watchlist[0]) continue; // already loaded above
+  // Batch-fetch all watchlist prices in ONE HTTP call (server-side cache)
+  setTimeout(async () => {
     try {
-      // Use a lightweight prev-close only (1 Polygon call, not full quote)
-      const r = await fetch(`${API}/terminal/quote/${t}`);
-      if (r.ok) {
-        const q = await r.json();
-        updateWatchlistItem(t, q.price, q.change_pct || 0);
+      const tickers = watchlist.join(",");
+      const res = await fetch(`${API}/terminal/batch-quotes?tickers=${tickers}`);
+      if (res.ok) {
+        const data = await res.json();
+        const quotes = data.results || {};
+        for (const [t, q] of Object.entries(quotes)) {
+          if (q.price > 0) {
+            updateWatchlistItem(t, q.price, q.change_pct || 0);
+          }
+        }
       }
     } catch(_) {}
-    await new Promise(r => setTimeout(r, 12000)); // 12s gap — stays under 5/min
-  }
-}, 5000); // start 5s after page load
+  }, 2000); // 2s after page load — gives main ticker time to populate cache
+}
 </script>
 </body>
 </html>
