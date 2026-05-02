@@ -389,8 +389,13 @@ async function loadTicker(ticker) {
     set("s-vol",   fmtVol(quoteRes.volume));
     set("s-avgvol",fmtVol(quoteRes.avg_volume));
     set("s-mc",    fmtB(quoteRes.market_cap_B));
-    set("s-pe",    quoteRes.pe != null ? quoteRes.pe.toFixed(1) + "x" : "—");
-    set("s-eps",   quoteRes.eps != null ? `$${quoteRes.eps.toFixed(2)}` : "—");
+
+    // P/E and EPS — compute from fundamentals if quote doesn't have them
+    const ni_m  = fundRes.net_income_ltm_M;
+    const mcap  = quoteRes.market_cap_B;
+    const pe_computed = (mcap && ni_m && ni_m > 0) ? mcap * 1e3 / ni_m : null;
+    set("s-pe",    pe_computed != null ? pe_computed.toFixed(1) + "x" : "—");
+    set("s-eps",   "—"); // needs shares outstanding
 
     const rev_m = fundRes.revenue_ltm_M;
     const ebitda_m = fundRes.ebitda_ltm_M;
