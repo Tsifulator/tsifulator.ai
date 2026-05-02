@@ -113,6 +113,19 @@ def _fetch_sync(ticker: str) -> dict:
 
         net_debt = (total_debt - cash) if total_debt is not None and cash is not None else None
 
+        # ── info-dict fallbacks (more reliable than parsing statement rows) ──
+        # yfinance info has ebitda, totalRevenue, grossProfits, netIncomeToCommon
+        # as trailing-twelve-month figures. Use them when statement parsing fails.
+        if revenue    is None: revenue     = _safe_float(info.get("totalRevenue"))
+        if gross_profit is None: gross_profit = _safe_float(info.get("grossProfits"))
+        if ebitda     is None: ebitda      = _safe_float(info.get("ebitda"))
+        if net_income is None: net_income  = _safe_float(info.get("netIncomeToCommon"))
+        if net_debt   is None:
+            td = _safe_float(info.get("totalDebt"))
+            ca = _safe_float(info.get("totalCash"))
+            if td is not None and ca is not None:
+                net_debt = td - ca
+
         # Period label
         period_label = "LTM" if not use_annual else f"FY {info.get('fiscalYearEnd', '')}"
         if fin is not None and not fin.empty:
