@@ -38,17 +38,11 @@ async def terminal_quote(ticker: str):
     ticker = ticker.upper().strip()
     import asyncio
 
-    # Fetch previous close + reference + 1Y bars ALL in parallel (big speed-up)
-    today  = datetime.utcnow()
-    yr_ago = today - timedelta(days=365)
+    # Only 2 Polygon calls (not 3) — 52W computed from chart bars in frontend
     prev_task = _polygon_get(f"/v2/aggs/ticker/{ticker}/prev", {"adjusted": "true"})
     ref_task  = _polygon_get(f"/v3/reference/tickers/{ticker}")
-    agg_task  = _polygon_get(
-        f"/v2/aggs/ticker/{ticker}/range/1/day/{yr_ago.strftime('%Y-%m-%d')}/{today.strftime('%Y-%m-%d')}",
-        {"adjusted": "true", "sort": "asc", "limit": "365"}
-    )
 
-    prev_data, ref_data, agg_data = await asyncio.gather(prev_task, ref_task, agg_task)
+    prev_data, ref_data = await asyncio.gather(prev_task, ref_task)
 
     # Previous close
     results = prev_data.get("results", [])
@@ -68,19 +62,6 @@ async def terminal_quote(ticker: str):
     name = ref.get("name", ticker)
     sic  = ref.get("sic_description", "")
 
-    # 52-week high/low + avg volume from the 1Y bars
-    week52_high = None
-    week52_low  = None
-    avg_volume  = None
-    agg_bars = agg_data.get("results", [])
-    if agg_bars:
-        highs = [b["h"] for b in agg_bars if "h" in b]
-        lows  = [b["l"] for b in agg_bars if "l" in b]
-        week52_high = round(max(highs), 2) if highs else None
-        week52_low  = round(min(lows), 2)  if lows  else None
-        vols = [b.get("v", 0) for b in agg_bars]
-        avg_volume = int(sum(vols) / len(vols)) if vols else None
-
     return {
         "ticker":       ticker,
         "name":         name,
@@ -89,11 +70,6 @@ async def terminal_quote(ticker: str):
         "change_pct":   round(((price - open_price) / open_price) * 100, 2) if open_price and open_price != 0 else 0,
         "market_cap_B": market_cap_b,
         "volume":       int(volume) if volume else None,
-        "avg_volume":   avg_volume,
-        "pe":           None,   # needs fundamentals — filled by frontend from /fundamentals
-        "eps":          None,
-        "week52_high":  week52_high,
-        "week52_low":   week52_low,
         "sector":       sic or None,
         "industry":     sic or None,
         "currency":     "USD",

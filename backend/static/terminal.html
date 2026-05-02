@@ -379,15 +379,19 @@ async function loadTicker(ticker) {
     const fmtPct = (v) => v != null ? `${v.toFixed(1)}%` : "—";
     const fmtVol = (v) => v != null ? (v >= 1e6 ? `${(v/1e6).toFixed(1)}M` : `${(v/1e3).toFixed(0)}K`) : "—";
 
-    // Open from last history bar
-    if (histRes.bars && histRes.bars.length) {
-      const lastBar = histRes.bars[histRes.bars.length - 1];
+    // Compute 52W high/low + avg volume from chart bars (saves an API call)
+    const bars = histRes.bars || [];
+    if (bars.length) {
+      const lastBar = bars[bars.length - 1];
       set("s-open", `$${lastBar.open.toFixed(2)}`);
+      const highs = bars.map(b => b.high);
+      const lows  = bars.map(b => b.low);
+      set("s-52h", `$${Math.max(...highs).toFixed(2)}`);
+      set("s-52l", `$${Math.min(...lows).toFixed(2)}`);
+      const totalVol = bars.reduce((s, b) => s + (b.volume || 0), 0);
+      set("s-avgvol", fmtVol(Math.round(totalVol / bars.length)));
     }
-    set("s-52h",   quoteRes.week52_high != null ? `$${quoteRes.week52_high.toFixed(2)}` : "—");
-    set("s-52l",   quoteRes.week52_low  != null ? `$${quoteRes.week52_low.toFixed(2)}`  : "—");
     set("s-vol",   fmtVol(quoteRes.volume));
-    set("s-avgvol",fmtVol(quoteRes.avg_volume));
     set("s-mc",    fmtB(quoteRes.market_cap_B));
 
     // P/E and EPS — compute from fundamentals if quote doesn't have them
@@ -690,21 +694,28 @@ function showToast(msg, ms = 3000) {
 initChart();
 renderWatchlist();
 
-// Load watchlist quotes in background
-(async () => {
-  for (const ticker of watchlist.slice(0, 8)) {
-    try {
-      const q = await fetch(`${API}/terminal/quote/${ticker}`).then(r => r.json());
-      updateWatchlistItem(ticker, q.price, q.change_pct || 0);
-    } catch(_) {}
-  }
-})();
-
-// Auto-load first watchlist item
+// Auto-load first watchlist item — this is the ONLY load on boot
+// (no watchlist bulk-refresh — Polygon free tier = 5 calls/min)
 if (watchlist.length) {
   searchInput.value = watchlist[0];
   loadTicker(watchlist[0]);
 }
+
+// Lazy-load watchlist prices one by one after main ticker loads (staggered)
+setTimeout(async () => {
+  for (const t of watchlist.slice(0, 8)) {
+    if (t === watchlist[0]) continue; // already loaded above
+    try {
+      // Use a lightweight prev-close only (1 Polygon call, not full quote)
+      const r = await fetch(`${API}/terminal/quote/${t}`);
+      if (r.ok) {
+        const q = await r.json();
+        updateWatchlistItem(t, q.price, q.change_pct || 0);
+      }
+    } catch(_) {}
+    await new Promise(r => setTimeout(r, 12000)); // 12s gap — stays under 5/min
+  }
+}, 5000); // start 5s after page load
 </script>
 </body>
 </html>
