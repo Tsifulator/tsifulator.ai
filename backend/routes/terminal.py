@@ -38,11 +38,17 @@ async def terminal_quote(ticker: str):
     ticker = ticker.upper().strip()
     import asyncio
 
-    # Fetch previous close + reference in parallel
+    # Fetch previous close + reference + 1Y bars ALL in parallel (big speed-up)
+    today  = datetime.utcnow()
+    yr_ago = today - timedelta(days=365)
     prev_task = _polygon_get(f"/v2/aggs/ticker/{ticker}/prev", {"adjusted": "true"})
     ref_task  = _polygon_get(f"/v3/reference/tickers/{ticker}")
+    agg_task  = _polygon_get(
+        f"/v2/aggs/ticker/{ticker}/range/1/day/{yr_ago.strftime('%Y-%m-%d')}/{today.strftime('%Y-%m-%d')}",
+        {"adjusted": "true", "sort": "asc", "limit": "365"}
+    )
 
-    prev_data, ref_data = await asyncio.gather(prev_task, ref_task)
+    prev_data, ref_data, agg_data = await asyncio.gather(prev_task, ref_task, agg_task)
 
     # Previous close
     results = prev_data.get("results", [])
@@ -50,7 +56,6 @@ async def terminal_quote(ticker: str):
     price      = bar.get("c", 0)
     open_price = bar.get("o", 0)
     volume     = bar.get("v", 0)
-    prev_close = bar.get("c", price)  # prev day close
 
     # Reference data
     ref = ref_data.get("results", {})
@@ -63,29 +68,18 @@ async def terminal_quote(ticker: str):
     name = ref.get("name", ticker)
     sic  = ref.get("sic_description", "")
 
-    # 52-week high/low from Polygon aggregate (1 year of daily bars, just min/max)
+    # 52-week high/low + avg volume from the 1Y bars
     week52_high = None
     week52_low  = None
-    try:
-        today = datetime.utcnow()
-        yr_ago = today - timedelta(days=365)
-        agg = await _polygon_get(
-            f"/v2/aggs/ticker/{ticker}/range/1/day/{yr_ago.strftime('%Y-%m-%d')}/{today.strftime('%Y-%m-%d')}",
-            {"adjusted": "true", "sort": "asc", "limit": "365"}
-        )
-        agg_bars = agg.get("results", [])
-        if agg_bars:
-            highs = [b["h"] for b in agg_bars if "h" in b]
-            lows  = [b["l"] for b in agg_bars if "l" in b]
-            week52_high = round(max(highs), 2) if highs else None
-            week52_low  = round(min(lows), 2)  if lows  else None
-            # Get avg volume from bars
-            vols = [b.get("v", 0) for b in agg_bars]
-            avg_volume = int(sum(vols) / len(vols)) if vols else None
-        else:
-            avg_volume = None
-    except Exception:
-        avg_volume = None
+    avg_volume  = None
+    agg_bars = agg_data.get("results", [])
+    if agg_bars:
+        highs = [b["h"] for b in agg_bars if "h" in b]
+        lows  = [b["l"] for b in agg_bars if "l" in b]
+        week52_high = round(max(highs), 2) if highs else None
+        week52_low  = round(min(lows), 2)  if lows  else None
+        vols = [b.get("v", 0) for b in agg_bars]
+        avg_volume = int(sum(vols) / len(vols)) if vols else None
 
     return {
         "ticker":       ticker,
