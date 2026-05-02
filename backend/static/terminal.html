@@ -99,15 +99,32 @@
     .watch-item:hover { background: var(--bg3); }
     .watch-item.active { background: var(--bg3); border-left: 2px solid var(--blue); }
     .watch-sym { font-weight: 700; font-size: 13px; }
-    .watch-chg { font-size: 11px; font-weight: 600; }
+    .watch-chg { font-size: 11px; font-weight: 600; flex: 1; text-align: right; }
+    .watch-x {
+      color: var(--muted); font-size: 14px; cursor: pointer; margin-left: 4px;
+      opacity: 0; transition: opacity 0.1s;
+    }
+    .watch-item:hover .watch-x { opacity: 1; }
+    .watch-x:hover { color: var(--red); }
     .up { color: var(--green); }
     .dn { color: var(--red); }
+    #watchlist-actions {
+      border-top: 1px solid var(--border); display: flex; flex-direction: column;
+    }
     #watchlist-add {
-      padding: 8px 12px; border-top: 1px solid var(--border);
-      font-size: 11px; color: var(--muted); cursor: pointer;
-      text-align: center; transition: color 0.1s;
+      padding: 6px 12px; font-size: 11px; color: var(--muted);
+      cursor: pointer; text-align: center; transition: color 0.1s;
     }
     #watchlist-add:hover { color: var(--accent); }
+    #build-comp-btn {
+      margin: 6px 10px 10px; padding: 8px 10px; background: var(--navy);
+      border: 1px solid var(--blue); color: white; font-family: inherit;
+      font-size: 12px; font-weight: 700; border-radius: 4px; cursor: pointer;
+      letter-spacing: 0.5px; transition: all 0.15s;
+    }
+    #build-comp-btn:hover { background: var(--blue); }
+    #build-comp-btn:disabled { opacity: 0.4; cursor: default; }
+    #build-comp-btn.success { background: var(--green); border-color: var(--green); }
 
     /* ── CENTER PANEL ── */
     #center { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -209,7 +226,10 @@
   <div id="watchlist">
     <div id="watchlist-header">Watchlist</div>
     <div id="watchlist-list"></div>
-    <div id="watchlist-add">+ Add ticker</div>
+    <div id="watchlist-actions">
+      <div id="watchlist-add">+ Add ticker</div>
+      <button id="build-comp-btn" title="Build comp table + PPT from watchlist tickers">⚡ Build Comp</button>
+    </div>
   </div>
 
   <!-- CENTER -->
@@ -280,6 +300,7 @@ const API = "";  // same origin
 let currentTicker = null;
 let chart = null;
 let candleSeries = null;
+let volumeSeries = null;
 let currentPeriod = "1y";
 let currentInterval = "1d";
 let watchlist = JSON.parse(localStorage.getItem("tsifl_watchlist") || '["AAPL","MSFT","GOOGL","META"]');
@@ -303,6 +324,14 @@ function initChart() {
     upColor: "#00C48C", downColor: "#FF4757",
     borderUpColor: "#00C48C", borderDownColor: "#FF4757",
     wickUpColor: "#00C48C", wickDownColor: "#FF4757",
+  });
+  volumeSeries = chart.addHistogramSeries({
+    priceFormat: { type: "volume" },
+    priceScaleId: "", // overlay on same pane
+    color: "#1A6EFF30",
+  });
+  volumeSeries.priceScale().applyOptions({
+    scaleMargins: { top: 0.8, bottom: 0 }, // volume bars in bottom 20%
   });
   window.addEventListener("resize", () => {
     chart.applyOptions({ width: wrap.clientWidth - 1, height: wrap.clientHeight });
@@ -353,6 +382,11 @@ async function loadTicker(ticker) {
     const fmtPct = (v) => v != null ? `${v.toFixed(1)}%` : "—";
     const fmtVol = (v) => v != null ? (v >= 1e6 ? `${(v/1e6).toFixed(1)}M` : `${(v/1e3).toFixed(0)}K`) : "—";
 
+    // Open from last history bar
+    if (histRes.bars && histRes.bars.length) {
+      const lastBar = histRes.bars[histRes.bars.length - 1];
+      set("s-open", `$${lastBar.open.toFixed(2)}`);
+    }
     set("s-52h",   quoteRes.week52_high != null ? `$${quoteRes.week52_high.toFixed(2)}` : "—");
     set("s-52l",   quoteRes.week52_low  != null ? `$${quoteRes.week52_low.toFixed(2)}`  : "—");
     set("s-vol",   fmtVol(quoteRes.volume));
@@ -374,6 +408,12 @@ async function loadTicker(ticker) {
     // Chart
     if (histRes.bars && histRes.bars.length) {
       candleSeries.setData(histRes.bars);
+      // Volume bars — colored by candle direction
+      volumeSeries.setData(histRes.bars.map(b => ({
+        time:  b.time,
+        value: b.volume,
+        color: b.close >= b.open ? "rgba(0,196,140,0.2)" : "rgba(255,71,87,0.2)",
+      })));
       chart.timeScale().fitContent();
     }
 
@@ -481,13 +521,27 @@ function renderWatchlist() {
     <div class="watch-item${t === currentTicker ? " active" : ""}" data-ticker="${t}">
       <span class="watch-sym">${t}</span>
       <span class="watch-chg" id="wchg-${t}">—</span>
+      <span class="watch-x" data-rm="${t}">×</span>
     </div>`).join("");
   list.querySelectorAll(".watch-item").forEach(el => {
-    el.addEventListener("click", () => {
+    el.addEventListener("click", (e) => {
+      if (e.target.classList.contains("watch-x")) return; // handled by X
       searchInput.value = el.dataset.ticker;
       loadTicker(el.dataset.ticker);
     });
   });
+  list.querySelectorAll(".watch-x").forEach(el => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const t = el.dataset.rm;
+      watchlist = watchlist.filter(w => w !== t);
+      localStorage.setItem("tsifl_watchlist", JSON.stringify(watchlist));
+      renderWatchlist();
+    });
+  });
+  // Update comp btn count
+  const compBtn = document.getElementById("build-comp-btn");
+  if (compBtn) compBtn.textContent = `⚡ Build Comp (${watchlist.length})`;
 }
 
 function updateWatchlistItem(ticker, price, chgPct) {
@@ -559,6 +613,61 @@ document.getElementById("send-excel-btn").addEventListener("click", async () => 
     showToast("⚠️ Could not send — is Excel open?");
   } finally {
     btn.textContent = "📊 Send to Excel"; btn.disabled = false;
+  }
+});
+
+// ── Build Comp — one click: watchlist → comp .xlsx + .pptx ────────────────
+document.getElementById("build-comp-btn").addEventListener("click", async () => {
+  if (watchlist.length < 2) { showToast("Add at least 2 tickers to watchlist"); return; }
+
+  const btn = document.getElementById("build-comp-btn");
+  const tickers = watchlist.slice(0, 10); // max 10
+  btn.disabled = true; btn.textContent = "⏳ Building...";
+  showToast(`Building comp for ${tickers.join(", ")}...`, 5000);
+
+  const BACKEND = "https://focused-solace-production-6839.up.railway.app";
+  const title = "Trading_Comps";
+  const body = JSON.stringify({ tickers, title });
+
+  try {
+    // Fire both downloads in parallel
+    const [xlsxRes, pptxRes] = await Promise.all([
+      fetch(`${BACKEND}/generate/comp-table.xlsx`, { method: "POST", headers: {"Content-Type":"application/json"}, body }),
+      fetch(`${BACKEND}/generate/comp-slide.pptx`, { method: "POST", headers: {"Content-Type":"application/json"}, body }),
+    ]);
+
+    let downloaded = 0;
+
+    if (xlsxRes.ok) {
+      const blob = await xlsxRes.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `${title}.xlsx`; a.click();
+      URL.revokeObjectURL(url);
+      downloaded++;
+    }
+
+    if (pptxRes.ok) {
+      const blob = await pptxRes.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `${title}.pptx`; a.click();
+      URL.revokeObjectURL(url);
+      downloaded++;
+    }
+
+    if (downloaded === 2) {
+      btn.textContent = "✅ Done"; btn.classList.add("success");
+      showToast(`✅ Downloaded ${title}.xlsx + .pptx`);
+    } else {
+      showToast("⚠️ Partial download — check console");
+    }
+  } catch(e) {
+    showToast("⚠️ Build failed: " + e.message);
+  } finally {
+    setTimeout(() => {
+      btn.disabled = false; btn.textContent = "⚡ Build Comp"; btn.classList.remove("success");
+    }, 3000);
   }
 });
 
