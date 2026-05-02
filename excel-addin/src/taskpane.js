@@ -3756,6 +3756,7 @@ async function handleIBFormat() {
 // ppt_actions every 4s and auto-executes them when found.
 // ── Shared ticker extractor ───────────────────────────────────────────────────
 function _extractTickersFromValues(values) {
+  const seen = new Set();
   const tickers = [];
   let tickerCol = -1;
   for (let r = 0; r < values.length; r++) {
@@ -3768,9 +3769,10 @@ function _extractTickersFromValues(values) {
       if (ti !== -1) { tickerCol = ti; continue; }
     }
     if (tickerCol !== -1) {
-      const v = String(row[tickerCol] ?? "").trim();
-      // Valid ticker: 1-5 uppercase letters, not a label row
-      if (/^[A-Z]{1,5}$/.test(v) && !["MEDIAN","MEAN","AVG"].includes(v)) {
+      const v = String(row[tickerCol] ?? "").trim().toUpperCase();
+      // Valid ticker: 1-5 uppercase letters, not a label row, no duplicates
+      if (/^[A-Z]{1,5}$/.test(v) && !["MEDIAN","MEAN","AVG"].includes(v) && !seen.has(v)) {
+        seen.add(v);
         tickers.push(v);
       }
     }

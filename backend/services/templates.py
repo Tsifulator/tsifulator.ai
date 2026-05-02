@@ -505,11 +505,12 @@ async def build_comp_payload(tickers: list[str], title: str = None) -> dict:
     mkt_list = await get_stocks_batch(upper)
     mkt = {m["ticker"]: m for m in mkt_list if not m.get("error")}
 
-    # ── 2. Fetch fundamentals (FMP first, yfinance fallback) concurrently ──
+    # ── 2. Fetch fundamentals (yfinance primary — free, no rate limit)
+    #       FMP only if yfinance fails AND FMP key is set
     async def get_fund(ticker):
-        d = await fmp_get(ticker)
+        d = await yf_get(ticker)
         if d.get("error"):
-            d = await yf_get(ticker)
+            d = await fmp_get(ticker)
         return ticker, d
 
     fund_results = await asyncio.gather(*[get_fund(t) for t in upper])
@@ -612,6 +613,14 @@ def generate_comp_deck_pptx(payload: dict) -> bytes:
     prs.slide_height = Inches(7.5)
     blank = prs.slide_layouts[6]
 
+    # ── Force white background on all slides ──────────────────────────────
+    def _set_white_bg(slide):
+        from pptx.oxml.ns import qn as _qn
+        bg = slide.background
+        fill = bg.fill
+        fill.solid()
+        fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+
     # ── Shared helpers ────────────────────────────────────────────────────
     def add_textbox(slide, text, left, top, width, height,
                     bold=False, size=11, color=DARK_TEXT, align=PP_ALIGN.LEFT,
@@ -689,7 +698,7 @@ def generate_comp_deck_pptx(payload: dict) -> bytes:
     # ──────────────────────────────────────────────────────────────────────
     # SLIDE 1 — Title
     # ──────────────────────────────────────────────────────────────────────
-    s1 = prs.slides.add_slide(blank)
+    s1 = prs.slides.add_slide(blank); _set_white_bg(s1)
 
     # Full navy top bar
     bar = s1.shapes.add_shape(
@@ -769,7 +778,7 @@ def generate_comp_deck_pptx(payload: dict) -> bytes:
     # ──────────────────────────────────────────────────────────────────────
     # SLIDE 3 — Multiples snapshot (big KPI boxes)
     # ──────────────────────────────────────────────────────────────────────
-    s3 = prs.slides.add_slide(blank)
+    s3 = prs.slides.add_slide(blank); _set_white_bg(s3)
     add_slide_header(s3, "Valuation Snapshot",
                      f"Median multiples — {date_str}  ·  {currency}")
 
@@ -817,7 +826,7 @@ def generate_comp_deck_pptx(payload: dict) -> bytes:
     # ──────────────────────────────────────────────────────────────────────
     # SLIDE 4 — Key takeaways
     # ──────────────────────────────────────────────────────────────────────
-    s4 = prs.slides.add_slide(blank)
+    s4 = prs.slides.add_slide(blank); _set_white_bg(s4)
     add_slide_header(s4, "Key Observations", date_str)
 
     # Auto-generate observations from the data
