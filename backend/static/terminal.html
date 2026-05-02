@@ -300,7 +300,7 @@ let candleSeries = null;
 let volumeSeries = null;
 let currentPeriod   = "1y";
 let currentInterval = "1d";
-let watchlist = JSON.parse(localStorage.getItem("tsifl_watchlist") || '["AAPL","MSFT","GOOGL","META"]');
+let watchlist = JSON.parse(localStorage.getItem("tsifl_watchlist") || '["AAPL","MSFT","GOOGL","META","AMZN"]');
 let searchTimeout = null;
 let searchResults = [];
 let searchIdx = -1;
@@ -330,9 +330,15 @@ function initChart() {
   volumeSeries.priceScale().applyOptions({
     scaleMargins: { top: 0.8, bottom: 0 }, // volume bars in bottom 20%
   });
-  window.addEventListener("resize", () => {
-    chart.applyOptions({ width: wrap.clientWidth - 1, height: wrap.clientHeight });
+  // ResizeObserver is more reliable than window.resize for flex containers
+  const ro = new ResizeObserver(() => {
+    const w = wrap.clientWidth - 1;
+    const h = wrap.clientHeight;
+    if (w > 0 && h > 0) {
+      chart.applyOptions({ width: w, height: h });
+    }
   });
+  ro.observe(wrap);
 }
 
 // ── Load ticker ────────────────────────────────────────────────────────────
@@ -380,7 +386,7 @@ async function loadTicker(ticker) {
     const fmtVol = (v) => v != null ? (v >= 1e6 ? `${(v/1e6).toFixed(1)}M` : `${(v/1e3).toFixed(0)}K`) : "—";
 
     // Compute 52W high/low + avg volume from chart bars (saves an API call)
-    const bars = histRes.bars || [];
+    let bars = histRes.bars || [];
     if (bars.length) {
       const lastBar = bars[bars.length - 1];
       set("s-open", `$${lastBar.open.toFixed(2)}`);
@@ -412,7 +418,6 @@ async function loadTicker(ticker) {
     set("s-industry", quoteRes.industry || "—");
 
     // Chart — if no bars (weekend, holiday), auto-fallback to 1Y
-    let bars = histRes.bars || [];
     if (bars.length === 0 && currentPeriod !== "1y") {
       try {
         const fb = await fetch(`${API}/terminal/history/${ticker}?period=1y&interval=1d`).then(r => r.json());

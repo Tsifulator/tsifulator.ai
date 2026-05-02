@@ -49,7 +49,7 @@ async def terminal_quote(ticker: str):
     bar = results[0] if results else {}
     price      = bar.get("c", 0)
     open_price = bar.get("o", 0)
-    volume     = bar.get("v", 0)
+    volume     = bar.get("v")  # None if no bar / rate-limited
 
     # Reference data
     ref = ref_data.get("results", {})
@@ -69,7 +69,7 @@ async def terminal_quote(ticker: str):
         "change":       round(price - open_price, 2) if open_price else 0,
         "change_pct":   round(((price - open_price) / open_price) * 100, 2) if open_price and open_price != 0 else 0,
         "market_cap_B": market_cap_b,
-        "volume":       int(volume) if volume else None,
+        "volume":       int(volume) if volume is not None and volume > 0 else None,
         "sector":       sic or None,
         "industry":     sic or None,
         "currency":     "USD",
