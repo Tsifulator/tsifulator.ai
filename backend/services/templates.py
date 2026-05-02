@@ -487,15 +487,14 @@ async def build_comp_payload(tickers: list[str], title: str = None) -> dict:
     quotes = await asyncio.gather(*[_build_quote(t) for t in upper])
     mkt = {q["ticker"]: q for q in quotes if q.get("price", 0) > 0}
 
-    # 2. Fundamentals (yfinance primary, FMP fallback)
-    async def get_fund(ticker):
-        d = await yf_get(ticker)
+    # 2. Fundamentals — sequential to avoid Yahoo rate limits on cloud IPs
+    #    yfinance has 24h cache built in, so cached tickers are instant
+    fund = {}
+    for t in upper:
+        d = await yf_get(t)
         if d.get("error"):
-            d = await fmp_get(ticker)
-        return ticker, d
-
-    fund_results = await asyncio.gather(*[get_fund(t) for t in upper])
-    fund = {t: d for t, d in fund_results}
+            d = await fmp_get(t)
+        fund[t] = d
 
     # 3. Build company list
     companies = []

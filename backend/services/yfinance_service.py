@@ -2,13 +2,38 @@
 Yahoo Finance fundamentals service via yfinance.
 Free, no API key, quarterly + annual data.
 Used as primary fundamentals source (FMP used when available for better data).
+
+Note: Yahoo aggressively rate-limits datacenter IPs (Railway, Heroku, etc.).
+We use 24-hour caching + sequential requests + retry to work around this.
 """
 
 import asyncio
 import logging
+import time
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# ── 24-hour cache for fundamentals (quarterly data barely changes) ────────────
+_yf_cache: dict[str, tuple[float, dict]] = {}
+YF_CACHE_TTL = 86400   # 24 hours — fundamentals are quarterly
+
+
+def _yf_cache_get(ticker: str) -> dict | None:
+    entry = _yf_cache.get(ticker)
+    if entry and entry[0] > time.time():
+        return entry[1]
+    return None
+
+
+def _yf_cache_set(ticker: str, data: dict):
+    _yf_cache[ticker] = (time.time() + YF_CACHE_TTL, data)
+    # Evict expired entries if cache grows large
+    if len(_yf_cache) > 200:
+        now = time.time()
+        expired = [k for k, (exp, _) in _yf_cache.items() if exp <= now]
+        for k in expired:
+            del _yf_cache[k]
 
 
 def _safe_float(v) -> Optional[float]:
@@ -161,22 +186,46 @@ def _fetch_sync(ticker: str) -> dict:
 
 
 async def get_fundamentals(ticker: str) -> dict:
-    """Async wrapper — runs yfinance in a thread pool."""
-    return await asyncio.to_thread(_fetch_sync, ticker)
+    """Async wrapper — runs yfinance in a thread pool with cache + retry."""
+    ticker = ticker.upper()
+
+    # Check 24h cache first
+    cached = _yf_cache_get(ticker)
+    if cached is not None:
+        return cached
+
+    # Retry up to 3 times with backoff (Yahoo rate-limits datacenter IPs)
+    last_err = None
+    for attempt in range(3):
+        if attempt > 0:
+            await asyncio.sleep(2.0 * attempt)  # 2s, 4s backoff
+        result = await asyncio.to_thread(_fetch_sync, ticker)
+        if not result.get("error"):
+            _yf_cache_set(ticker, result)
+            return result
+        last_err = result
+        # If rate limited, wait longer
+        if "rate" in str(result.get("error", "")).lower():
+            await asyncio.sleep(3.0)
+
+    return last_err or {"ticker": ticker, "error": "yfinance failed after retries"}
 
 
 async def get_fundamentals_batch(tickers: list[str]) -> list[dict]:
-    """Fetch fundamentals for multiple tickers concurrently."""
+    """Fetch fundamentals SEQUENTIALLY (not concurrent) to avoid rate limits."""
     if not tickers:
         return []
-    results = await asyncio.gather(
-        *[get_fundamentals(t) for t in tickers],
-        return_exceptions=True,
-    )
     out = []
-    for i, r in enumerate(results):
-        if isinstance(r, Exception):
-            out.append({"ticker": tickers[i], "error": str(r)})
-        else:
-            out.append(r)
+    for t in tickers:
+        # Check cache first — instant if cached
+        cached = _yf_cache_get(t.upper())
+        if cached is not None:
+            out.append(cached)
+            continue
+        # Sequential with small delay between requests
+        result = await get_fundamentals(t)
+        out.append(result)
+        # Small delay between uncached requests to reduce rate-limit hits
+        if not result.get("error"):
+            await asyncio.sleep(0.5)
     return out

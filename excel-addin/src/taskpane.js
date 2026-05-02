@@ -3875,15 +3875,28 @@ async function handleBuildComps() {
         medianRange.format.font.color = "#0D5EAF";
       }
 
-      // Number formats for data columns
+      // Number formats for data + stats rows (forces $ regardless of locale)
+      const totalDataRows = rows.length + stats.length + 1; // data + sep + stats
       if (rows.length > 0) {
-        const nRows = rows.length + stats.length + 1; // data + separator + stats
-        // Price (col C, index 2)
+        // Price (col C, index 2) — data rows
         sheet.getRangeByIndexes(4, 2, rows.length, 1).numberFormat = [["$#,##0.00"]];
         // Mkt Cap, Net Debt, EV (cols D-F, index 3-5)
         sheet.getRangeByIndexes(4, 3, rows.length, 3).numberFormat = [["$#,##0.0"]];
         // Revenue, EBITDA (cols G-H, index 6-7)
         sheet.getRangeByIndexes(4, 6, rows.length, 2).numberFormat = [["$#,##0"]];
+        // Gross%, EBITDA% (cols I-J, index 8-9)
+        sheet.getRangeByIndexes(4, 8, rows.length, 2).numberFormat = [["0.0"]];
+        // EV/Rev, EV/EBITDA, P/E (cols K-M, index 10-12)
+        sheet.getRangeByIndexes(4, 10, rows.length, 3).numberFormat = [["0.0x"]];
+      }
+      // Stats rows — same formats
+      if (stats.length > 0) {
+        const statsStart = 4 + rows.length + 1;
+        sheet.getRangeByIndexes(statsStart, 2, stats.length, 1).numberFormat = [["$#,##0.00"]];
+        sheet.getRangeByIndexes(statsStart, 3, stats.length, 3).numberFormat = [["$#,##0.0"]];
+        sheet.getRangeByIndexes(statsStart, 6, stats.length, 2).numberFormat = [["$#,##0"]];
+        sheet.getRangeByIndexes(statsStart, 8, stats.length, 2).numberFormat = [["0.0"]];
+        sheet.getRangeByIndexes(statsStart, 10, stats.length, 3).numberFormat = [["0.0x"]];
       }
 
       // Autofit columns
