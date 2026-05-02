@@ -3875,29 +3875,34 @@ async function handleBuildComps() {
         medianRange.format.font.color = "#0D5EAF";
       }
 
-      // Number formats for data + stats rows (forces $ regardless of locale)
-      const totalDataRows = rows.length + stats.length + 1; // data + sep + stats
-      if (rows.length > 0) {
-        // Price (col C, index 2) — data rows
-        sheet.getRangeByIndexes(4, 2, rows.length, 1).numberFormat = [["$#,##0.00"]];
-        // Mkt Cap, Net Debt, EV (cols D-F, index 3-5)
-        sheet.getRangeByIndexes(4, 3, rows.length, 3).numberFormat = [["$#,##0.0"]];
-        // Revenue, EBITDA (cols G-H, index 6-7)
-        sheet.getRangeByIndexes(4, 6, rows.length, 2).numberFormat = [["$#,##0"]];
-        // Gross%, EBITDA% (cols I-J, index 8-9)
-        sheet.getRangeByIndexes(4, 8, rows.length, 2).numberFormat = [["0.0"]];
-        // EV/Rev, EV/EBITDA, P/E (cols K-M, index 10-12)
-        sheet.getRangeByIndexes(4, 10, rows.length, 3).numberFormat = [["0.0x"]];
+      // Number formats — dynamic based on which columns are present
+      // [$$-409] forces USD symbol regardless of locale
+      const fmtMap = {
+        'Price ($)':    '[$$-409]#,##0.00',
+        'Mkt Cap ($B)': '[$$-409]#,##0.0',
+        'Net Debt ($B)':'[$$-409]#,##0.0',
+        'EV ($B)':      '[$$-409]#,##0.0',
+        'Revenue ($M)': '[$$-409]#,##0',
+        'EBITDA ($M)':  '[$$-409]#,##0',
+        'Gross %':      '0.0"%"',
+        'EBITDA %':     '0.0"%"',
+        'EV/Rev':       '0.0"x"',
+        'EV/EBITDA':    '0.0"x"',
+        'P/E':          '0.0"x"',
+      };
+
+      function applyFormats(startRow, numRows) {
+        headers.forEach((h, ci) => {
+          if (ci < 2) return; // skip Company, Ticker
+          const fmt = fmtMap[h];
+          if (fmt && numRows > 0) {
+            sheet.getRangeByIndexes(startRow, ci, numRows, 1).numberFormat = [[fmt]];
+          }
+        });
       }
-      // Stats rows — same formats
-      if (stats.length > 0) {
-        const statsStart = 4 + rows.length + 1;
-        sheet.getRangeByIndexes(statsStart, 2, stats.length, 1).numberFormat = [["$#,##0.00"]];
-        sheet.getRangeByIndexes(statsStart, 3, stats.length, 3).numberFormat = [["$#,##0.0"]];
-        sheet.getRangeByIndexes(statsStart, 6, stats.length, 2).numberFormat = [["$#,##0"]];
-        sheet.getRangeByIndexes(statsStart, 8, stats.length, 2).numberFormat = [["0.0"]];
-        sheet.getRangeByIndexes(statsStart, 10, stats.length, 3).numberFormat = [["0.0x"]];
-      }
+
+      if (rows.length > 0) applyFormats(4, rows.length);
+      if (stats.length > 0) applyFormats(4 + rows.length + 1, stats.length);
 
       // Autofit columns
       const usedRange = sheet.getUsedRange();

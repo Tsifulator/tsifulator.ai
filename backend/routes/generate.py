@@ -108,8 +108,8 @@ async def generate_comp_inject(req: CompRequest):
     if not companies:
         raise HTTPException(422, "Could not fetch data for any of the provided tickers. Try again in a minute (rate limit may have reset).")
 
-    # Build the 2D array for Excel injection
-    headers = [
+    # Build full rows first, then strip columns that are entirely N/A
+    all_headers = [
         "Company", "Ticker", "Price ($)", "Mkt Cap ($B)",
         "Net Debt ($B)", "EV ($B)", "Revenue ($M)", "EBITDA ($M)",
         "Gross %", "EBITDA %", "EV/Rev", "EV/EBITDA", "P/E"
@@ -127,9 +127,9 @@ async def generate_comp_inject(req: CompRequest):
             return "N/A"
         return round(v * 100, 1)
 
-    rows = []
+    full_rows = []
     for c in sorted(companies, key=lambda x: x.get("market_cap") or 0, reverse=True):
-        rows.append([
+        full_rows.append([
             c.get("name", c["ticker"]),
             c["ticker"],
             _fmt(c.get("share_price"), 2),
@@ -145,24 +145,38 @@ async def generate_comp_inject(req: CompRequest):
             _fmt(c.get("pe"), 1),
         ])
 
+    # Drop columns where EVERY company has N/A (keeps table clean)
+    # Always keep: Company (0), Ticker (1) — never dropped
+    keep_cols = [0, 1]
+    for ci in range(2, len(all_headers)):
+        has_data = any(
+            isinstance(r[ci], (int, float)) for r in full_rows
+        )
+        if has_data:
+            keep_cols.append(ci)
+
+    headers = [all_headers[i] for i in keep_cols]
+    rows = [[r[i] for i in keep_cols] for r in full_rows]
+
     # Summary stats (High / Low / Median / Mean) for numeric columns
     import statistics
-    stat_cols = list(range(2, 13))  # columns C through M (0-indexed: 2-12)
+    stat_cols = [i for i, ci in enumerate(keep_cols) if ci >= 2]
     stat_rows = []
     for stat_name in ["High", "Low", "Median", "Mean"]:
-        row = [stat_name, "", "", "", "", "", "", "", "", "", "", "", ""]
-        for ci in stat_cols:
-            vals = [r[ci] for r in rows if isinstance(r[ci], (int, float))]
+        row = ["" for _ in keep_cols]
+        row[0] = stat_name
+        for si in stat_cols:
+            vals = [r[si] for r in rows if isinstance(r[si], (int, float))]
             if not vals:
-                row[ci] = "N/A"
+                row[si] = "N/A"
             elif stat_name == "High":
-                row[ci] = round(max(vals), 1)
+                row[si] = round(max(vals), 1)
             elif stat_name == "Low":
-                row[ci] = round(min(vals), 1)
+                row[si] = round(min(vals), 1)
             elif stat_name == "Median":
-                row[ci] = round(statistics.median(vals), 1)
+                row[si] = round(statistics.median(vals), 1)
             elif stat_name == "Mean":
-                row[ci] = round(statistics.mean(vals), 1)
+                row[si] = round(statistics.mean(vals), 1)
         stat_rows.append(row)
 
     primary_ticker = (req.tickers[0] if req.tickers else tickers[0]).upper()
