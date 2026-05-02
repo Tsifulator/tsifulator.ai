@@ -4,774 +4,608 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>tsifl — The Analyst's OS</title>
-  <meta name="description" content="AI-powered financial analysis inside Excel, PowerPoint, and Word. Build comp tables, generate tearsheets, and pull live market data — without leaving your spreadsheet." />
+  <meta name="description" content="AI that lives inside Excel and PowerPoint. Build comp tables with live data, generate tearsheets, and automate the mechanical work of financial analysis." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
       --blue: #0D5EAF;
-      --blue-light: #1a72cc;
-      --blue-dark: #094d91;
-      --blue-glow: rgba(13,94,175,0.18);
-      --bg: #0a0c10;
-      --bg-card: #0f1318;
-      --bg-card2: #13181f;
-      --border: rgba(255,255,255,0.07);
-      --border-blue: rgba(13,94,175,0.35);
-      --text: #e8edf5;
-      --text-muted: #6b7890;
-      --text-dim: #3d4a5e;
+      --blue-2: #1971cc;
+      --bg: #08090c;
+      --bg-1: #0d1017;
+      --bg-2: #111520;
+      --border: rgba(255,255,255,0.06);
+      --border-b: rgba(13,94,175,0.28);
+      --text: #dde4f0;
+      --muted: #5a6880;
+      --dim: #2d3a4d;
       --green: #22c55e;
       --amber: #f59e0b;
+      --red: #ef4444;
     }
 
     html { scroll-behavior: smooth; }
-
     body {
       font-family: 'Inter', sans-serif;
       background: var(--bg);
       color: var(--text);
-      line-height: 1.6;
       -webkit-font-smoothing: antialiased;
     }
 
-    /* ─── NAV ─── */
+    /* ── NAV ── */
     nav {
-      position: sticky; top: 0; z-index: 100;
+      position: sticky; top: 0; z-index: 50;
+      height: 58px;
       display: flex; align-items: center; justify-content: space-between;
-      padding: 0 40px;
-      height: 60px;
-      background: rgba(10,12,16,0.85);
-      backdrop-filter: blur(16px);
+      padding: 0 48px;
+      background: rgba(8,9,12,0.8);
+      backdrop-filter: blur(20px);
       border-bottom: 1px solid var(--border);
     }
-    .nav-logo {
-      font-size: 18px; font-weight: 800; letter-spacing: -0.5px;
-      color: #fff;
-    }
-    .nav-logo span { color: var(--blue); }
-    .nav-links { display: flex; gap: 28px; list-style: none; }
-    .nav-links a {
-      font-size: 14px; color: var(--text-muted); text-decoration: none;
-      transition: color .2s;
-    }
-    .nav-links a:hover { color: var(--text); }
-    .nav-cta {
-      background: var(--blue); color: #fff;
-      border: none; border-radius: 8px;
-      padding: 8px 20px; font-size: 14px; font-weight: 600;
-      cursor: pointer; transition: background .2s;
+    .logo { font-size: 17px; font-weight: 800; letter-spacing: -0.4px; color: #fff; }
+    .logo span { color: var(--blue); }
+    .nav-mid { display: flex; gap: 32px; list-style: none; }
+    .nav-mid a { font-size: 13.5px; color: var(--muted); text-decoration: none; transition: color .15s; }
+    .nav-mid a:hover { color: var(--text); }
+    .nav-btn {
+      font-size: 13.5px; font-weight: 600; color: #fff;
+      background: var(--blue); border: none; border-radius: 8px;
+      padding: 8px 18px; cursor: pointer; transition: background .15s;
       text-decoration: none;
     }
-    .nav-cta:hover { background: var(--blue-light); }
+    .nav-btn:hover { background: var(--blue-2); }
 
-    /* ─── HERO ─── */
+    /* ── HERO ── */
     .hero {
-      position: relative; overflow: hidden;
-      padding: 110px 40px 90px;
+      min-height: 92vh;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
       text-align: center;
+      padding: 80px 24px 60px;
+      position: relative; overflow: hidden;
     }
     .hero::before {
       content: '';
-      position: absolute; inset: 0;
-      background: radial-gradient(ellipse 80% 60% at 50% -10%, rgba(13,94,175,0.22) 0%, transparent 70%);
+      position: absolute; top: -20%; left: 50%; transform: translateX(-50%);
+      width: 900px; height: 600px;
+      background: radial-gradient(ellipse, rgba(13,94,175,0.14) 0%, transparent 70%);
       pointer-events: none;
     }
-    .badge {
+    .pill {
       display: inline-flex; align-items: center; gap: 8px;
-      background: rgba(13,94,175,0.12); border: 1px solid var(--border-blue);
-      border-radius: 100px; padding: 5px 14px; margin-bottom: 28px;
-      font-size: 12px; font-weight: 600; letter-spacing: 0.5px;
-      color: #6eaaef; text-transform: uppercase;
+      font-size: 11.5px; font-weight: 600; letter-spacing: 0.8px; text-transform: uppercase;
+      color: #5b9ae0;
+      background: rgba(13,94,175,0.1); border: 1px solid rgba(13,94,175,0.25);
+      border-radius: 100px; padding: 5px 14px; margin-bottom: 32px;
     }
-    .badge-dot {
+    .pill-dot {
       width: 6px; height: 6px; border-radius: 50%;
-      background: var(--green);
-      box-shadow: 0 0 6px var(--green);
-      animation: pulse 2s infinite;
+      background: var(--green); box-shadow: 0 0 8px var(--green);
+      animation: breathe 2.4s ease-in-out infinite;
     }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; } 50% { opacity: 0.4; }
-    }
+    @keyframes breathe { 0%,100%{opacity:1;} 50%{opacity:.3;} }
+
     h1 {
-      font-size: clamp(40px, 6vw, 72px);
-      font-weight: 900; letter-spacing: -2.5px; line-height: 1.05;
-      max-width: 860px; margin: 0 auto 24px;
+      font-size: clamp(42px, 7vw, 80px);
+      font-weight: 900; letter-spacing: -3px; line-height: 1.0;
+      max-width: 820px; margin-bottom: 22px;
     }
-    h1 em { font-style: normal; color: var(--blue); }
-    .hero-sub {
-      font-size: clamp(16px, 2vw, 20px); color: var(--text-muted);
-      max-width: 580px; margin: 0 auto 42px;
-      line-height: 1.65;
+    h1 .accent { color: var(--blue); }
+
+    .hero-p {
+      font-size: clamp(16px, 2.2vw, 19px);
+      color: var(--muted); max-width: 500px;
+      line-height: 1.65; margin-bottom: 44px;
+      font-weight: 400;
     }
-    .hero-actions {
-      display: flex; align-items: center; justify-content: center; gap: 14px;
-      flex-wrap: wrap;
-    }
-    .btn-primary {
-      background: var(--blue); color: #fff;
-      border: none; border-radius: 10px;
-      padding: 14px 28px; font-size: 16px; font-weight: 700;
-      cursor: pointer; transition: all .2s;
+
+    .cta-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: center; }
+    .btn-lg {
+      font-size: 15px; font-weight: 700; color: #fff;
+      background: var(--blue); border: none; border-radius: 10px;
+      padding: 14px 26px; cursor: pointer; transition: all .2s;
       text-decoration: none; display: inline-block;
     }
-    .btn-primary:hover { background: var(--blue-light); transform: translateY(-1px); box-shadow: 0 8px 30px rgba(13,94,175,0.4); }
-    .btn-secondary {
-      background: transparent; color: var(--text-muted);
-      border: 1px solid var(--border); border-radius: 10px;
-      padding: 14px 24px; font-size: 15px; font-weight: 500;
-      cursor: pointer; transition: all .2s;
+    .btn-lg:hover { background: var(--blue-2); transform: translateY(-1px); box-shadow: 0 10px 32px rgba(13,94,175,0.35); }
+    .btn-ghost {
+      font-size: 14px; font-weight: 500; color: var(--muted);
+      background: transparent; border: 1px solid var(--border);
+      border-radius: 10px; padding: 13px 22px; cursor: pointer; transition: all .2s;
       text-decoration: none; display: inline-block;
     }
-    .btn-secondary:hover { border-color: rgba(255,255,255,0.2); color: var(--text); }
-    .trial-note {
-      font-size: 13px; color: var(--text-dim); margin-top: 16px;
-    }
+    .btn-ghost:hover { border-color: rgba(255,255,255,0.15); color: var(--text); }
+    .sub-note { font-size: 12px; color: var(--dim); margin-top: 16px; letter-spacing: 0.1px; }
 
-    /* ─── TERMINAL WINDOW ─── */
-    .terminal-wrap {
-      max-width: 900px; margin: 72px auto 0;
-      padding: 0 40px;
+    /* ── TERMINAL ── */
+    .term-wrap { width: 100%; max-width: 820px; margin: 64px auto 0; }
+    .term {
+      background: var(--bg-1);
+      border: 1px solid var(--border-b);
+      border-radius: 14px; overflow: hidden;
+      box-shadow: 0 32px 80px rgba(0,0,0,0.5), 0 0 0 1px rgba(13,94,175,0.06);
     }
-    .terminal {
-      background: var(--bg-card);
-      border: 1px solid var(--border-blue);
-      border-radius: 14px;
-      overflow: hidden;
-      box-shadow: 0 24px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(13,94,175,0.08);
-    }
-    .terminal-bar {
-      background: #141920;
-      padding: 12px 18px;
-      display: flex; align-items: center; gap: 8px;
+    .term-head {
+      height: 42px; background: #0e1219;
+      display: flex; align-items: center; padding: 0 16px; gap: 7px;
       border-bottom: 1px solid var(--border);
     }
-    .tbar-dot { width: 12px; height: 12px; border-radius: 50%; }
-    .tbar-dot.r { background: #ff5f57; }
-    .tbar-dot.y { background: #febc2e; }
-    .tbar-dot.g { background: #28c840; }
-    .tbar-title {
-      flex: 1; text-align: center; font-size: 12px; color: var(--text-dim);
-      font-family: 'JetBrains Mono', monospace;
-    }
-    .terminal-body { padding: 24px; font-family: 'JetBrains Mono', monospace; font-size: 13px; }
-    .t-row { display: flex; gap: 12px; margin-bottom: 14px; }
-    .t-prompt { color: var(--blue); flex-shrink: 0; }
-    .t-cmd { color: #c9d7eb; }
-    .t-response {
-      background: rgba(13,94,175,0.06);
-      border-left: 2px solid var(--blue);
-      padding: 12px 14px; border-radius: 0 6px 6px 0;
-      margin: 0 0 18px 24px;
-      color: var(--text-muted); font-size: 12.5px; line-height: 1.7;
-    }
-    .t-response b { color: var(--text); }
-    .t-response .green { color: var(--green); }
-    .t-response .amber { color: var(--amber); }
-    .t-cursor {
-      display: inline-block; width: 8px; height: 14px;
-      background: var(--blue); margin-left: 2px; vertical-align: middle;
-      animation: blink 1.2s step-start infinite;
-    }
-    @keyframes blink { 50% { opacity: 0; } }
-
-    /* ─── SECTION SHARED ─── */
-    section { padding: 100px 40px; }
-    .section-label {
-      font-size: 11px; font-weight: 700; letter-spacing: 2px;
-      color: var(--blue); text-transform: uppercase; margin-bottom: 12px;
-    }
-    h2 {
-      font-size: clamp(28px, 4vw, 44px);
-      font-weight: 800; letter-spacing: -1.5px; line-height: 1.15;
-      margin-bottom: 16px;
-    }
-    h2 em { font-style: normal; color: var(--blue); }
-    .section-sub {
-      font-size: 17px; color: var(--text-muted);
-      max-width: 540px; line-height: 1.65; margin-bottom: 56px;
-    }
-    .container { max-width: 1100px; margin: 0 auto; }
-
-    /* ─── V1 FEATURES ─── */
-    .features-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-      gap: 20px;
-    }
-    .feature-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 28px;
-      transition: border-color .25s, transform .2s;
-    }
-    .feature-card:hover {
-      border-color: var(--border-blue);
-      transform: translateY(-2px);
-    }
-    .feature-icon {
-      font-size: 28px; margin-bottom: 14px;
-    }
-    .feature-card h3 {
-      font-size: 16px; font-weight: 700; margin-bottom: 8px; letter-spacing: -0.3px;
-    }
-    .feature-card p { font-size: 14px; color: var(--text-muted); line-height: 1.6; }
-    .feature-tag {
-      display: inline-block; margin-top: 12px;
-      font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
-      padding: 3px 10px; border-radius: 100px;
-    }
-    .tag-live { background: rgba(34,197,94,0.12); color: var(--green); }
-    .tag-soon { background: rgba(245,158,11,0.12); color: var(--amber); }
-
-    /* ─── HOW IT WORKS ─── */
-    .how { background: linear-gradient(180deg, var(--bg) 0%, #0c1016 100%); }
-    .steps { display: flex; flex-direction: column; gap: 0; max-width: 780px; }
-    .step {
-      display: flex; gap: 28px; padding: 36px 0;
-      border-bottom: 1px solid var(--border);
-    }
-    .step:last-child { border-bottom: none; }
-    .step-num {
-      flex-shrink: 0;
-      width: 44px; height: 44px; border-radius: 12px;
-      background: rgba(13,94,175,0.12); border: 1px solid var(--border-blue);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 16px; font-weight: 800; color: var(--blue);
-      font-family: 'JetBrains Mono', monospace;
-    }
-    .step-content h3 { font-size: 17px; font-weight: 700; margin-bottom: 6px; letter-spacing: -0.3px; }
-    .step-content p { font-size: 15px; color: var(--text-muted); line-height: 1.6; }
-
-    /* ─── VISION ─── */
-    .vision { background: var(--bg-card); }
-    .vision-grid {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
-    }
-    @media (max-width: 700px) { .vision-grid { grid-template-columns: 1fr; } }
-    .vision-item {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 12px; padding: 24px;
-    }
-    .vision-item.highlight {
-      border-color: var(--border-blue);
+    .d { width: 11px; height: 11px; border-radius: 50%; }
+    .d.r{background:#ff5f57;} .d.y{background:#febc2e;} .d.g{background:#28c840;}
+    .term-title { flex:1; text-align:center; font-size:11.5px; color:var(--dim); font-family:'JetBrains Mono',monospace; }
+    .term-body { padding: 22px 24px; font-family:'JetBrains Mono',monospace; font-size:12.5px; line-height:1; }
+    .tl { display:flex; gap:10px; margin-bottom:10px; align-items:baseline; }
+    .tp { color:var(--blue); flex-shrink:0; font-weight:500; }
+    .tc { color:#c5d4e8; }
+    .tr {
+      margin: 4px 0 18px 20px;
+      padding: 12px 14px;
       background: rgba(13,94,175,0.05);
+      border-left: 2px solid rgba(13,94,175,0.4);
+      border-radius: 0 6px 6px 0;
+      font-size: 12px; color: var(--muted); line-height: 1.8;
     }
-    .vision-item h3 { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
-    .vision-item p { font-size: 13.5px; color: var(--text-muted); line-height: 1.6; }
+    .tr b { color: var(--text); }
+    .ok { color: var(--green); }
+    .warn { color: var(--amber); }
+    .cur { display:inline-block;width:7px;height:13px;background:var(--blue);margin-left:2px;vertical-align:middle;animation:blink 1.2s step-start infinite; }
+    @keyframes blink{50%{opacity:0;}}
 
-    /* ─── PRICING ─── */
-    .pricing { background: var(--bg); }
-    .pricing-grid { display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; }
-    .pricing-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 16px; padding: 36px; width: 340px;
-      position: relative;
-    }
-    .pricing-card.featured {
-      border-color: var(--blue);
-      background: linear-gradient(135deg, rgba(13,94,175,0.08) 0%, var(--bg-card) 60%);
-      box-shadow: 0 0 0 1px rgba(13,94,175,0.2), 0 20px 60px rgba(13,94,175,0.12);
-    }
-    .recommended-badge {
-      position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
-      background: var(--blue); color: #fff;
-      font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
-      padding: 4px 14px; border-radius: 100px;
-    }
-    .pricing-tier { font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
-    .pricing-price {
-      font-size: 48px; font-weight: 900; letter-spacing: -2px;
-      line-height: 1; margin-bottom: 4px;
-    }
-    .pricing-price sup { font-size: 20px; font-weight: 600; vertical-align: top; margin-top: 8px; }
-    .pricing-cadence { font-size: 14px; color: var(--text-muted); margin-bottom: 24px; }
-    .pricing-desc { font-size: 14px; color: var(--text-muted); margin-bottom: 28px; line-height: 1.6; }
-    .pricing-features { list-style: none; margin-bottom: 32px; }
-    .pricing-features li {
-      font-size: 14px; padding: 8px 0;
-      border-bottom: 1px solid var(--border);
-      display: flex; align-items: flex-start; gap: 10px;
-    }
-    .pricing-features li:last-child { border-bottom: none; }
-    .pricing-features .check { color: var(--green); flex-shrink: 0; margin-top: 1px; }
-    .pricing-features .dim { color: var(--text-dim); }
-    .btn-full {
-      width: 100%; padding: 14px;
-      border-radius: 10px; font-size: 15px; font-weight: 700;
-      cursor: pointer; transition: all .2s; border: none;
-      text-align: center; text-decoration: none; display: block;
-    }
-    .btn-full.blue { background: var(--blue); color: #fff; }
-    .btn-full.blue:hover { background: var(--blue-light); transform: translateY(-1px); }
-    .btn-full.ghost { background: transparent; color: var(--text-muted); border: 1px solid var(--border); }
-    .btn-full.ghost:hover { border-color: rgba(255,255,255,0.2); color: var(--text); }
-    .trial-label {
-      text-align: center; font-size: 12px; color: var(--text-dim); margin-top: 12px;
-    }
+    /* ── SECTION BASE ── */
+    section { padding: 96px 48px; }
+    .wrap { max-width: 1040px; margin: 0 auto; }
+    .tag { font-size:11px; font-weight:700; letter-spacing:2px; color:var(--blue); text-transform:uppercase; margin-bottom:12px; }
+    h2 { font-size:clamp(26px,4vw,42px); font-weight:800; letter-spacing:-1.5px; line-height:1.15; margin-bottom:14px; }
+    h2 .a { color:var(--blue); font-style:normal; }
+    .lead { font-size:16px; color:var(--muted); line-height:1.7; max-width:520px; margin-bottom:56px; }
 
-    /* ─── FAQ ─── */
-    .faq { background: var(--bg-card); }
-    .faq-list { max-width: 720px; }
-    .faq-item {
-      border-bottom: 1px solid var(--border);
-      padding: 22px 0;
+    /* ── NOW / LATER ── */
+    .now-later { background: var(--bg-1); }
+    .nl-grid { display:grid; grid-template-columns:1fr 1fr; gap:2px; }
+    @media(max-width:700px){.nl-grid{grid-template-columns:1fr;}}
+    .nl-col { padding: 40px; }
+    .nl-col.now { border-right:1px solid var(--border); }
+    @media(max-width:700px){.nl-col.now{border-right:none;border-bottom:1px solid var(--border);}}
+    .nl-header {
+      display:flex; align-items:center; gap:10px; margin-bottom:28px;
     }
-    .faq-q {
-      font-size: 16px; font-weight: 600; cursor: pointer;
-      display: flex; justify-content: space-between; align-items: center;
-      gap: 16px; user-select: none;
+    .nl-badge {
+      font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase;
+      padding:3px 10px; border-radius:100px;
     }
-    .faq-q .chevron {
-      flex-shrink: 0; color: var(--text-dim); transition: transform .2s; font-size: 18px;
-    }
-    .faq-item.open .chevron { transform: rotate(180deg); }
-    .faq-a {
-      font-size: 15px; color: var(--text-muted); line-height: 1.7;
-      max-height: 0; overflow: hidden; transition: max-height .3s ease, padding .3s;
-    }
-    .faq-item.open .faq-a { max-height: 300px; padding-top: 12px; }
+    .nl-badge.live { background:rgba(34,197,94,0.12); color:var(--green); }
+    .nl-badge.soon { background:rgba(245,158,11,0.1); color:var(--amber); }
+    .nl-title { font-size:17px; font-weight:700; }
+    .nl-item { display:flex; gap:12px; padding:14px 0; border-bottom:1px solid var(--border); }
+    .nl-item:last-child { border-bottom:none; }
+    .nl-icon { font-size:16px; flex-shrink:0; width:20px; text-align:center; margin-top:1px; }
+    .nl-text h4 { font-size:14px; font-weight:600; margin-bottom:3px; }
+    .nl-text p { font-size:13px; color:var(--muted); line-height:1.55; }
+    .nl-eta { font-size:11px; color:var(--amber); font-weight:600; margin-top:4px; }
 
-    /* ─── CTA BANNER ─── */
-    .cta-banner {
-      background: linear-gradient(135deg, #0a1628 0%, #0d1e38 50%, #0a1628 100%);
-      border-top: 1px solid var(--border-blue);
-      border-bottom: 1px solid var(--border-blue);
-      text-align: center; padding: 90px 40px;
-    }
-    .cta-banner h2 { font-size: clamp(26px, 4vw, 42px); max-width: 600px; margin: 0 auto 18px; }
-    .cta-banner p { font-size: 17px; color: var(--text-muted); margin-bottom: 36px; }
+    /* ── WHAT TO EXPECT ── */
+    .expect { background: var(--bg); }
+    .timeline { max-width: 640px; }
+    .tl-item { display:flex; gap:20px; padding:28px 0; border-bottom:1px solid var(--border); }
+    .tl-item:last-child { border-bottom:none; }
+    .tl-dot-wrap { display:flex; flex-direction:column; align-items:center; flex-shrink:0; padding-top:4px; }
+    .tl-dot { width:10px; height:10px; border-radius:50%; border:2px solid var(--blue); background:var(--bg); flex-shrink:0; }
+    .tl-dot.filled { background:var(--blue); }
+    .tl-line { width:1px; flex:1; background:var(--border); margin-top:6px; }
+    .tl-body h3 { font-size:15px; font-weight:700; margin-bottom:5px; }
+    .tl-body p { font-size:14px; color:var(--muted); line-height:1.6; }
+    .tl-phase { font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; margin-bottom:8px; }
+    .tl-phase.live { color:var(--green); }
+    .tl-phase.next { color:var(--amber); }
+    .tl-phase.future { color:var(--blue); }
 
-    /* ─── FOOTER ─── */
+    /* ── PRICING ── */
+    .pricing { background: var(--bg-1); }
+    .p-grid { display:flex; gap:16px; justify-content:center; flex-wrap:wrap; }
+    .p-card {
+      background:var(--bg); border:1px solid var(--border);
+      border-radius:16px; padding:36px; width:320px;
+      display:flex; flex-direction:column;
+    }
+    .p-card.feat { border-color:var(--blue); background:rgba(13,94,175,0.04); }
+    .p-name { font-size:12px; font-weight:700; letter-spacing:1px; text-transform:uppercase; color:var(--muted); margin-bottom:10px; }
+    .p-price { font-size:44px; font-weight:900; letter-spacing:-2px; margin-bottom:2px; }
+    .p-price sup { font-size:18px; vertical-align:super; font-weight:600; }
+    .p-cycle { font-size:13px; color:var(--muted); margin-bottom:20px; }
+    .p-sep { height:1px; background:var(--border); margin-bottom:20px; }
+    .p-feat { list-style:none; margin-bottom:28px; flex:1; }
+    .p-feat li { font-size:13.5px; padding:7px 0; border-bottom:1px solid var(--border); display:flex; gap:9px; align-items:flex-start; }
+    .p-feat li:last-child { border-bottom:none; }
+    .ck { color:var(--green); flex-shrink:0; }
+    .p-cta {
+      width:100%; padding:13px; border:none; border-radius:9px;
+      font-size:14px; font-weight:700; cursor:pointer; transition:all .2s;
+      text-align:center; text-decoration:none; display:block;
+    }
+    .p-cta.blue { background:var(--blue); color:#fff; }
+    .p-cta.blue:hover { background:var(--blue-2); }
+    .p-cta.outline { background:transparent; border:1px solid var(--border); color:var(--muted); }
+    .p-cta.outline:hover { border-color:rgba(255,255,255,.15); color:var(--text); }
+    .p-note { text-align:center; font-size:12px; color:var(--dim); margin-top:10px; }
+
+    /* ── FAQ ── */
+    .faq { background:var(--bg); }
+    .faq-list { max-width:640px; }
+    .fq { border-bottom:1px solid var(--border); }
+    .fq-q {
+      width:100%; background:none; border:none; color:var(--text);
+      font-size:15px; font-weight:600; text-align:left;
+      padding:20px 0; cursor:pointer; display:flex; justify-content:space-between; gap:16px;
+      font-family:inherit;
+    }
+    .fq-q .arr { color:var(--dim); transition:transform .2s; flex-shrink:0; }
+    .fq.open .arr { transform:rotate(180deg); }
+    .fq-a { font-size:14.5px; color:var(--muted); line-height:1.75; max-height:0; overflow:hidden; transition:max-height .3s ease, padding-bottom .3s; }
+    .fq.open .fq-a { max-height:300px; padding-bottom:20px; }
+
+    /* ── BOTTOM CTA ── */
+    .bottom { background:var(--bg-2); text-align:center; padding:100px 24px; }
+    .bottom h2 { font-size:clamp(28px,5vw,48px); margin-bottom:14px; }
+    .bottom p { font-size:17px; color:var(--muted); margin-bottom:36px; }
+
+    /* ── FOOTER ── */
     footer {
-      padding: 48px 40px;
-      border-top: 1px solid var(--border);
-      display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;
-      gap: 16px;
+      padding:36px 48px; border-top:1px solid var(--border);
+      display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;
     }
-    .footer-logo { font-size: 17px; font-weight: 800; }
-    .footer-logo span { color: var(--blue); }
-    .footer-links { display: flex; gap: 24px; }
-    .footer-links a { font-size: 13px; color: var(--text-dim); text-decoration: none; transition: color .2s; }
-    .footer-links a:hover { color: var(--text-muted); }
-    .footer-copy { font-size: 13px; color: var(--text-dim); }
+    .f-left { font-size:15px; font-weight:800; }
+    .f-left span { color:var(--blue); }
+    .f-links { display:flex; gap:20px; }
+    .f-links a { font-size:13px; color:var(--dim); text-decoration:none; transition:color .15s; }
+    .f-links a:hover { color:var(--muted); }
+    .f-copy { font-size:12.5px; color:var(--dim); }
 
-    /* ─── RESPONSIVE ─── */
-    @media (max-width: 640px) {
-      nav { padding: 0 20px; }
-      .nav-links { display: none; }
-      section { padding: 72px 20px; }
-      .hero { padding: 80px 20px 60px; }
-      .terminal-wrap { padding: 0 20px; }
-      footer { padding: 36px 20px; flex-direction: column; text-align: center; }
-      .footer-links { justify-content: center; }
-      .step { flex-direction: column; gap: 14px; }
+    /* ── REVEAL ── */
+    .r { opacity:0; transform:translateY(20px); transition:opacity .5s ease, transform .5s ease; }
+    .r.in { opacity:1; transform:none; }
+
+    /* ── MOBILE ── */
+    @media(max-width:640px){
+      nav{padding:0 20px;} .nav-mid{display:none;}
+      section{padding:72px 20px;}
+      .nl-col{padding:28px 20px;}
+      footer{padding:28px 20px;flex-direction:column;text-align:center;}
+      .f-links{justify-content:center;}
     }
-
-    /* scroll reveal */
-    .reveal { opacity: 0; transform: translateY(24px); transition: opacity .5s ease, transform .5s ease; }
-    .reveal.visible { opacity: 1; transform: none; }
   </style>
 </head>
 <body>
 
-  <!-- NAV -->
-  <nav>
-    <div class="nav-logo">tsifl<span>.</span></div>
-    <ul class="nav-links">
-      <li><a href="#features">Features</a></li>
-      <li><a href="#how">How it works</a></li>
-      <li><a href="#vision">Roadmap</a></li>
-      <li><a href="#pricing">Pricing</a></li>
-      <li><a href="#faq">FAQ</a></li>
-    </ul>
-    <a href="#pricing" class="nav-cta">Start free →</a>
-  </nav>
+<nav>
+  <div class="logo">tsifl<span>.</span></div>
+  <ul class="nav-mid">
+    <li><a href="#now">What's live</a></li>
+    <li><a href="#roadmap">Roadmap</a></li>
+    <li><a href="#pricing">Pricing</a></li>
+    <li><a href="#faq">FAQ</a></li>
+  </ul>
+  <a href="#pricing" class="nav-btn" id="nav-cta">Start free →</a>
+</nav>
 
-  <!-- HERO -->
-  <section class="hero">
-    <div class="badge">
-      <span class="badge-dot"></span>
-      v1 is live — Excel &amp; PowerPoint add-ins
-    </div>
-    <h1>The <em>analyst's</em> operating system</h1>
-    <p class="hero-sub">
-      AI that lives inside your spreadsheet. Pull live market data, build comp tables, and generate investor decks — without copy-pasting a single number.
-    </p>
-    <div class="hero-actions">
-      <a href="#pricing" class="btn-primary">Start 14-day free trial</a>
-      <a href="#how" class="btn-secondary">See how it works</a>
-    </div>
-    <p class="trial-note">No credit card required to start &nbsp;·&nbsp; $99/month after trial</p>
-
-    <!-- TERMINAL DEMO -->
-    <div class="terminal-wrap" style="margin-top: 64px;">
-      <div class="terminal">
-        <div class="terminal-bar">
-          <div class="tbar-dot r"></div>
-          <div class="tbar-dot y"></div>
-          <div class="tbar-dot g"></div>
-          <div class="tbar-title">Excel — tsifl add-in</div>
-        </div>
-        <div class="terminal-body">
-          <div class="t-row">
-            <span class="t-prompt">you</span>
-            <span class="t-cmd">build a comp table for MSFT, GOOGL, AAPL, META — EV/EBITDA and P/E multiples</span>
-          </div>
-          <div class="t-response">
-            <b>Fetching live data…</b> Polygon.io · yfinance<br/>
-            <span class="green">✓</span> MSFT — EV $3.1T, EBITDA $135B → <b>22.9x</b> EV/EBITDA, <b>35.4x</b> P/E<br/>
-            <span class="green">✓</span> GOOGL — EV $2.0T, EBITDA $109B → <b>18.3x</b> EV/EBITDA, <b>24.1x</b> P/E<br/>
-            <span class="green">✓</span> AAPL — EV $3.3T, EBITDA $130B → <b>25.4x</b> EV/EBITDA, <b>33.7x</b> P/E<br/>
-            <span class="green">✓</span> META — EV $1.3T, EBITDA $74B → <b>17.6x</b> EV/EBITDA, <b>27.2x</b> P/E<br/><br/>
-            Wrote 4 rows into your sheet with IB formatting. <span class="amber">Bold headers, blue fills, mean/median.</span>
-          </div>
-          <div class="t-row">
-            <span class="t-prompt">you</span>
-            <span class="t-cmd">build deck</span>
-          </div>
-          <div class="t-response">
-            <span class="green">✓</span> Queued 6 slides for PowerPoint. Open PowerPoint — tsifl will populate them automatically.<br/>
-            <b>Save as:</b> <span style="font-family:'JetBrains Mono',monospace;">MSFT_Comps_May2026.pptx</span>
-          </div>
-          <div class="t-row">
-            <span class="t-prompt">you</span>
-            <span class="t-cmd"><span class="t-cursor"></span></span>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- FEATURES — V1 -->
-  <section id="features">
-    <div class="container">
-      <p class="section-label reveal">What's live today</p>
-      <h2 class="reveal">v1 ships with <em>five core capabilities</em></h2>
-      <p class="section-sub reveal">Everything below is built, deployed, and ready to use inside Microsoft Office today.</p>
-      <div class="features-grid">
-
-        <div class="feature-card reveal">
-          <div class="feature-icon">📊</div>
-          <h3>Live comp tables</h3>
-          <p>Type any tickers. tsifl pulls live price, EV, EBITDA, revenue, and margins from Polygon.io and yfinance — then writes a formatted table directly into your cells.</p>
-          <span class="feature-tag tag-live">Live in Excel</span>
-        </div>
-
-        <div class="feature-card reveal">
-          <div class="feature-icon">🎯</div>
-          <h3>IB formatting</h3>
-          <p>Ask tsifl to "IB format this table" and it applies banker-standard styles: bold headers, blue fills, number formatting, borders, mean/median rows. One command, zero manual work.</p>
-          <span class="feature-tag tag-live">Live in Excel</span>
-        </div>
-
-        <div class="feature-card reveal">
-          <div class="feature-icon">🚀</div>
-          <h3>Build Deck (Excel → PPT)</h3>
-          <p>One click sends your comp table to PowerPoint. tsifl generates the slide structure, and the PowerPoint add-in auto-populates every slide within seconds. No copy-paste ever.</p>
-          <span class="feature-tag tag-live">Live — Excel + PowerPoint</span>
-        </div>
-
-        <div class="feature-card reveal">
-          <div class="feature-icon">🤖</div>
-          <h3>Natural language interface</h3>
-          <p>No formulas to memorize. Ask tsifl to calculate WACC, add a DCF, flag outliers, or reformat a section — it understands financial context and writes correct Excel formulas.</p>
-          <span class="feature-tag tag-live">Live in Excel</span>
-        </div>
-
-        <div class="feature-card reveal">
-          <div class="feature-icon">🔢</div>
-          <h3>R add-in</h3>
-          <p>Run statistical analyses, regressions, and visualizations from inside Excel. tsifl generates the R code, executes it via the desktop agent, and returns results inline.</p>
-          <span class="feature-tag tag-live">Live — R + Excel</span>
-        </div>
-
-        <div class="feature-card reveal">
-          <div class="feature-icon">💬</div>
-          <h3>Persistent memory</h3>
-          <p>tsifl remembers your preferences, formatting choices, and past analyses across sessions. The longer you use it, the more it thinks like you do.</p>
-          <span class="feature-tag tag-live">Live</span>
-        </div>
-
-      </div>
-    </div>
-  </section>
-
-  <!-- HOW IT WORKS -->
-  <section id="how" class="how">
-    <div class="container">
-      <p class="section-label reveal">How it works</p>
-      <h2 class="reveal">From question to <em>finished model</em></h2>
-      <p class="section-sub reveal">tsifl is a sidebar inside Office. You talk to it; it does the work.</p>
-      <div class="steps">
-        <div class="step reveal">
-          <div class="step-num">01</div>
-          <div class="step-content">
-            <h3>Install the add-in — 60 seconds</h3>
-            <p>Open Excel or PowerPoint, go to Insert → Add-ins, search "tsifl." One click installs the sidebar into every Office file on your machine. No IT department needed.</p>
-          </div>
-        </div>
-        <div class="step reveal">
-          <div class="step-num">02</div>
-          <div class="step-content">
-            <h3>Tell it what you're building</h3>
-            <p>"Build a comp table for MSFT, GOOGL, META with EV/EBITDA and P/E." tsifl fetches live data, calculates multiples, and writes structured cells — handling blanks, errors, and formatting automatically.</p>
-          </div>
-        </div>
-        <div class="step reveal">
-          <div class="step-num">03</div>
-          <div class="step-content">
-            <h3>Iterate in plain English</h3>
-            <p>"Add a football field chart." "IB format the headers." "Flag anyone above 25x." tsifl understands your context and makes surgical changes without touching anything else.</p>
-          </div>
-        </div>
-        <div class="step reveal">
-          <div class="step-num">04</div>
-          <div class="step-content">
-            <h3>Hit Build Deck → open PowerPoint</h3>
-            <p>When your analysis is ready, one click queues the slides. Switch to PowerPoint and tsifl populates every slide automatically — titles, data tables, commentary. Save and send.</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- VISION / ROADMAP -->
-  <section id="vision" class="vision">
-    <div class="container">
-      <p class="section-label reveal">Product vision</p>
-      <h2 class="reveal">This is version one. <em>Here's where it's going.</em></h2>
-      <p class="section-sub reveal">tsifl is building the agentic layer that connects every tool a financial analyst uses — not just shortcuts, but a system that understands your work and does it for you.</p>
-      <div class="vision-grid">
-
-        <div class="vision-item highlight reveal">
-          <h3>📄 Word add-in <span style="color:var(--amber);font-size:12px;font-weight:600;margin-left:8px;">Q3 2026</span></h3>
-          <p>Draft CIMs, investment memos, and deal summaries. tsifl pulls from your Excel model, formats to bank standard, and writes the narrative — you edit, not write from scratch.</p>
-        </div>
-
-        <div class="vision-item reveal">
-          <h3>🌐 Data terminal <span style="color:var(--amber);font-size:12px;font-weight:600;margin-left:8px;">Q3 2026</span></h3>
-          <p>A Bloomberg-lite web dashboard. Screen comps, pull fundamentals, chart multiples — all inside tsifl.ai, synced to your models.</p>
-        </div>
-
-        <div class="vision-item reveal">
-          <h3>⚡ Cross-app automation <span style="color:var(--amber);font-size:12px;font-weight:600;margin-left:8px;">Q4 2026</span></h3>
-          <p>One command moves data and logic across Excel, PowerPoint, Word, and your browser simultaneously. The motherboard that orchestrates your whole workflow.</p>
-        </div>
-
-        <div class="vision-item reveal">
-          <h3>👥 Team workspaces <span style="color:var(--amber);font-size:12px;font-weight:600;margin-left:8px;">Q4 2026</span></h3>
-          <p>Shared templates, deal rooms, and collaborative models. tsifl learns your firm's style and enforces it across every analyst on the team.</p>
-        </div>
-
-        <div class="vision-item reveal">
-          <h3>🧠 Deal memory <span style="color:var(--blue);font-size:12px;font-weight:600;margin-left:8px;">Phase 3</span></h3>
-          <p>Every deal you build trains tsifl on your preferences, your firm's formatting standards, and your analytical patterns. The more you use it, the better it gets — for you specifically.</p>
-        </div>
-
-        <div class="vision-item reveal">
-          <h3>🔌 Integrations <span style="color:var(--blue);font-size:12px;font-weight:600;margin-left:8px;">Phase 3</span></h3>
-          <p>PitchBook, FactSet, Capital IQ, Refinitiv, and Bloomberg data piped directly into tsifl. One query, every source.</p>
-        </div>
-
-      </div>
-    </div>
-  </section>
-
-  <!-- PRICING -->
-  <section id="pricing" class="pricing">
-    <div class="container">
-      <p class="section-label reveal" style="text-align:center;">Pricing</p>
-      <h2 class="reveal" style="text-align:center;">Simple. <em>One plan.</em></h2>
-      <p class="section-sub reveal" style="text-align:center;margin:0 auto 56px;">Start free. If it saves you time, keep it. No seat limits, no feature gating.</p>
-
-      <div class="pricing-grid">
-
-        <div class="pricing-card reveal">
-          <div class="pricing-tier">Free trial</div>
-          <div class="pricing-price"><sup>$</sup>0</div>
-          <div class="pricing-cadence">for 14 days, then $99/month</div>
-          <div class="pricing-desc">Full access to everything in v1. No card required to start.</div>
-          <ul class="pricing-features">
-            <li><span class="check">✓</span> Excel add-in — unlimited</li>
-            <li><span class="check">✓</span> PowerPoint add-in — unlimited</li>
-            <li><span class="check">✓</span> Live market data (Polygon + yfinance)</li>
-            <li><span class="check">✓</span> Build Deck (Excel → PPT)</li>
-            <li><span class="check">✓</span> R add-in</li>
-            <li><span class="check">✓</span> IB formatting</li>
-          </ul>
-          <a href="#" class="btn-full ghost" id="trial-btn">Start 14-day trial →</a>
-          <p class="trial-label">No credit card required</p>
-        </div>
-
-        <div class="pricing-card featured reveal">
-          <div class="recommended-badge">Most popular</div>
-          <div class="pricing-tier">Pro</div>
-          <div class="pricing-price"><sup>$</sup>99</div>
-          <div class="pricing-cadence">per month, billed monthly</div>
-          <div class="pricing-desc">Everything in the trial, no limits, plus access to every new feature as it ships.</div>
-          <ul class="pricing-features">
-            <li><span class="check">✓</span> Everything in free trial</li>
-            <li><span class="check">✓</span> Unlimited tasks</li>
-            <li><span class="check">✓</span> Priority support</li>
-            <li><span class="check">✓</span> Early access to Word add-in</li>
-            <li><span class="check">✓</span> Early access to data terminal</li>
-            <li><span class="check">✓</span> Deal memory &amp; preferences</li>
-          </ul>
-          <a href="#" class="btn-full blue" id="subscribe-btn">Start free trial →</a>
-          <p class="trial-label">14-day free trial · Cancel anytime</p>
-        </div>
-
-      </div>
-    </div>
-  </section>
-
-  <!-- FAQ -->
-  <section id="faq" class="faq">
-    <div class="container">
-      <p class="section-label reveal">FAQ</p>
-      <h2 class="reveal">Common questions</h2>
-      <div class="faq-list reveal">
-
-        <div class="faq-item">
-          <div class="faq-q">
-            How is tsifl different from Macabacus or Excel's built-in AI?
-            <span class="chevron">⌄</span>
-          </div>
-          <div class="faq-a">Macabacus gives you keyboard shortcuts. Excel Copilot gives you generic AI. tsifl is agentic — it understands the financial context of what you're building, pulls live external data, reasons about your model, and acts across multiple apps simultaneously. You don't configure shortcuts; you describe what you want.</div>
-        </div>
-
-        <div class="faq-item">
-          <div class="faq-q">
-            Where does the market data come from? How accurate is it?
-            <span class="chevron">⌄</span>
-          </div>
-          <div class="faq-a">Live price and market cap data comes from Polygon.io (previous close). Fundamentals — revenue, EBITDA, earnings, margins — come from Financial Modeling Prep (FMP) with yfinance as a fallback. Data is the same as public financial APIs. For LBO-grade accuracy, we recommend verifying against your data provider.</div>
-        </div>
-
-        <div class="faq-item">
-          <div class="faq-q">
-            Does it work on Windows and Mac?
-            <span class="chevron">⌄</span>
-          </div>
-          <div class="faq-a">Yes. The add-ins run inside Microsoft Office's JavaScript runtime, which is cross-platform. Excel and PowerPoint add-ins work on Mac and Windows. The R add-in requires the tsifl desktop agent running locally.</div>
-        </div>
-
-        <div class="faq-item">
-          <div class="faq-q">
-            Is my data private? Does tsifl see my spreadsheets?
-            <span class="chevron">⌄</span>
-          </div>
-          <div class="faq-a">tsifl only reads the data you explicitly send via the chat interface. When you click "Build Deck," tsifl reads the active sheet to generate slide content. Nothing is stored permanently — only what's needed to complete the task. We never train on your financial data.</div>
-        </div>
-
-        <div class="faq-item">
-          <div class="faq-q">
-            What happens after the 14-day trial?
-            <span class="chevron">⌄</span>
-          </div>
-          <div class="faq-a">You'll be prompted to subscribe at $99/month. If you don't, the add-in switches to a limited free tier (500 tasks/month). You won't lose any of your work — just access to unlimited tasks.</div>
-        </div>
-
-        <div class="faq-item">
-          <div class="faq-q">
-            Can I cancel anytime?
-            <span class="chevron">⌄</span>
-          </div>
-          <div class="faq-a">Yes. Cancel from Stripe's customer portal anytime. No cancellation fees. If you cancel mid-month, you keep access until the period ends.</div>
-        </div>
-
-      </div>
-    </div>
-  </section>
-
-  <!-- CTA BANNER -->
-  <div class="cta-banner">
-    <h2 class="reveal">Stop formatting. <em>Start analyzing.</em></h2>
-    <p class="reveal">tsifl does the mechanical work so you can focus on the judgment.</p>
-    <a href="#" class="btn-primary" id="cta-btn" style="font-size:17px;padding:16px 36px;">Start 14-day free trial →</a>
-    <p style="font-size:13px;color:var(--text-dim);margin-top:16px;">No credit card required &nbsp;·&nbsp; $99/month after trial &nbsp;·&nbsp; Cancel anytime</p>
+<!-- HERO -->
+<section class="hero">
+  <div class="pill"><span class="pill-dot"></span>v1 live — Excel &amp; PowerPoint add-ins</div>
+  <h1>The <span class="accent">analyst's</span><br>operating system</h1>
+  <p class="hero-p">AI that lives inside your spreadsheet. Pull live market data, build comp tables, and push finished tearsheets to PowerPoint — without leaving Excel.</p>
+  <div class="cta-row">
+    <a href="#pricing" class="btn-lg" id="hero-cta">Start 14-day free trial</a>
+    <a href="#now" class="btn-ghost">See what's live</a>
   </div>
+  <p class="sub-note">No credit card required &nbsp;·&nbsp; $99 / month after trial</p>
 
-  <!-- FOOTER -->
-  <footer>
-    <div class="footer-logo">tsifl<span>.</span></div>
-    <div class="footer-links">
-      <a href="#features">Features</a>
-      <a href="#pricing">Pricing</a>
-      <a href="#faq">FAQ</a>
-      <a href="mailto:tsiflik@bc.edu">Contact</a>
+  <!-- terminal -->
+  <div class="term-wrap r">
+    <div class="term">
+      <div class="term-head">
+        <div class="d r"></div><div class="d y"></div><div class="d g"></div>
+        <div class="term-title">tsifl — Excel add-in</div>
+      </div>
+      <div class="term-body">
+        <div class="tl"><span class="tp">you</span><span class="tc">build a comp table for MSFT, GOOGL, AAPL, META — EV/EBITDA and P/E</span></div>
+        <div class="tr">
+          <b>Fetching live data</b> via Polygon.io + yfinance&hellip;<br>
+          <span class="ok">✓</span> MSFT &nbsp; EV $3.1T &nbsp; EBITDA $135B &nbsp; → <b>22.9x EV/EBITDA &nbsp; 35.4x P/E</b><br>
+          <span class="ok">✓</span> GOOGL &nbsp;EV $2.0T &nbsp; EBITDA $109B &nbsp; → <b>18.3x EV/EBITDA &nbsp; 24.1x P/E</b><br>
+          <span class="ok">✓</span> AAPL &nbsp;&nbsp;EV $3.3T &nbsp; EBITDA $130B &nbsp; → <b>25.4x EV/EBITDA &nbsp; 33.7x P/E</b><br>
+          <span class="ok">✓</span> META &nbsp;&nbsp;EV $1.3T &nbsp; EBITDA $74B &nbsp;&nbsp; → <b>17.6x EV/EBITDA &nbsp; 27.2x P/E</b><br>
+          <span class="warn">→</span> Wrote 4 rows, IB formatting applied. Mean 21.1x · Median 21.1x
+        </div>
+        <div class="tl"><span class="tp">you</span><span class="tc">build deck</span></div>
+        <div class="tr">
+          <span class="ok">✓</span> Queued 6 slides for PowerPoint — open PowerPoint to auto-populate.<br>
+          <b>Save as:</b> <span style="font-family:'JetBrains Mono',monospace;color:#c5d4e8">MSFT_Comps_May2026.pptx</span>
+        </div>
+        <div class="tl"><span class="tp">you</span><span class="tc"><span class="cur"></span></span></div>
+      </div>
     </div>
-    <div class="footer-copy">© 2026 Tsifulator.ai — Built for analysts, by analysts.</div>
-  </footer>
+  </div>
+</section>
 
-  <script>
-    // ─── Scroll reveal ───
-    const reveals = document.querySelectorAll('.reveal');
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
-    }, { threshold: 0.08 });
-    reveals.forEach(el => observer.observe(el));
+<!-- WHAT'S LIVE NOW vs COMING SOON -->
+<section class="now-later" id="now">
+  <div class="wrap">
+    <p class="tag r">Transparency</p>
+    <h2 class="r">What you get <span class="a">today</span> — and what's next</h2>
+    <p class="lead r">tsifl v1 is a real, working product. Here's exactly what's built, and an honest look at what's still being built.</p>
 
-    // ─── FAQ accordion ───
-    document.querySelectorAll('.faq-q').forEach(q => {
-      q.addEventListener('click', () => {
-        const item = q.closest('.faq-item');
-        const wasOpen = item.classList.contains('open');
-        document.querySelectorAll('.faq-item').forEach(i => i.classList.remove('open'));
-        if (!wasOpen) item.classList.add('open');
+    <div class="nl-grid r">
+      <!-- NOW -->
+      <div class="nl-col now">
+        <div class="nl-header">
+          <span class="nl-badge live">✓ Live now</span>
+          <span class="nl-title">What you can use today</span>
+        </div>
+
+        <div class="nl-item">
+          <div class="nl-icon">📊</div>
+          <div class="nl-text">
+            <h4>Live comp tables in Excel</h4>
+            <p>Ticker → live price, EV, EBITDA, revenue, margins. Writes directly into your cells with IB formatting.</p>
+          </div>
+        </div>
+        <div class="nl-item">
+          <div class="nl-icon">🎯</div>
+          <div class="nl-text">
+            <h4>IB formatting</h4>
+            <p>One command: bold headers, blue fills, correct number formats, mean/median rows. Banker-standard.</p>
+          </div>
+        </div>
+        <div class="nl-item">
+          <div class="nl-icon">🚀</div>
+          <div class="nl-text">
+            <h4>Build Deck — Excel to PowerPoint</h4>
+            <p>Sends your comp table to PowerPoint. Slides auto-populate in seconds. No copy-paste.</p>
+          </div>
+        </div>
+        <div class="nl-item">
+          <div class="nl-icon">🤖</div>
+          <div class="nl-text">
+            <h4>Natural language for formulas + analysis</h4>
+            <p>Ask tsifl to add WACC, flag outliers, or restructure sections. It writes correct Excel formulas.</p>
+          </div>
+        </div>
+        <div class="nl-item">
+          <div class="nl-icon">🔢</div>
+          <div class="nl-text">
+            <h4>R add-in</h4>
+            <p>Run regressions and stats from inside Excel. Results return inline.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- COMING SOON -->
+      <div class="nl-col">
+        <div class="nl-header">
+          <span class="nl-badge soon">In progress</span>
+          <span class="nl-title">What's being built</span>
+        </div>
+
+        <div class="nl-item">
+          <div class="nl-icon">📄</div>
+          <div class="nl-text">
+            <h4>Word add-in — CIM &amp; memo drafting</h4>
+            <p>Pulls from your Excel model and writes the narrative — investment highlights, deal summary, financials section.</p>
+            <div class="nl-eta">Q3 2026</div>
+          </div>
+        </div>
+        <div class="nl-item">
+          <div class="nl-icon">🌐</div>
+          <div class="nl-text">
+            <h4>Data terminal</h4>
+            <p>Bloomberg-lite web dashboard. Screen comps, chart multiples, pull fundamentals — synced to your models.</p>
+            <div class="nl-eta">Q3 2026</div>
+          </div>
+        </div>
+        <div class="nl-item">
+          <div class="nl-icon">⚡</div>
+          <div class="nl-text">
+            <h4>Cross-app automation</h4>
+            <p>One command that moves data across Excel, PowerPoint, Word, and browser simultaneously.</p>
+            <div class="nl-eta">Q4 2026</div>
+          </div>
+        </div>
+        <div class="nl-item">
+          <div class="nl-icon">👥</div>
+          <div class="nl-text">
+            <h4>Team workspaces</h4>
+            <p>Shared templates, deal rooms, firm-level formatting standards enforced across every analyst.</p>
+            <div class="nl-eta">Q4 2026</div>
+          </div>
+        </div>
+        <div class="nl-item">
+          <div class="nl-icon">🔌</div>
+          <div class="nl-text">
+            <h4>PitchBook, FactSet, Capital IQ</h4>
+            <p>Premium data sources piped directly into tsifl. One query, every source.</p>
+            <div class="nl-eta">2027</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ROADMAP TIMELINE -->
+<section class="expect" id="roadmap">
+  <div class="wrap">
+    <p class="tag r">Roadmap</p>
+    <h2 class="r">Built in <span class="a">public.</span> No vaporware.</h2>
+    <p class="lead r">Every quarter has a concrete deliverable. If something slips, you'll know why.</p>
+
+    <div class="timeline">
+      <div class="tl-item r">
+        <div class="tl-dot-wrap"><div class="tl-dot filled"></div><div class="tl-line"></div></div>
+        <div class="tl-body">
+          <div class="tl-phase live">Now — v1 (May 2026)</div>
+          <h3>Excel + PowerPoint add-ins</h3>
+          <p>Live market data, comp tables, IB formatting, Build Deck, R integration. Stripe billing, 14-day trial.</p>
+        </div>
+      </div>
+      <div class="tl-item r">
+        <div class="tl-dot-wrap"><div class="tl-dot"></div><div class="tl-line"></div></div>
+        <div class="tl-body">
+          <div class="tl-phase next">Q3 2026</div>
+          <h3>Word add-in + data terminal</h3>
+          <p>Draft CIMs and investment memos from your model. A web dashboard for screening comps and charting multiples.</p>
+        </div>
+      </div>
+      <div class="tl-item r">
+        <div class="tl-dot-wrap"><div class="tl-dot"></div><div class="tl-line"></div></div>
+        <div class="tl-body">
+          <div class="tl-phase next">Q4 2026</div>
+          <h3>Cross-app automation + team features</h3>
+          <p>The "motherboard" — orchestrate Excel, PowerPoint, Word, and browser in one command. Team workspaces, shared templates, deal memory.</p>
+        </div>
+      </div>
+      <div class="tl-item r">
+        <div class="tl-dot-wrap"><div class="tl-dot"></div></div>
+        <div class="tl-body">
+          <div class="tl-phase future">2027</div>
+          <h3>Premium data + enterprise</h3>
+          <p>PitchBook, FactSet, Capital IQ integrations. Enterprise plans with SSO, audit logs, and custom firm templates.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PRICING -->
+<section class="pricing" id="pricing">
+  <div class="wrap">
+    <p class="tag r" style="text-align:center;">Pricing</p>
+    <h2 class="r" style="text-align:center;max-width:100%;">Start free. Pay when it <span class="a">saves you time.</span></h2>
+    <p class="lead r" style="max-width:100%;text-align:center;margin-left:auto;margin-right:auto;margin-bottom:52px;">One plan. Full access. No seat limits.</p>
+
+    <div class="p-grid r">
+      <div class="p-card">
+        <div class="p-name">Free trial</div>
+        <div class="p-price"><sup>$</sup>0</div>
+        <div class="p-cycle">for 14 days — no card required</div>
+        <div class="p-sep"></div>
+        <ul class="p-feat">
+          <li><span class="ck">✓</span> Excel add-in, full access</li>
+          <li><span class="ck">✓</span> PowerPoint add-in, full access</li>
+          <li><span class="ck">✓</span> Live market data</li>
+          <li><span class="ck">✓</span> Build Deck</li>
+          <li><span class="ck">✓</span> IB formatting</li>
+          <li><span class="ck">✓</span> R add-in</li>
+        </ul>
+        <a href="#" class="p-cta outline" id="trial-btn">Start free trial →</a>
+        <p class="p-note">No credit card needed</p>
+      </div>
+
+      <div class="p-card feat">
+        <div class="p-name">Pro</div>
+        <div class="p-price"><sup>$</sup>99</div>
+        <div class="p-cycle">per month · cancel anytime</div>
+        <div class="p-sep"></div>
+        <ul class="p-feat">
+          <li><span class="ck">✓</span> Everything in free trial</li>
+          <li><span class="ck">✓</span> Unlimited tasks</li>
+          <li><span class="ck">✓</span> Priority support</li>
+          <li><span class="ck">✓</span> Early access — Word add-in</li>
+          <li><span class="ck">✓</span> Early access — data terminal</li>
+          <li><span class="ck">✓</span> Every new feature as it ships</li>
+        </ul>
+        <a href="#" class="p-cta blue" id="sub-btn">Start 14-day free trial →</a>
+        <p class="p-note">Trial included · charged after 14 days</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="faq" id="faq">
+  <div class="wrap">
+    <p class="tag r">FAQ</p>
+    <h2 class="r">Common questions</h2>
+    <div class="faq-list r">
+      <div class="fq">
+        <button class="fq-q">How is tsifl different from Macabacus or Excel Copilot? <span class="arr">⌄</span></button>
+        <div class="fq-a">Macabacus is keyboard shortcuts. Excel Copilot is generic AI. tsifl is agentic — it understands financial context, pulls live external data, reasons about your model, and acts across multiple apps simultaneously. You don't configure shortcuts; you describe what you want built.</div>
+      </div>
+      <div class="fq">
+        <button class="fq-q">Where does the market data come from? <span class="arr">⌄</span></button>
+        <div class="fq-a">Live prices and market cap come from Polygon.io. Fundamentals (revenue, EBITDA, margins) come from Financial Modeling Prep with yfinance as a fallback. Same sources as public financial APIs. For transaction-grade accuracy, verify against your firm's data provider.</div>
+      </div>
+      <div class="fq">
+        <button class="fq-q">Does it work on Mac and Windows? <span class="arr">⌄</span></button>
+        <div class="fq-a">Yes. The add-ins run inside Microsoft Office's JavaScript runtime, which is fully cross-platform. The R add-in requires the tsifl desktop agent running locally on your machine.</div>
+      </div>
+      <div class="fq">
+        <button class="fq-q">Is my financial data private? <span class="arr">⌄</span></button>
+        <div class="fq-a">tsifl only reads data you explicitly send via the chat interface. Nothing is stored permanently beyond what's needed to complete a task. We never train on your financial models or deal data.</div>
+      </div>
+      <div class="fq">
+        <button class="fq-q">What happens after the 14-day trial? <span class="arr">⌄</span></button>
+        <div class="fq-a">If you've added a payment method, you're charged $99/month automatically. If not, the add-in drops to a limited free tier (500 tasks/month). You won't lose any work either way.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- BOTTOM CTA -->
+<div class="bottom">
+  <h2 class="r">Stop formatting.<br><span style="color:var(--blue);">Start analyzing.</span></h2>
+  <p class="r">The mechanical work is done. Your judgment is what gets paid.</p>
+  <a href="#" class="btn-lg r" id="bottom-cta" style="font-size:16px;padding:16px 32px;">Start 14-day free trial →</a>
+  <p style="font-size:12px;color:var(--dim);margin-top:14px;">No card required &nbsp;·&nbsp; $99/month after trial &nbsp;·&nbsp; Cancel anytime</p>
+</div>
+
+<footer>
+  <div class="f-left">tsifl<span>.</span></div>
+  <div class="f-links">
+    <a href="#now">Features</a>
+    <a href="#pricing">Pricing</a>
+    <a href="#faq">FAQ</a>
+    <a href="mailto:tsiflik@bc.edu">Contact</a>
+  </div>
+  <div class="f-copy">© 2026 Tsifulator.ai</div>
+</footer>
+
+<script>
+  // scroll reveal
+  const obs = new IntersectionObserver(e => e.forEach(x => { if(x.isIntersecting) x.target.classList.add('in'); }), {threshold:0.07});
+  document.querySelectorAll('.r').forEach(el => obs.observe(el));
+
+  // faq
+  document.querySelectorAll('.fq-q').forEach(q => {
+    q.addEventListener('click', () => {
+      const item = q.closest('.fq');
+      const open = item.classList.contains('open');
+      document.querySelectorAll('.fq').forEach(f => f.classList.remove('open'));
+      if (!open) item.classList.add('open');
+    });
+  });
+
+  // stripe checkout
+  const BACKEND = 'https://focused-solace-production-6839.up.railway.app';
+  async function checkout(btn) {
+    const orig = btn.textContent;
+    btn.textContent = 'Loading…'; btn.style.opacity = '.6'; btn.style.pointerEvents = 'none';
+    try {
+      let uid = localStorage.getItem('tsifl_uid');
+      if (!uid) { uid = 'web_' + Math.random().toString(36).slice(2,11); localStorage.setItem('tsifl_uid', uid); }
+      const r = await fetch(`${BACKEND}/billing/checkout`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({user_id: uid})
       });
-    });
+      const d = await r.json();
+      if (d.url) window.open(d.url, '_blank');
+      else alert('Something went wrong — email tsiflik@bc.edu for access.');
+    } catch { alert('Could not reach checkout — email tsiflik@bc.edu for access.'); }
+    finally { btn.textContent = orig; btn.style.opacity = ''; btn.style.pointerEvents = ''; }
+  }
 
-    // ─── Stripe checkout ───
-    const BACKEND = 'https://focused-solace-production-6839.up.railway.app';
-
-    async function startCheckout() {
-      const btn = this;
-      const original = btn.textContent;
-      btn.textContent = 'Loading…';
-      btn.style.opacity = '0.7';
-      btn.style.pointerEvents = 'none';
-      try {
-        // Generate a simple anonymous user_id stored in localStorage
-        let userId = localStorage.getItem('tsifl_uid');
-        if (!userId) {
-          userId = 'web_' + Math.random().toString(36).slice(2, 11);
-          localStorage.setItem('tsifl_uid', userId);
-        }
-        const res = await fetch(`${BACKEND}/billing/checkout`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user_id: userId }),
-        });
-        const data = await res.json();
-        if (data.url) {
-          window.open(data.url, '_blank');
-        } else {
-          alert('Something went wrong. Email tsiflik@bc.edu for access.');
-        }
-      } catch (err) {
-        alert('Could not connect to checkout. Email tsiflik@bc.edu for access.');
-      } finally {
-        btn.textContent = original;
-        btn.style.opacity = '';
-        btn.style.pointerEvents = '';
-      }
-    }
-
-    ['trial-btn', 'subscribe-btn', 'cta-btn'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.addEventListener('click', function(e) { e.preventDefault(); startCheckout.call(this); });
-    });
-
-    const navCta = document.querySelector('.nav-cta');
-    if (navCta) navCta.addEventListener('click', function(e) { e.preventDefault(); startCheckout.call(this); });
-  </script>
+  ['hero-cta','trial-btn','sub-btn','bottom-cta','nav-cta'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', e => { e.preventDefault(); checkout(el); });
+  });
+</script>
 </body>
 </html>
