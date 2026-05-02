@@ -54,10 +54,10 @@ async def generate_comp_xlsx(req: CompRequest):
 @router.post("/comp-slide.pptx")
 async def generate_comp_pptx(req: CompRequest):
     """
-    Generate and return a fully-formatted IB comp slide as .pptx.
+    Generate and return a fully-formatted IB comp deck (4 slides) as .pptx.
     Either pass `tickers` (live data fetch) or a full `payload`.
     """
-    from services.templates import generate_comp_slide_pptx, build_comp_payload
+    from services.templates import generate_comp_deck_pptx, build_comp_payload
 
     if req.tickers:
         payload = await build_comp_payload(req.tickers, title=req.title)
@@ -67,7 +67,7 @@ async def generate_comp_pptx(req: CompRequest):
         raise HTTPException(400, "Provide either tickers or payload")
 
     try:
-        pptx_bytes = generate_comp_slide_pptx(payload)
+        pptx_bytes = generate_comp_deck_pptx(payload)
     except Exception as e:
         raise HTTPException(500, f"Template generation failed: {e}")
 

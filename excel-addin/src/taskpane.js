@@ -3754,13 +3754,37 @@ async function handleIBFormat() {
 // Reads the active sheet, sends data to Claude in PPT mode, stores the
 // generated actions as a ppt_actions transfer. The PPT add-in polls for
 // ppt_actions every 4s and auto-executes them when found.
+// ── Shared ticker extractor ───────────────────────────────────────────────────
+function _extractTickersFromValues(values) {
+  const tickers = [];
+  let tickerCol = -1;
+  for (let r = 0; r < values.length; r++) {
+    const row = values[r];
+    // Find the "Ticker" header column
+    if (tickerCol === -1) {
+      const ti = row.findIndex(c =>
+        typeof c === "string" && /^ticker$/i.test(String(c).trim())
+      );
+      if (ti !== -1) { tickerCol = ti; continue; }
+    }
+    if (tickerCol !== -1) {
+      const v = String(row[tickerCol] ?? "").trim();
+      // Valid ticker: 1-5 uppercase letters, not a label row
+      if (/^[A-Z]{1,5}$/.test(v) && !["MEDIAN","MEAN","AVG"].includes(v)) {
+        tickers.push(v);
+      }
+    }
+  }
+  return tickers;
+}
+
 async function handleBuildDeck() {
   const btn = document.getElementById("build-deck-btn");
   if (btn) { btn.disabled = true; btn.textContent = "⏳ Building..."; }
   setStatus("Reading comp...");
 
   try {
-    // 1. Read the active sheet's used range (values, capped at 60 rows × 30 cols)
+    // 1. Read active sheet
     let compData = null;
     await Excel.run(async (ctx) => {
       const sheet = ctx.workbook.worksheets.getActiveWorksheet();
@@ -3768,124 +3792,140 @@ async function handleBuildDeck() {
       const range = sheet.getUsedRange();
       range.load(["values", "rowCount", "columnCount"]);
       await ctx.sync();
-
       const vals = range.values;
-      const rows = Math.min(vals.length, 60);
-      const cols = Math.min(vals[0]?.length || 0, 30);
       compData = {
         sheetName: sheet.name,
-        values: vals.slice(0, rows).map(r => r.slice(0, cols)),
+        values: vals.slice(0, 80).map(r => r.slice(0, 20)),
       };
     });
 
-    if (!compData || !compData.values.length) {
+    if (!compData?.values.length) {
       showToast("No data in active sheet", "error", 3000);
       return;
     }
 
-    // 2. Format as TSV for Claude
+    // 2. Try to extract tickers for template path
+    const tickers = _extractTickersFromValues(compData.values);
+    const deckTitle = compData.sheetName.replace(/[^a-zA-Z0-9_\- ]/g, "").trim() || "Trading Comps";
+
+    // ── PATH A: python-pptx template (beautiful, deterministic) ──────────
+    if (tickers.length >= 2) {
+      setStatus("Generating deck...");
+      showTypingIndicator("thinking");
+
+      const resp = await fetch(`${BACKEND_URL}/generate/comp-slide.pptx`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ tickers, title: deckTitle }),
+      });
+      hideTypingIndicator();
+
+      if (resp.ok) {
+        const blob     = await resp.blob();
+        const filename = deckTitle.replace(/\s+/g, "_") + ".pptx";
+        const url      = URL.createObjectURL(blob);
+        const a        = document.createElement("a");
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        setStatus("Deck ready ✓");
+        appendMessage(
+          "assistant",
+          `✅ **${filename}** downloaded.\n\n` +
+          `4 slides — title · comps table · multiples snapshot · key takeaways\n\n` +
+          `Built from: ${tickers.join(" · ")}`
+        );
+        showToast(`📊 ${filename} downloaded — open in PowerPoint`, "success", 6000);
+        return;
+      }
+      // Template generation failed — fall through to Claude path
+      console.warn("[tsifl] Template path failed, falling back to Claude");
+    }
+
+    // ── PATH B: Claude + Office.js transfer (fallback for non-comp sheets) ──
+    setStatus("Generating deck via AI...");
+    showTypingIndicator("thinking");
+
     const tsv = compData.values
-      .map(row => row.map(c => (c === null || c === undefined) ? "" : String(c)).join("\t"))
+      .map(row => row.map(c => (c == null) ? "" : String(c)).join("\t"))
       .join("\n");
 
     const deckPrompt =
-      `Build a professional investment banking tearsheet presentation from the comp table below.\n\n` +
-      `Requirements:\n` +
-      `- Slide 1: Title slide — "Trading Comp Tearsheet" with subtitle "${compData.sheetName}"\n` +
-      `- Slide 2: Trading comps summary — full peer table (use add_table with ALL rows and columns from the data)\n` +
-      `- Slide 3: Valuation snapshot — key median multiples as large KPI text boxes (EV/Revenue, EV/EBITDA, P/E if present)\n` +
-      `- Slide 4: Key takeaways — 3-5 bullets drawn from the data\n\n` +
-      `CRITICAL: Use the EXACT data below — no made-up numbers. Every multiple and name must match.\n\n` +
-      `Source: Excel sheet "${compData.sheetName}"\n\`\`\`\n${tsv}\n\`\`\``;
+      `Build a professional IB tearsheet from the data below.\n` +
+      `Slide 1: Title — "${deckTitle}"\n` +
+      `Slide 2: Data table with ALL rows and columns exactly as provided\n` +
+      `Slide 3: Key multiples snapshot (EV/EBITDA, EV/Revenue, P/E if present)\n` +
+      `Slide 4: 3-5 key takeaways\n\n` +
+      `CRITICAL: Use EXACT numbers from the data — no invented figures.\n\n` +
+      `\`\`\`\n${tsv}\n\`\`\``;
 
-    setStatus("Generating deck...");
-    showTypingIndicator("thinking");
-
-    // 3. Call backend in PowerPoint mode
     const resp = await fetch(`${BACKEND_URL}/chat/`, {
-      method: "POST",
+      method:  "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        user_id: CURRENT_USER.id,
-        message: deckPrompt,
-        context: { app: "powerpoint", force_model: "sonnet" },
+        user_id:    CURRENT_USER.id,
+        message:    deckPrompt,
+        context:    { app: "powerpoint", force_model: "sonnet" },
         session_id: `deck_${Date.now()}`,
       }),
     });
-
     hideTypingIndicator();
 
     if (!resp.ok) {
-      const err = await resp.json().catch(() => ({ detail: `HTTP ${resp.status}` }));
+      const err = await resp.json().catch(() => ({}));
       throw new Error(err.detail || `HTTP ${resp.status}`);
     }
 
-    const data = await resp.json();
+    const data    = await resp.json();
     const actions = data.actions?.length ? data.actions
       : (data.action?.type && data.action.type !== "none" ? [data.action] : []);
 
     if (!actions.length) {
       showToast("No slides generated — try again", "error", 3000);
-      appendMessage("assistant", data.reply || "No slides were returned. Try again.");
+      appendMessage("assistant", data.reply || "No slides returned. Try again.");
       return;
     }
 
-    // 4. Store actions as ppt_actions transfer (TTL: 1 hour)
+    // Store as ppt_actions transfer for PPT add-in to execute
     const slideCount = actions.filter(a => a.type === "create_slide").length;
-    const transferResp = await fetch(`${BACKEND_URL}/transfer/store`, {
-      method: "POST",
+    await fetch(`${BACKEND_URL}/transfer/store`, {
+      method:  "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        from_app: "excel",
-        to_app: "powerpoint",
+        from_app:  "excel",
+        to_app:    "powerpoint",
         data_type: "ppt_actions",
-        data: JSON.stringify(actions),
-        metadata: {
-          title: `${compData.sheetName} Tearsheet`,
-          slide_count: slideCount,
-          source_sheet: compData.sheetName,
-        },
+        data:      JSON.stringify(actions),
+        metadata:  { title: deckTitle, slide_count: slideCount },
       }),
     });
 
-    if (!transferResp.ok) throw new Error("Failed to queue deck transfer");
-
-    const deckTitle = `${compData.sheetName} Tearsheet`;
     setStatus("Deck queued ✓");
-
     appendMessage(
       "assistant",
-      `Deck queued — **${slideCount} slides** built from "${compData.sheetName}". ` +
-      `Switch to PowerPoint with tsifl open and it builds automatically.`
+      `Deck queued — **${slideCount} slides** ready. Open PowerPoint with tsifl and they build automatically.`
     );
-
-    // Inject "Open PowerPoint" button into the last chat message
     const chatHistory = document.getElementById("chat-history");
     const lastMsg = chatHistory?.lastElementChild;
     if (lastMsg) {
       const openBtn = document.createElement("button");
-      openBtn.className = "open-ppt-btn";
+      openBtn.className   = "open-ppt-btn";
       openBtn.textContent = "🚀 Open PowerPoint";
-      openBtn.title = `Open PowerPoint — deck will auto-build as "${deckTitle}.pptx"`;
       openBtn.addEventListener("click", () => {
-        // macOS: ms-powerpoint: URI opens the app. On Windows this also works.
-        // Falls back gracefully if the protocol handler isn't registered.
         window.open("ms-powerpoint:", "_blank");
-        openBtn.textContent = "✓ Opening...";
-        openBtn.disabled = true;
-        setTimeout(() => {
-          openBtn.textContent = `Save as: ${deckTitle}.pptx`;
-        }, 2500);
+        openBtn.disabled    = true;
+        openBtn.textContent = `Save as: ${deckTitle}.pptx`;
       });
       lastMsg.appendChild(openBtn);
     }
-
-    showToast(`📊 ${slideCount} slides queued — open tsifl in PowerPoint`, "success", 7000);
+    showToast(`📊 ${slideCount} slides queued`, "success", 6000);
 
   } catch (err) {
     console.error("[tsifl] Build deck error:", err);
     setStatus("Deck failed");
-    showToast("Deck build failed: " + err.message, "error", 4000);
+    showToast("Build Deck failed: " + err.message, "error", 4000);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = "📊 Build Deck"; }
   }
@@ -3921,19 +3961,7 @@ async function handleExportFormatted(format) {
       return;
     }
 
-    // Extract tickers — look for a row that looks like a header with a Ticker column
-    // then pull values in that column. Fall back to sending raw payload.
-    const tickers = [];
-    let tickerCol = -1;
-    for (let r = 0; r < sheetValues.length; r++) {
-      const row = sheetValues[r];
-      const ti  = row.findIndex(c => typeof c === "string" && /^ticker$/i.test(String(c).trim()));
-      if (ti !== -1) { tickerCol = ti; continue; }
-      if (tickerCol !== -1 && row[tickerCol] && String(row[tickerCol]).trim().length >= 2) {
-        const v = String(row[tickerCol]).trim();
-        if (/^[A-Z]{1,5}$/.test(v)) tickers.push(v);
-      }
-    }
+    const tickers = _extractTickersFromValues(sheetValues);
 
     setStatus(format === "xlsx" ? "Generating .xlsx..." : "Generating .pptx...");
 
