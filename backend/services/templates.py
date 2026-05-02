@@ -11,18 +11,20 @@ Supported templates:
 
 import io
 from typing import Optional
+from statistics import median, mean
 
 # ── Shared brand constants ─────────────────────────────────────────────────
-NAVY      = "002366"   # IB dark navy — headers, title bars
-NAVY_MED  = "1F3864"   # slightly lighter navy — alternating header
-BLUE_LIGHT= "D6E4F0"   # light blue — median/mean row bg
-BLUE_FILL = "EBF3FB"   # very light — subtle alternating rows
-WHITE     = "FFFFFF"
-DARK_TEXT = "1A1A2E"
-GREY_LINE = "BDC3C7"
-GREEN_CHK = "27AE60"
-RED_NEG   = "E74C3C"
-FONT_NAME = "Calibri"
+NAVY       = "002366"
+NAVY_MED   = "1F3864"
+BLUE_LIGHT = "D6E4F0"
+BLUE_FILL  = "F0F5FA"   # very subtle alternating — less aggressive
+WHITE      = "FFFFFF"
+DARK_TEXT  = "1A1A2E"
+GREY_LINE  = "BDC3C7"
+GREY_MED   = "D1D5DB"
+GREEN_CHK  = "27AE60"
+RED_NEG    = "C0392B"
+FONT_NAME  = "Calibri"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -32,25 +34,13 @@ FONT_NAME = "Calibri"
 def generate_comp_table_xlsx(payload: dict) -> bytes:
     """
     Generate a fully-formatted IB trading comps table as .xlsx bytes.
-
-    payload = {
-      "title": str,
-      "date":  str,          # "As of May 2026"
-      "currency": str,       # "USD ($M)"
-      "companies": [
-        { "ticker", "name", "period",
-          "revenue", "gross_margin", "ebitda", "ebitda_margin",
-          "share_price", "market_cap", "ev",
-          "pe", "ev_ebitda", "ev_revenue" }
-      ]
-    }
+    Sorted by market cap descending. Includes Median, Mean, High, Low.
     """
     from openpyxl import Workbook
     from openpyxl.styles import (
         Font, PatternFill, Alignment, Border, Side, numbers
     )
     from openpyxl.utils import get_column_letter
-    from statistics import median, mean
 
     wb = Workbook()
     ws = wb.active
@@ -61,202 +51,232 @@ def generate_comp_table_xlsx(payload: dict) -> bytes:
     date_str  = payload.get("date", "")
     currency  = payload.get("currency", "USD ($M)")
 
+    # Sort by market cap descending (IB standard)
+    companies = sorted(companies, key=lambda c: c.get("market_cap") or 0, reverse=True)
+
     # ── Style helpers ─────────────────────────────────────────────────────
-    def fill(hex_color):
+    def _fill(hex_color):
         return PatternFill("solid", fgColor=hex_color)
 
-    def font(bold=False, color=DARK_TEXT, size=10, name=FONT_NAME, italic=False):
-        return Font(bold=bold, color=color, size=size, name=name, italic=italic)
+    def _font(bold=False, color=DARK_TEXT, size=10, italic=False):
+        return Font(bold=bold, color=color, size=size, name=FONT_NAME, italic=italic)
 
-    def align(h="left", v="center", wrap=False):
+    def _align(h="left", v="center", wrap=False):
         return Alignment(horizontal=h, vertical=v, wrap_text=wrap)
 
-    thin  = Side(style="thin",   color=GREY_LINE)
-    thick = Side(style="medium", color=NAVY)
+    thin_side  = Side(style="thin", color=GREY_LINE)
+    thick_side = Side(style="medium", color=NAVY)
+    hair_side  = Side(style="hair", color=GREY_MED)
 
-    def border(top=None, bottom=None, left=None, right=None):
-        return Border(top=top, bottom=bottom, left=left, right=right)
+    def _all_border():
+        return Border(top=hair_side, bottom=hair_side, left=hair_side, right=hair_side)
 
-    def all_border(style="thin"):
-        s = Side(style=style, color=GREY_LINE)
-        return Border(top=s, bottom=s, left=s, right=s)
-
-    def header_border():
+    def _header_border():
         return Border(
-            top=Side(style="medium", color=NAVY),
-            bottom=Side(style="medium", color=NAVY),
-            left=Side(style="thin", color=WHITE),
-            right=Side(style="thin", color=WHITE),
+            top=thick_side, bottom=thick_side,
+            left=Side(style="thin", color=NAVY_MED),
+            right=Side(style="thin", color=NAVY_MED),
         )
 
-    # ── Column layout ──────────────────────────────────────────────────────
-    # A=Ticker, B=Company, C=Period, D=Revenue, E=Gross%, F=EBITDA,
-    # G=EBITDA%, H=EV, I=Mkt Cap, J=EV/EBITDA, K=EV/Rev, L=P/E
-    cols = ["A","B","C","D","E","F","G","H","I","J","K","L"]
-    col_widths = [10, 26, 10, 12, 12, 12, 12, 12, 12, 12, 10, 10]
-    for i, (col, w) in enumerate(zip(cols, col_widths)):
+    def _stat_border(is_last=False):
+        return Border(
+            top=Side(style="thin", color=NAVY),
+            bottom=Side(style="medium" if is_last else "thin", color=NAVY),
+            left=hair_side, right=hair_side,
+        )
+
+    # ── Column layout (IB standard order) ──────────────────────────────────
+    # A=Company, B=Ticker, C=Price, D=Mkt Cap, E=Net Debt, F=EV,
+    # G=Revenue, H=EBITDA, I=Gross%, J=EBITDA%, K=EV/Rev, L=EV/EBITDA, M=P/E
+    cols = ["A","B","C","D","E","F","G","H","I","J","K","L","M"]
+    col_widths = [24, 8, 10, 12, 12, 12, 12, 12, 11, 11, 10, 10, 10]
+    for col, w in zip(cols, col_widths):
         ws.column_dimensions[col].width = w
 
-    # Row heights
-    ws.row_dimensions[1].height = 28
-    ws.row_dimensions[2].height = 16
-    ws.row_dimensions[4].height = 32
-
-    # ── Row 1 — Title ──────────────────────────────────────────────────────
-    ws.merge_cells("A1:L1")
+    # ── Row 1 — Title bar ──────────────────────────────────────────────────
+    ws.merge_cells("A1:M1")
+    ws.row_dimensions[1].height = 30
     c = ws["A1"]
-    c.value         = title
-    c.font          = Font(bold=True, color=WHITE, size=14, name=FONT_NAME)
-    c.fill          = fill(NAVY)
-    c.alignment     = align("left", "center")
-    c.border        = border(bottom=thick)
+    c.value     = f"  {title}"
+    c.font      = _font(bold=True, color=WHITE, size=13)
+    c.fill      = _fill(NAVY)
+    c.alignment = _align("left", "center")
+    c.border    = Border(bottom=thick_side)
 
     # ── Row 2 — Subtitle ──────────────────────────────────────────────────
-    ws.merge_cells("A2:C2")
-    ws["A2"].value     = date_str
-    ws["A2"].font      = font(italic=True, color="6B7280", size=9)
-    ws["A2"].alignment = align("left", "center")
+    ws.merge_cells("A2:D2")
+    ws.row_dimensions[2].height = 18
+    ws["A2"].value     = f"  {date_str}"
+    ws["A2"].font      = _font(italic=True, color="6B7280", size=9)
+    ws["A2"].alignment = _align("left", "center")
 
-    ws.merge_cells("D2:L2")
-    ws["D2"].value     = currency
-    ws["D2"].font      = font(italic=True, color="6B7280", size=9)
-    ws["D2"].alignment = align("right", "center")
+    ws.merge_cells("E2:M2")
+    ws["E2"].value     = f"All figures in {currency}  "
+    ws["E2"].font      = _font(italic=True, color="6B7280", size=9)
+    ws["E2"].alignment = _align("right", "center")
 
-    # ── Row 3 — blank ─────────────────────────────────────────────────────
-    ws.row_dimensions[3].height = 6
+    # ── Row 3 — Spacer ────────────────────────────────────────────────────
+    ws.row_dimensions[3].height = 4
 
-    # ── Row 4 — Column headers ────────────────────────────────────────────
+    # ── Row 4 — Section sub-headers ───────────────────────────────────────
+    ws.row_dimensions[4].height = 15
+    section_defs = [
+        ("A4:B4", ""),
+        ("C4:F4", "Market Data"),
+        ("G4:J4", "Financials (LTM)"),
+        ("K4:M4", "Multiples"),
+    ]
+    for rng, label in section_defs:
+        ws.merge_cells(rng)
+        cell = ws[rng.split(":")[0]]
+        cell.value     = label
+        cell.font      = _font(bold=True, color=WHITE, size=8)
+        cell.fill      = _fill(NAVY_MED)
+        cell.alignment = _align("center", "center")
+        cell.border    = Border(bottom=Side(style="thin", color=NAVY))
+
+    # ── Row 5 — Column headers ────────────────────────────────────────────
+    ws.row_dimensions[5].height = 32
     headers = [
-        "Ticker", "Company", "Period",
-        "Revenue", "Gross Margin", "EBITDA", "EBITDA Margin",
-        "EV ($B)", "Mkt Cap ($B)",
-        "EV / EBITDA", "EV / Revenue", "P / E"
+        "Company", "Ticker", "Share\nPrice ($)",
+        "Market Cap\n($B)", "Net Debt\n($B)", "Enterprise\nValue ($B)",
+        "Revenue\n($M)", "EBITDA\n($M)", "Gross\nMargin", "EBITDA\nMargin",
+        "EV /\nRevenue", "EV /\nEBITDA", "P / E"
     ]
     for col_letter, header_text in zip(cols, headers):
-        c = ws[f"{col_letter}4"]
+        c = ws[f"{col_letter}5"]
         c.value     = header_text
-        c.font      = Font(bold=True, color=WHITE, size=9, name=FONT_NAME)
-        c.fill      = fill(NAVY)
-        c.alignment = align("center", "center", wrap=True)
-        c.border    = header_border()
+        c.font      = _font(bold=True, color=WHITE, size=9)
+        c.fill      = _fill(NAVY)
+        c.alignment = _align("center", "center", wrap=True)
+        c.border    = _header_border()
 
     # ── Data rows ──────────────────────────────────────────────────────────
-    FMT_INT    = '#,##0'
+    FMT_PRICE  = '[$-409]#,##0.00'
     FMT_DEC1   = '#,##0.0'
-    FMT_MULT   = '#,##0.0x'
+    FMT_DEC0   = '#,##0'
+    FMT_MULT   = '0.0"x"'
     FMT_PCT    = '0.0%'
-    FMT_PRICE  = '[$$-409]#,##0.00'
 
-    ev_ebitda_vals, ev_rev_vals, pe_vals = [], [], []
-    ebitda_margin_vals, gross_margin_vals = [], []
+    data_start = 6
 
     for i, co in enumerate(companies):
-        row = 5 + i
-        ws.row_dimensions[row].height = 18
-        row_fill = fill(BLUE_FILL) if i % 2 == 1 else fill(WHITE)
+        row = data_start + i
+        ws.row_dimensions[row].height = 20
+        row_fill = _fill(BLUE_FILL) if i % 2 == 1 else _fill(WHITE)
 
-        def cell(col_letter, value, fmt=None, h_align="right"):
+        def _cell(col_letter, value, fmt=None, h_align="right", bold=False, neg_red=False):
             c = ws[f"{col_letter}{row}"]
             c.value     = value
-            c.font      = font(size=9)
             c.fill      = row_fill
-            c.alignment = align(h_align, "center")
-            c.border    = all_border()
+            c.alignment = _align(h_align, "center")
+            c.border    = _all_border()
+            if fmt:
+                c.number_format = fmt
+            # Color: negative numbers in red
+            text_color = DARK_TEXT
+            if neg_red and value is not None:
+                try:
+                    if float(value) < 0:
+                        text_color = RED_NEG
+                except (ValueError, TypeError):
+                    pass
+            c.font = _font(bold=bold, size=9, color=text_color)
+
+        # Company + Ticker
+        _cell("A", co.get("name", ""),     h_align="left")
+        _cell("B", co.get("ticker", ""),   h_align="center", bold=True)
+
+        # Market data
+        _cell("C", co.get("share_price"),  FMT_PRICE)
+        _cell("D", co.get("market_cap"),   FMT_DEC1)
+        _cell("E", co.get("net_debt_B"),   FMT_DEC1, neg_red=True)
+        _cell("F", co.get("ev"),           FMT_DEC1)
+
+        # Financials (in $M)
+        rev_m    = co.get("revenue_M")
+        ebitda_m = co.get("ebitda_M")
+        _cell("G", rev_m,                  FMT_DEC0)
+        _cell("H", ebitda_m,               FMT_DEC0, neg_red=True)
+        _cell("I", co.get("gross_margin"), FMT_PCT)
+        _cell("J", co.get("ebitda_margin"),FMT_PCT)
+
+        # Multiples
+        _cell("K", co.get("ev_revenue"),   FMT_MULT, bold=True)
+        _cell("L", co.get("ev_ebitda"),    FMT_MULT, bold=True)
+        _cell("M", co.get("pe"),           FMT_MULT, bold=True)
+
+    # ── Spacer row ─────────────────────────────────────────────────────────
+    spacer_row = data_start + len(companies)
+    ws.row_dimensions[spacer_row].height = 6
+
+    # ── Stats rows: High, Low, Median, Mean ────────────────────────────────
+    def _safe_list(key):
+        return [co[key] for co in companies if co.get(key) is not None]
+
+    stat_defs = [
+        ("High",   lambda vals: max(vals) if vals else None),
+        ("Low",    lambda vals: min(vals) if vals else None),
+        ("Median", lambda vals: median(vals) if vals else None),
+        ("Mean",   lambda vals: mean(vals) if vals else None),
+    ]
+
+    for j, (label, fn) in enumerate(stat_defs):
+        row = spacer_row + 1 + j
+        ws.row_dimensions[row].height = 20
+        is_last = (j == len(stat_defs) - 1)
+        is_med_mean = label in ("Median", "Mean")
+        bg = BLUE_LIGHT if is_med_mean else WHITE
+
+        def _stat_cell(col_letter, value, fmt=None, bold=False, h_align="right"):
+            c = ws[f"{col_letter}{row}"]
+            c.value     = value
+            c.font      = _font(bold=bold, size=9, color=DARK_TEXT)
+            c.fill      = _fill(bg)
+            c.alignment = _align(h_align, "center")
+            c.border    = _stat_border(is_last)
             if fmt:
                 c.number_format = fmt
 
-        # Text cols
-        cell("A", co.get("ticker",""), h_align="center")
-        cell("B", co.get("name",""),   h_align="left")
-        cell("C", co.get("period",""), h_align="center")
-        ws[f"A{row}"].font = Font(bold=True, size=9, name=FONT_NAME)
+        _stat_cell("A", label, bold=True, h_align="left")
+        _stat_cell("B", "")
+        _stat_cell("C", fn(_safe_list("share_price")), FMT_PRICE)
+        _stat_cell("D", fn(_safe_list("market_cap")),  FMT_DEC1)
+        _stat_cell("E", fn(_safe_list("net_debt_B")),  FMT_DEC1)
+        _stat_cell("F", fn(_safe_list("ev")),          FMT_DEC1)
+        _stat_cell("G", fn(_safe_list("revenue_M")),   FMT_DEC0)
+        _stat_cell("H", fn(_safe_list("ebitda_M")),    FMT_DEC0)
+        _stat_cell("I", fn(_safe_list("gross_margin")),FMT_PCT)
+        _stat_cell("J", fn(_safe_list("ebitda_margin")),FMT_PCT)
+        _stat_cell("K", fn(_safe_list("ev_revenue")),  FMT_MULT, bold=True)
+        _stat_cell("L", fn(_safe_list("ev_ebitda")),   FMT_MULT, bold=True)
+        _stat_cell("M", fn(_safe_list("pe")),          FMT_MULT, bold=True)
 
-        # Numeric cols
-        cell("D", co.get("revenue"),       FMT_DEC1)
-        cell("E", co.get("gross_margin"),  FMT_PCT)
-        cell("F", co.get("ebitda"),        FMT_DEC1)
-        cell("G", co.get("ebitda_margin"), FMT_PCT)
-        cell("H", co.get("ev"),            FMT_DEC1)
-        cell("I", co.get("market_cap"),    FMT_DEC1)
-        cell("J", co.get("ev_ebitda"),     FMT_MULT)
-        cell("K", co.get("ev_revenue"),    FMT_MULT)
-        cell("L", co.get("pe"),            FMT_MULT)
+    # ── Source footer ──────────────────────────────────────────────────────
+    src_row = spacer_row + 1 + len(stat_defs) + 1
+    ws.row_dimensions[src_row].height = 16
+    ws.merge_cells(f"A{src_row}:M{src_row}")
+    ws[f"A{src_row}"].value = "Source: Polygon.io, Financial Modeling Prep  |  Generated by tsifl"
+    ws[f"A{src_row}"].font  = _font(italic=True, color="9CA3AF", size=8)
 
-        # Collect for stats
-        if co.get("ev_ebitda"):  ev_ebitda_vals.append(co["ev_ebitda"])
-        if co.get("ev_revenue"): ev_rev_vals.append(co["ev_revenue"])
-        if co.get("pe"):         pe_vals.append(co["pe"])
-        if co.get("ebitda_margin"): ebitda_margin_vals.append(co["ebitda_margin"])
-        if co.get("gross_margin"):  gross_margin_vals.append(co["gross_margin"])
+    note_row = src_row + 1
+    ws.merge_cells(f"A{note_row}:M{note_row}")
+    ws[f"A{note_row}"].value = (
+        "Note: Market data as of prior close. Financials are LTM (last twelve months). "
+        "EV = Market Cap + Net Debt. Multiples calculated using LTM figures."
+    )
+    ws[f"A{note_row}"].font  = _font(italic=True, color="9CA3AF", size=8)
+    ws[f"A{note_row}"].alignment = _align("left", "top", wrap=True)
+    ws.row_dimensions[note_row].height = 28
 
-    # ── Median / Mean rows ─────────────────────────────────────────────────
-    stat_rows = [
-        ("Median", lambda vals: median(vals) if vals else None),
-        ("Mean",   lambda vals: mean(vals)   if vals else None),
-    ]
-    blank_row  = 5 + len(companies)
-    ws.row_dimensions[blank_row].height = 8
-
-    for j, (label, fn) in enumerate(stat_rows):
-        row = 5 + len(companies) + 1 + j
-        ws.row_dimensions[row].height = 18
-
-        def stat_cell(col_letter, value, fmt=None, bold=False, h="right"):
-            c = ws[f"{col_letter}{row}"]
-            c.value     = value
-            c.font      = Font(bold=bold, color=DARK_TEXT, size=9, name=FONT_NAME)
-            c.fill      = fill(BLUE_LIGHT)
-            c.alignment = align(h, "center")
-            c.border    = Border(
-                top=Side(style="thin", color=NAVY),
-                bottom=Side(style="thin", color=NAVY),
-                left=Side(style="thin", color=GREY_LINE),
-                right=Side(style="thin", color=GREY_LINE),
-            )
-            if fmt: c.number_format = fmt
-
-        stat_cell("A", label,                bold=True, h="center")
-        stat_cell("B", "",                   h="left")
-        stat_cell("C", "")
-        stat_cell("D", fn([c.get("revenue") for c in companies if c.get("revenue")]),      FMT_DEC1)
-        stat_cell("E", fn(gross_margin_vals),  FMT_PCT)
-        stat_cell("F", fn([c.get("ebitda") for c in companies if c.get("ebitda")]),        FMT_DEC1)
-        stat_cell("G", fn(ebitda_margin_vals), FMT_PCT)
-        stat_cell("H", fn([c.get("ev") for c in companies if c.get("ev")]),                FMT_DEC1)
-        stat_cell("I", fn([c.get("market_cap") for c in companies if c.get("market_cap")]),FMT_DEC1)
-        stat_cell("J", fn(ev_ebitda_vals),    FMT_MULT, bold=True)
-        stat_cell("K", fn(ev_rev_vals),       FMT_MULT, bold=True)
-        stat_cell("L", fn(pe_vals),           FMT_MULT, bold=True)
-
-    # ── Sources & Methodology ──────────────────────────────────────────────
-    src_row = 5 + len(companies) + 4
-    ws.row_dimensions[src_row].height = 14
-    ws.merge_cells(f"A{src_row}:L{src_row}")
-    ws[f"A{src_row}"].value     = "Sources & Methodology"
-    ws[f"A{src_row}"].font      = Font(bold=True, color=DARK_TEXT, size=8, name=FONT_NAME)
-    ws[f"A{src_row}"].alignment = align("left", "center")
-
-    for k, co in enumerate(companies):
-        r = src_row + 1 + k
-        ws.row_dimensions[r].height = 13
-        ws.merge_cells(f"A{r}:C{r}")
-        ws[f"A{r}"].value     = co.get("ticker","")
-        ws[f"A{r}"].font      = Font(bold=True, size=8, name=FONT_NAME)
-        ws[f"A{r}"].alignment = align("left", "center")
-        ws.merge_cells(f"D{r}:H{r}")
-        ws[f"D{r}"].value     = "Financial Modeling Prep (FMP)"
-        ws[f"D{r}"].font      = Font(size=8, name=FONT_NAME, color="6B7280")
-        ws[f"I{r}"].value     = co.get("period","")
-        ws[f"I{r}"].font      = Font(size=8, name=FONT_NAME, color="6B7280")
-
-    # ── Freeze panes at row 5 ─────────────────────────────────────────────
-    ws.freeze_panes = "D5"
+    # ── Freeze panes ───────────────────────────────────────────────────────
+    ws.freeze_panes = "C6"
 
     # ── Print settings ─────────────────────────────────────────────────────
-    ws.page_setup.orientation  = "landscape"
-    ws.page_setup.fitToPage    = True
-    ws.page_setup.fitToWidth   = 1
-    ws.page_setup.fitToHeight  = 0
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToPage   = True
+    ws.page_setup.fitToWidth  = 1
+    ws.page_setup.fitToHeight = 0
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -264,23 +284,17 @@ def generate_comp_table_xlsx(payload: dict) -> bytes:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  POWERPOINT — Trading Comps Slide
+#  POWERPOINT — Single comp slide
 # ══════════════════════════════════════════════════════════════════════════════
 
 def generate_comp_slide_pptx(payload: dict) -> bytes:
-    """
-    Generate an IB-grade trading comps PPT slide as .pptx bytes.
-    Returns a full presentation (1 comp slide) — append more slides as needed.
-    """
+    """Generate an IB-grade trading comps slide as .pptx bytes."""
     from pptx import Presentation
-    from pptx.util import Inches, Pt, Emu
+    from pptx.util import Inches, Pt
     from pptx.dml.color import RGBColor
     from pptx.enum.text import PP_ALIGN
     from pptx.oxml.ns import qn
-    from pptx.util import Inches, Pt
-    import copy
-    from lxml import etree
-    from statistics import median, mean
+    from pptx.oxml import parse_xml
 
     def rgb(hex_str):
         h = hex_str.lstrip("#")
@@ -291,105 +305,78 @@ def generate_comp_slide_pptx(payload: dict) -> bytes:
     date_str  = payload.get("date", "")
     currency  = payload.get("currency", "USD")
 
+    # Sort by market cap descending
+    companies = sorted(companies, key=lambda c: c.get("market_cap") or 0, reverse=True)
+
     prs = Presentation()
     prs.slide_width  = Inches(13.33)
     prs.slide_height = Inches(7.5)
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
 
-    blank_layout = prs.slide_layouts[6]  # blank
-    slide = prs.slides.add_slide(blank_layout)
+    # White background
+    bg = slide.background; bg.fill.solid()
+    bg.fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
 
-    # ── White background ──────────────────────────────────────────────────
-    _bg = slide.background; _bg.fill.solid()
-    _bg.fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+    # Title
+    box = slide.shapes.add_textbox(Inches(0.3), Inches(0.2), Inches(12.73), Inches(0.55))
+    tf = box.text_frame; tf.word_wrap = False
+    p = tf.paragraphs[0]; p.alignment = PP_ALIGN.LEFT
+    run = p.add_run(); run.text = title
+    run.font.bold = True; run.font.size = Pt(16)
+    run.font.color.rgb = rgb(NAVY); run.font.name = FONT_NAME
 
-    # ── Title bar ─────────────────────────────────────────────────────────
-    from pptx.util import Inches, Pt, Emu
-    title_box = slide.shapes.add_textbox(
-        Inches(0.3), Inches(0.2), Inches(12.73), Inches(0.55)
-    )
-    tf = title_box.text_frame
-    tf.word_wrap = False
-    p  = tf.paragraphs[0]
-    p.alignment = PP_ALIGN.LEFT
-    run = p.add_run()
-    run.text = title
-    run.font.bold   = True
-    run.font.size   = Pt(16)
-    run.font.color.rgb = rgb(NAVY)
-    run.font.name   = "Calibri"
-
-    # Date subtitle
-    date_box = slide.shapes.add_textbox(
-        Inches(0.3), Inches(0.72), Inches(6), Inches(0.3)
-    )
-    tf2 = date_box.text_frame
-    p2  = tf2.paragraphs[0]
+    # Subtitle
+    box2 = slide.shapes.add_textbox(Inches(0.3), Inches(0.72), Inches(6), Inches(0.3))
+    tf2 = box2.text_frame; p2 = tf2.paragraphs[0]
     run2 = p2.add_run()
     run2.text = f"{date_str}  |  {currency}"
-    run2.font.size  = Pt(8)
-    run2.font.color.rgb = rgb("6B7280")
-    run2.font.name  = "Calibri"
-    run2.font.italic = True
+    run2.font.size = Pt(8); run2.font.color.rgb = rgb("6B7280")
+    run2.font.name = FONT_NAME; run2.font.italic = True
 
-    # Thin navy divider line under title
-    from pptx.util import Emu
-    from pptx.oxml import parse_xml
-    connector = slide.shapes.add_connector(
-        1,  # MSO_CONNECTOR_TYPE.STRAIGHT
-        Inches(0.3), Inches(0.95),
-        Inches(13.03), Inches(0.95)
+    # Divider
+    conn = slide.shapes.add_connector(
+        1, Inches(0.3), Inches(0.95), Inches(13.03), Inches(0.95)
     )
-    connector.line.color.rgb = rgb(NAVY)
-    connector.line.width = Pt(1.5)
+    conn.line.color.rgb = rgb(NAVY); conn.line.width = Pt(1.5)
 
-    # ── Build table ────────────────────────────────────────────────────────
+    # ── Table ──────────────────────────────────────────────────────────────
     col_headers = [
-        "Ticker", "Company", "Period",
-        "Revenue", "Gross\nMargin", "EBITDA", "EBITDA\nMargin",
-        "EV ($B)", "Mkt Cap\n($B)", "EV /\nEBITDA", "EV / Rev", "P / E"
+        "Company", "Ticker", "Price ($)",
+        "Mkt Cap\n($B)", "EV ($B)",
+        "Revenue\n($M)", "EBITDA\n($M)", "Gross\nMargin", "EBITDA\nMargin",
+        "EV / Rev", "EV /\nEBITDA", "P / E"
     ]
-    col_widths_in = [0.75, 2.2, 0.75, 0.85, 0.85, 0.85, 0.85, 0.85, 0.85, 0.85, 0.75, 0.7]
-
-    n_data   = len(companies)
-    n_rows   = 1 + n_data + 2 + 1  # header + data + median/mean + spacer
-    n_cols   = len(col_headers)
-
-    tbl_top    = Inches(1.05)
-    tbl_left   = Inches(0.3)
-    tbl_width  = Inches(12.73)
-    tbl_height = Inches(0.32 * n_rows)
+    n_data = len(companies)
+    # header + data + spacer + median + mean = n_data + 4
+    n_rows = 1 + n_data + 3
+    n_cols = len(col_headers)
 
     tbl_shape = slide.shapes.add_table(
-        n_rows, n_cols, tbl_left, tbl_top, tbl_width, tbl_height
+        n_rows, n_cols,
+        Inches(0.3), Inches(1.05), Inches(12.73), Inches(0.30 * n_rows)
     )
     tbl = tbl_shape.table
 
-    # Column widths
-    total_w_in = sum(col_widths_in)
+    # Column widths (proportional)
+    col_widths_in = [2.2, 0.7, 0.8, 0.85, 0.85, 0.9, 0.9, 0.8, 0.8, 0.75, 0.8, 0.7]
+    total_w = sum(col_widths_in)
     for ci, w in enumerate(col_widths_in):
-        tbl.columns[ci].width = int(Inches(w * 12.73 / total_w_in))
+        tbl.columns[ci].width = int(Inches(w * 12.73 / total_w))
 
     def set_cell(ri, ci, text, bold=False, font_size=8,
-                 bg=None, fg=DARK_TEXT, align=PP_ALIGN.RIGHT,
-                 italic=False):
+                 bg_hex=None, fg=DARK_TEXT, align_h=PP_ALIGN.RIGHT, italic=False):
         cell = tbl.cell(ri, ci)
         cell.text = ""
-        tf = cell.text_frame
-        tf.word_wrap = False
-        p = tf.paragraphs[0]
-        p.alignment = align
+        tf = cell.text_frame; tf.word_wrap = False
+        p = tf.paragraphs[0]; p.alignment = align_h
         run = p.add_run()
-        run.text = str(text) if text is not None else "—"
-        run.font.bold   = bold
-        run.font.size   = Pt(font_size)
-        run.font.color.rgb = rgb(fg)
-        run.font.name   = "Calibri"
+        run.text = str(text) if text is not None else "--"
+        run.font.bold = bold; run.font.size = Pt(font_size)
+        run.font.color.rgb = rgb(fg); run.font.name = FONT_NAME
         run.font.italic = italic
-        if bg:
-            fill_xml = f'<a:solidFill xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:srgbClr val="{bg}"/></a:solidFill>'
-            tc = cell._tc
-            tcPr = tc.get_or_add_tcPr()
-            # remove existing fill
+        if bg_hex:
+            fill_xml = f'<a:solidFill xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:srgbClr val="{bg_hex}"/></a:solidFill>'
+            tcPr = cell._tc.get_or_add_tcPr()
             for old in tcPr.findall(qn('a:solidFill')):
                 tcPr.remove(old)
             for old in tcPr.findall(qn('a:noFill')):
@@ -397,84 +384,77 @@ def generate_comp_slide_pptx(payload: dict) -> bytes:
             tcPr.insert(0, parse_xml(fill_xml))
 
     def fmt_mult(v):
-        if v is None: return "—"
+        if v is None: return "--"
         try: return f"{float(v):.1f}x"
-        except: return "—"
+        except: return "--"
 
     def fmt_dec(v, dp=1):
-        if v is None: return "—"
+        if v is None: return "--"
         try: return f"{float(v):,.{dp}f}"
-        except: return "—"
+        except: return "--"
 
     def fmt_pct(v):
-        if v is None: return "—"
+        if v is None: return "--"
         try: return f"{float(v)*100:.1f}%"
-        except: return "—"
+        except: return "--"
 
     # Header row
     for ci, h in enumerate(col_headers):
-        halign = PP_ALIGN.CENTER if ci < 3 else PP_ALIGN.RIGHT
-        set_cell(0, ci, h, bold=True, font_size=8,
-                 bg=NAVY, fg=WHITE, align=halign)
+        ha = PP_ALIGN.LEFT if ci == 0 else PP_ALIGN.CENTER if ci == 1 else PP_ALIGN.RIGHT
+        set_cell(0, ci, h, bold=True, font_size=8, bg_hex=NAVY, fg=WHITE, align_h=ha)
 
     # Data rows
     for i, co in enumerate(companies):
-        ri  = i + 1
-        bg  = BLUE_FILL if i % 2 == 1 else WHITE
-        set_cell(ri, 0, co.get("ticker",""),          bold=True, bg=bg, align=PP_ALIGN.CENTER)
-        set_cell(ri, 1, co.get("name",""),            bg=bg, align=PP_ALIGN.LEFT)
-        set_cell(ri, 2, co.get("period",""),          bg=bg, align=PP_ALIGN.CENTER, italic=True)
-        set_cell(ri, 3, fmt_dec(co.get("revenue")),   bg=bg)
-        set_cell(ri, 4, fmt_pct(co.get("gross_margin")), bg=bg)
-        set_cell(ri, 5, fmt_dec(co.get("ebitda")),    bg=bg)
-        set_cell(ri, 6, fmt_pct(co.get("ebitda_margin")), bg=bg)
-        set_cell(ri, 7, fmt_dec(co.get("ev")),        bg=bg)
-        set_cell(ri, 8, fmt_dec(co.get("market_cap")),bg=bg)
-        set_cell(ri, 9, fmt_mult(co.get("ev_ebitda")),bg=bg, bold=True)
-        set_cell(ri,10, fmt_mult(co.get("ev_revenue")),bg=bg)
-        set_cell(ri,11, fmt_mult(co.get("pe")),       bg=bg)
+        ri = i + 1
+        bg_hex = BLUE_FILL if i % 2 == 1 else WHITE
+        set_cell(ri, 0, co.get("name",""),     bg_hex=bg_hex, align_h=PP_ALIGN.LEFT)
+        set_cell(ri, 1, co.get("ticker",""),   bg_hex=bg_hex, align_h=PP_ALIGN.CENTER, bold=True)
+        set_cell(ri, 2, f"${co['share_price']:.2f}" if co.get("share_price") else "--", bg_hex=bg_hex)
+        set_cell(ri, 3, fmt_dec(co.get("market_cap")), bg_hex=bg_hex)
+        set_cell(ri, 4, fmt_dec(co.get("ev")),          bg_hex=bg_hex)
+        set_cell(ri, 5, fmt_dec(co.get("revenue_M"), 0), bg_hex=bg_hex)
+        set_cell(ri, 6, fmt_dec(co.get("ebitda_M"), 0),  bg_hex=bg_hex)
+        set_cell(ri, 7, fmt_pct(co.get("gross_margin")), bg_hex=bg_hex)
+        set_cell(ri, 8, fmt_pct(co.get("ebitda_margin")),bg_hex=bg_hex)
+        set_cell(ri, 9, fmt_mult(co.get("ev_revenue")),  bg_hex=bg_hex, bold=True)
+        set_cell(ri,10, fmt_mult(co.get("ev_ebitda")),   bg_hex=bg_hex, bold=True)
+        set_cell(ri,11, fmt_mult(co.get("pe")),          bg_hex=bg_hex, bold=True)
 
-    # Spacer row
+    # Spacer
     spacer_ri = 1 + n_data
     for ci in range(n_cols):
-        set_cell(spacer_ri, ci, "", bg=WHITE)
-    tbl.rows[spacer_ri].height = int(Inches(0.08))
+        set_cell(spacer_ri, ci, "", bg_hex=WHITE)
+    tbl.rows[spacer_ri].height = int(Inches(0.06))
 
     # Median / Mean
     def stat_vals(key):
         return [co[key] for co in companies if co.get(key) is not None]
 
-    stat_defs = [
-        ("Median", lambda k: median(stat_vals(k)) if stat_vals(k) else None),
-        ("Mean",   lambda k: mean(stat_vals(k))   if stat_vals(k) else None),
-    ]
-    for j, (label, fn) in enumerate(stat_defs):
-        ri = 1 + n_data + 1 + j
-        set_cell(ri, 0, label,        bold=True, bg=BLUE_LIGHT, align=PP_ALIGN.CENTER)
-        set_cell(ri, 1, "",           bg=BLUE_LIGHT, align=PP_ALIGN.LEFT)
-        set_cell(ri, 2, "",           bg=BLUE_LIGHT)
-        set_cell(ri, 3, fmt_dec(fn("revenue")),       bg=BLUE_LIGHT)
-        set_cell(ri, 4, fmt_pct(fn("gross_margin")),  bg=BLUE_LIGHT)
-        set_cell(ri, 5, fmt_dec(fn("ebitda")),        bg=BLUE_LIGHT)
-        set_cell(ri, 6, fmt_pct(fn("ebitda_margin")), bg=BLUE_LIGHT)
-        set_cell(ri, 7, fmt_dec(fn("ev")),            bg=BLUE_LIGHT)
-        set_cell(ri, 8, fmt_dec(fn("market_cap")),    bg=BLUE_LIGHT)
-        set_cell(ri, 9, fmt_mult(fn("ev_ebitda")),    bg=BLUE_LIGHT, bold=True)
-        set_cell(ri,10, fmt_mult(fn("ev_revenue")),   bg=BLUE_LIGHT)
-        set_cell(ri,11, fmt_mult(fn("pe")),           bg=BLUE_LIGHT)
+    for j, (label, fn) in enumerate([
+        ("Median", lambda v: median(v) if v else None),
+        ("Mean",   lambda v: mean(v)   if v else None),
+    ]):
+        ri = spacer_ri + 1 + j
+        set_cell(ri, 0, label,     bold=True, bg_hex=BLUE_LIGHT, align_h=PP_ALIGN.LEFT)
+        set_cell(ri, 1, "",        bg_hex=BLUE_LIGHT)
+        set_cell(ri, 2, "",        bg_hex=BLUE_LIGHT)
+        set_cell(ri, 3, fmt_dec(fn(stat_vals("market_cap"))),  bg_hex=BLUE_LIGHT)
+        set_cell(ri, 4, fmt_dec(fn(stat_vals("ev"))),          bg_hex=BLUE_LIGHT)
+        set_cell(ri, 5, fmt_dec(fn(stat_vals("revenue_M")),0), bg_hex=BLUE_LIGHT)
+        set_cell(ri, 6, fmt_dec(fn(stat_vals("ebitda_M")),0),  bg_hex=BLUE_LIGHT)
+        set_cell(ri, 7, fmt_pct(fn(stat_vals("gross_margin"))),bg_hex=BLUE_LIGHT)
+        set_cell(ri, 8, fmt_pct(fn(stat_vals("ebitda_margin"))),bg_hex=BLUE_LIGHT)
+        set_cell(ri, 9, fmt_mult(fn(stat_vals("ev_revenue"))), bg_hex=BLUE_LIGHT, bold=True)
+        set_cell(ri,10, fmt_mult(fn(stat_vals("ev_ebitda"))),  bg_hex=BLUE_LIGHT, bold=True)
+        set_cell(ri,11, fmt_mult(fn(stat_vals("pe"))),         bg_hex=BLUE_LIGHT, bold=True)
 
-    # ── Footnote ──────────────────────────────────────────────────────────
-    fn_box = slide.shapes.add_textbox(
-        Inches(0.3), Inches(7.1), Inches(12.73), Inches(0.3)
-    )
-    tf3 = fn_box.text_frame
-    p3  = tf3.paragraphs[0]
+    # Footnote
+    fn_box = slide.shapes.add_textbox(Inches(0.3), Inches(7.1), Inches(12.73), Inches(0.3))
+    tf3 = fn_box.text_frame; p3 = tf3.paragraphs[0]
     run3 = p3.add_run()
-    run3.text = f"Source: Financial Modeling Prep (FMP), Polygon.io  |  Generated by tsifl  |  {date_str}"
-    run3.font.size   = Pt(7)
-    run3.font.color.rgb = rgb("9CA3AF")
-    run3.font.name   = "Calibri"
-    run3.font.italic = True
+    run3.text = f"Source: Polygon.io, Financial Modeling Prep  |  Generated by tsifl  |  {date_str}"
+    run3.font.size = Pt(7); run3.font.color.rgb = rgb("9CA3AF")
+    run3.font.name = FONT_NAME; run3.font.italic = True
 
     buf = io.BytesIO()
     prs.save(buf)
@@ -487,15 +467,13 @@ def generate_comp_slide_pptx(payload: dict) -> bytes:
 
 async def build_comp_payload(tickers: list[str], title: str = None) -> dict:
     """
-    Fetch live data for a list of tickers and return a payload
-    ready for generate_comp_table_xlsx / generate_comp_slide_pptx.
+    Fetch live data for tickers and build payload for comp generators.
 
     Data flow:
-      1. Polygon → price, market_cap_B, shares_outstanding
-      2. FMP → revenue_ltm_M, ebitda_ltm_M, margins, net_debt_M
-         (yfinance fallback if FMP rate-limited or no key)
-      3. Compute EV = market_cap + net_debt
-         EV/EBITDA, EV/Revenue, P/E from combined data
+      1. Polygon → price, market_cap_B, shares
+      2. yfinance → revenue_ltm_M, ebitda_ltm_M, margins, net_debt_M
+         (FMP fallback if yfinance fails and FMP key is set)
+      3. Compute EV, multiples
     """
     import asyncio
     from datetime import datetime
@@ -505,12 +483,11 @@ async def build_comp_payload(tickers: list[str], title: str = None) -> dict:
 
     upper = [t.upper() for t in tickers]
 
-    # ── 1. Fetch price + market cap from Polygon (fast, reliable) ──────────
+    # 1. Prices from Polygon
     mkt_list = await get_stocks_batch(upper)
     mkt = {m["ticker"]: m for m in mkt_list if not m.get("error")}
 
-    # ── 2. Fetch fundamentals (yfinance primary — free, no rate limit)
-    #       FMP only if yfinance fails AND FMP key is set
+    # 2. Fundamentals (yfinance primary, FMP fallback)
     async def get_fund(ticker):
         d = await yf_get(ticker)
         if d.get("error"):
@@ -520,65 +497,65 @@ async def build_comp_payload(tickers: list[str], title: str = None) -> dict:
     fund_results = await asyncio.gather(*[get_fund(t) for t in upper])
     fund = {t: d for t, d in fund_results}
 
-    # ── 3. Assemble payload ──────────────────────────────────────────────────
+    # 3. Build company list
     companies = []
     for ticker in upper:
         m = mkt.get(ticker, {})
         f = fund.get(ticker, {})
 
         if f.get("error") and not m:
-            continue  # no data at all — skip
+            continue
 
-        # Price + market cap: Polygon primary, yfinance fallback (Polygon free tier rate-limits)
         price     = _safe_float(m.get("price"))     or _safe_float(f.get("price"))
         mkt_cap_b = _safe_float(m.get("market_cap_B")) or _safe_float(f.get("market_cap_B"))
 
-        # Fundamentals — both FMP and yfinance use _ltm_M / _pct naming
         rev_m    = _safe_float(f.get("revenue_ltm_M"))
         ebitda_m = _safe_float(f.get("ebitda_ltm_M"))
         ni_m     = _safe_float(f.get("net_income_ltm_M"))
-        gm_pct   = _safe_float(f.get("gross_margin_pct"))    # 0-100
-        ebitda_margin_pct = (
-            round(ebitda_m / rev_m * 100, 1)
-            if ebitda_m and rev_m else None
-        )
+        gm_pct   = _safe_float(f.get("gross_margin_pct"))    # 0–100
         net_debt_m = _safe_float(f.get("net_debt_M"))
 
-        # EV = market_cap_B + net_debt_B
+        ebitda_margin_pct = (
+            round(ebitda_m / rev_m * 100, 1) if ebitda_m and rev_m else None
+        )
+
+        # EV = market_cap + net_debt
+        net_debt_b = round(net_debt_m / 1e3, 2) if net_debt_m is not None else None
         ev_b = None
-        if mkt_cap_b is not None and net_debt_m is not None:
-            ev_b = round(mkt_cap_b + net_debt_m / 1e3, 2)
-        elif mkt_cap_b is not None:
-            ev_b = mkt_cap_b  # approximate if no debt data
+        if mkt_cap_b is not None:
+            if net_debt_b is not None:
+                ev_b = round(mkt_cap_b + net_debt_b, 2)
+            else:
+                ev_b = mkt_cap_b  # approximate
 
         # Multiples
         ev_ebitda = round(ev_b * 1e3 / ebitda_m, 1) if ev_b and ebitda_m and ebitda_m > 0 else None
-        ev_rev    = round(ev_b * 1e3 / rev_m,    1) if ev_b and rev_m    and rev_m    > 0 else None
+        ev_rev    = round(ev_b * 1e3 / rev_m, 1)    if ev_b and rev_m    and rev_m    > 0 else None
         pe        = round(mkt_cap_b * 1e3 / ni_m, 1) if mkt_cap_b and ni_m and ni_m > 0 else None
 
-        # Period label
         period = f.get("period_label") or "LTM"
 
         companies.append({
             "ticker":        ticker,
             "name":          f.get("name") or m.get("name") or ticker,
             "period":        period,
-            "revenue":       round(rev_m / 1e3, 2) if rev_m else None,   # → $B for display
-            "gross_margin":  gm_pct / 100 if gm_pct else None,           # → decimal
-            "ebitda":        round(ebitda_m / 1e3, 2) if ebitda_m else None,
-            "ebitda_margin": ebitda_margin_pct / 100 if ebitda_margin_pct else None,
             "share_price":   price,
-            "market_cap":    mkt_cap_b,
-            "ev":            ev_b,
-            "pe":            pe,
+            "market_cap":    mkt_cap_b,                            # $B
+            "net_debt_B":    net_debt_b,                           # $B
+            "ev":            ev_b,                                 # $B
+            "revenue_M":     round(rev_m, 0) if rev_m else None,   # $M
+            "ebitda_M":      round(ebitda_m, 0) if ebitda_m else None,
+            "gross_margin":  gm_pct / 100 if gm_pct else None,    # decimal
+            "ebitda_margin": ebitda_margin_pct / 100 if ebitda_margin_pct else None,
             "ev_ebitda":     ev_ebitda,
             "ev_revenue":    ev_rev,
+            "pe":            pe,
         })
 
     return {
         "title":     title or f"Trading Comps — {', '.join(upper)}",
         "date":      f"As of {datetime.utcnow().strftime('%B %Y')}",
-        "currency":  "USD ($B)",
+        "currency":  "USD ($M)",
         "companies": companies,
     }
 
@@ -592,8 +569,8 @@ def generate_comp_deck_pptx(payload: dict) -> bytes:
     Generate a full 4-slide IB comp deck:
       Slide 1 — Title
       Slide 2 — Trading Comps table
-      Slide 3 — Multiples snapshot (big KPI numbers)
-      Slide 4 — Key takeaways + sources
+      Slide 3 — Valuation snapshot (KPI boxes)
+      Slide 4 — Key takeaways
     """
     from pptx import Presentation
     from pptx.util import Inches, Pt
@@ -601,96 +578,69 @@ def generate_comp_deck_pptx(payload: dict) -> bytes:
     from pptx.enum.text import PP_ALIGN
     from pptx.oxml import parse_xml
     from pptx.oxml.ns import qn
-    from statistics import median, mean
+    import copy
 
     def rgb(hex_str):
         h = hex_str.lstrip("#")
         return RGBColor(int(h[0:2],16), int(h[2:4],16), int(h[4:6],16))
 
-    companies = payload.get("companies", [])
-    title     = payload.get("title", "Trading Comps")
-    date_str  = payload.get("date", "")
-    currency  = payload.get("currency", "USD")
+    companies = sorted(
+        payload.get("companies", []),
+        key=lambda c: c.get("market_cap") or 0, reverse=True
+    )
+    title    = payload.get("title", "Trading Comps")
+    date_str = payload.get("date", "")
+    currency = payload.get("currency", "USD")
 
     prs = Presentation()
     prs.slide_width  = Inches(13.33)
     prs.slide_height = Inches(7.5)
     blank = prs.slide_layouts[6]
 
-    # ── Force white background on all slides ──────────────────────────────
-    def _set_white_bg(slide):
-        from pptx.oxml.ns import qn as _qn
-        bg = slide.background
-        fill = bg.fill
-        fill.solid()
-        fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+    def _white_bg(slide):
+        bg = slide.background; bg.fill.solid()
+        bg.fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
 
-    # ── Shared helpers ────────────────────────────────────────────────────
-    def add_textbox(slide, text, left, top, width, height,
-                    bold=False, size=11, color=DARK_TEXT, align=PP_ALIGN.LEFT,
-                    italic=False, bg=None):
+    def _add_text(slide, text, left, top, width, height,
+                  bold=False, size=11, color=DARK_TEXT, align=PP_ALIGN.LEFT,
+                  italic=False):
         box = slide.shapes.add_textbox(
             Inches(left), Inches(top), Inches(width), Inches(height)
         )
-        tf = box.text_frame
-        tf.word_wrap = True
-        p = tf.paragraphs[0]
-        p.alignment = align
-        run = p.add_run()
-        run.text = text
-        run.font.bold    = bold
-        run.font.size    = Pt(size)
-        run.font.color.rgb = rgb(color)
-        run.font.name    = "Calibri"
-        run.font.italic  = italic
-        if bg:
-            fill_xml = (
-                f'<a:solidFill xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
-                f'<a:srgbClr val="{bg}"/></a:solidFill>'
-            )
-            sp = box._element
-            spPr = sp.find(qn('p:spPr'))
-            if spPr is not None:
-                for old in spPr.findall(qn('a:solidFill')):
-                    spPr.remove(old)
-                spPr.insert(0, parse_xml(fill_xml))
+        tf = box.text_frame; tf.word_wrap = True
+        p = tf.paragraphs[0]; p.alignment = align
+        run = p.add_run(); run.text = text
+        run.font.bold = bold; run.font.size = Pt(size)
+        run.font.color.rgb = rgb(color); run.font.name = FONT_NAME
+        run.font.italic = italic
         return box
 
-    def add_divider(slide, y=0.9):
-        """Thin navy horizontal rule."""
+    def _divider(slide, y=0.9):
         conn = slide.shapes.add_connector(
             1, Inches(0.3), Inches(y), Inches(13.03), Inches(y)
         )
-        conn.line.color.rgb = rgb(NAVY)
-        conn.line.width = Pt(1.2)
+        conn.line.color.rgb = rgb(NAVY); conn.line.width = Pt(1.2)
 
-    def add_slide_header(slide, title_text, subtitle_text=""):
-        add_textbox(slide, title_text,
-                    0.3, 0.18, 12.73, 0.55,
-                    bold=True, size=15, color=NAVY)
-        if subtitle_text:
-            add_textbox(slide, subtitle_text,
-                        0.3, 0.7, 12.73, 0.25,
-                        size=8, color="6B7280", italic=True)
-        add_divider(slide, y=0.92)
+    def _header(slide, title_text, sub=""):
+        _add_text(slide, title_text, 0.3, 0.18, 12.73, 0.55,
+                  bold=True, size=15, color=NAVY)
+        if sub:
+            _add_text(slide, sub, 0.3, 0.7, 12.73, 0.25,
+                      size=8, color="6B7280", italic=True)
+        _divider(slide, 0.92)
 
-    def add_footnote(slide, text=None):
-        note = text or f"Source: Financial Modeling Prep (FMP), Polygon.io  |  Generated by tsifl  |  {date_str}"
-        add_textbox(slide, note,
-                    0.3, 7.1, 12.73, 0.3,
-                    size=7, color="9CA3AF", italic=True)
+    def _footnote(slide, text=None):
+        note = text or f"Source: Polygon.io, Financial Modeling Prep  |  Generated by tsifl  |  {date_str}"
+        _add_text(slide, note, 0.3, 7.1, 12.73, 0.3,
+                  size=7, color="9CA3AF", italic=True)
 
     def fmt_mult(v):
-        try: return f"{float(v):.1f}x" if v is not None else "—"
-        except: return "—"
-
-    def fmt_dec(v, dp=1):
-        try: return f"{float(v):,.{dp}f}" if v is not None else "—"
-        except: return "—"
+        try: return f"{float(v):.1f}x" if v is not None else "--"
+        except: return "--"
 
     def fmt_pct(v):
-        try: return f"{float(v)*100:.1f}%" if v is not None else "—"
-        except: return "—"
+        try: return f"{float(v)*100:.1f}%" if v is not None else "--"
+        except: return "--"
 
     def stat_vals(key):
         return [co[key] for co in companies if co.get(key) is not None]
@@ -699,139 +649,80 @@ def generate_comp_deck_pptx(payload: dict) -> bytes:
         vals = stat_vals(key)
         return median(vals) if vals else None
 
-    # ──────────────────────────────────────────────────────────────────────
-    # SLIDE 1 — Title
-    # ──────────────────────────────────────────────────────────────────────
-    s1 = prs.slides.add_slide(blank); _set_white_bg(s1)
+    # ── SLIDE 1 — Title ────────────────────────────────────────────────────
+    s1 = prs.slides.add_slide(blank); _white_bg(s1)
 
-    # Full navy top bar
-    bar = s1.shapes.add_shape(
-        1,  # MSO_SHAPE_TYPE.RECTANGLE
-        Inches(0), Inches(0), Inches(13.33), Inches(2.2)
-    )
-    bar.fill.solid()
-    bar.fill.fore_color.rgb = rgb(NAVY)
+    bar = s1.shapes.add_shape(1, Inches(0), Inches(0), Inches(13.33), Inches(2.2))
+    bar.fill.solid(); bar.fill.fore_color.rgb = rgb(NAVY)
     bar.line.fill.background()
 
-    add_textbox(s1, title, 0.5, 0.45, 12.33, 0.9,
-                bold=True, size=32, color=WHITE)
-    add_textbox(s1, f"Trading Comparables Analysis  ·  {date_str}",
-                0.5, 1.35, 12.33, 0.4,
-                size=13, color="A8C4E0", italic=True)
+    _add_text(s1, title, 0.5, 0.45, 12.33, 0.9,
+              bold=True, size=32, color=WHITE)
+    _add_text(s1, f"Trading Comparables Analysis  |  {date_str}",
+              0.5, 1.35, 12.33, 0.4, size=13, color="A8C4E0", italic=True)
 
-    # Company ticker chips
-    if companies:
-        chip_x = 0.5
-        for co in companies[:8]:
-            ticker = co.get("ticker","")
-            chip = s1.shapes.add_shape(
-                1, Inches(chip_x), Inches(2.7), Inches(0.9), Inches(0.35)
-            )
-            chip.fill.solid()
-            chip.fill.fore_color.rgb = rgb("1F3864")
-            chip.line.color.rgb = rgb("2E5599")
-            chip.line.width = Pt(0.5)
-            tf = chip.text_frame
-            tf.text = ticker
-            tf.paragraphs[0].alignment = PP_ALIGN.CENTER
-            run = tf.paragraphs[0].runs[0]
-            run.font.bold  = True
-            run.font.size  = Pt(9)
-            run.font.color.rgb = rgb(WHITE)
-            run.font.name  = "Calibri"
-            chip_x += 1.05
+    # Ticker chips
+    chip_x = 0.5
+    for co in companies[:10]:
+        chip = s1.shapes.add_shape(1, Inches(chip_x), Inches(2.7), Inches(0.9), Inches(0.35))
+        chip.fill.solid(); chip.fill.fore_color.rgb = rgb(NAVY_MED)
+        chip.line.color.rgb = rgb("2E5599"); chip.line.width = Pt(0.5)
+        tf = chip.text_frame; tf.text = co.get("ticker", "")
+        tf.paragraphs[0].alignment = PP_ALIGN.CENTER
+        run = tf.paragraphs[0].runs[0]
+        run.font.bold = True; run.font.size = Pt(9)
+        run.font.color.rgb = rgb(WHITE); run.font.name = FONT_NAME
+        chip_x += 1.05
 
-    add_textbox(s1,
-                "Confidential  ·  For Discussion Purposes Only",
-                0.5, 6.9, 12.33, 0.35,
-                size=8, color="6B7280", italic=True,
-                align=PP_ALIGN.CENTER)
+    _add_text(s1, "Confidential  |  For Discussion Purposes Only",
+              0.5, 6.9, 12.33, 0.35, size=8, color="6B7280", italic=True,
+              align=PP_ALIGN.CENTER)
 
-    # ──────────────────────────────────────────────────────────────────────
-    # SLIDE 2 — Comp table (reuse single-slide generator)
-    # ──────────────────────────────────────────────────────────────────────
+    # ── SLIDE 2 — Comp table (clone single slide) ─────────────────────────
     prs2_bytes = generate_comp_slide_pptx(payload)
     prs2 = Presentation(io.BytesIO(prs2_bytes))
-    # Copy the slide XML directly
-    template_slide = prs2.slides[0]
-    from pptx.opc.constants import RELATIONSHIP_TYPE as RT
-    import copy
+    src_slide = prs2.slides[0]
+    new_slide = prs.slides.add_slide(blank)
+    for shape in src_slide.shapes:
+        new_slide.shapes._spTree.insert(2, copy.deepcopy(shape._element))
+    _white_bg(new_slide)
 
-    def _clone_slide(src_prs, src_slide, dest_prs):
-        """Clone a slide from src_prs into dest_prs."""
-        blank_layout = dest_prs.slide_layouts[6]
-        new_slide = dest_prs.slides.add_slide(blank_layout)
-        # Copy all shapes
-        for shape in src_slide.shapes:
-            el = copy.deepcopy(shape._element)
-            new_slide.shapes._spTree.insert(2, el)
-        # Force white background (never inherit black/transparent)
-        new_bg = new_slide.background
-        new_bg.fill.solid()
-        new_bg.fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-        return new_slide
-
-    _clone_slide(prs2, template_slide, prs)
-
-    # ──────────────────────────────────────────────────────────────────────
-    # SLIDE 3 — Multiples snapshot (big KPI boxes)
-    # ──────────────────────────────────────────────────────────────────────
-    s3 = prs.slides.add_slide(blank); _set_white_bg(s3)
-    add_slide_header(s3, "Valuation Snapshot",
-                     f"Median multiples — {date_str}  ·  {currency}")
+    # ── SLIDE 3 — Valuation snapshot ───────────────────────────────────────
+    s3 = prs.slides.add_slide(blank); _white_bg(s3)
+    _header(s3, "Valuation Snapshot", f"Median multiples  |  {date_str}  |  {currency}")
 
     kpis = [
-        ("EV / EBITDA",   fmt_mult(med("ev_ebitda")),  NAVY),
-        ("EV / Revenue",  fmt_mult(med("ev_revenue")), "1F3864"),
-        ("P / E",         fmt_mult(med("pe")),         "2E5599"),
+        ("EV / EBITDA",  fmt_mult(med("ev_ebitda")),  NAVY),
+        ("EV / Revenue", fmt_mult(med("ev_revenue")), NAVY_MED),
+        ("P / E",        fmt_mult(med("pe")),         "2E5599"),
     ]
     box_w, box_h = 3.6, 2.4
-    spacing      = 0.4
-    total_w      = len(kpis) * box_w + (len(kpis)-1) * spacing
-    start_x      = (13.33 - total_w) / 2
+    spacing = 0.4
+    total_w = len(kpis) * box_w + (len(kpis)-1) * spacing
+    start_x = (13.33 - total_w) / 2
 
     for i, (label, value, color) in enumerate(kpis):
         bx = start_x + i * (box_w + spacing)
-        by = 1.8
-
-        bg_shape = s3.shapes.add_shape(
-            1, Inches(bx), Inches(by), Inches(box_w), Inches(box_h)
-        )
-        bg_shape.fill.solid()
-        bg_shape.fill.fore_color.rgb = rgb(color)
+        bg_shape = s3.shapes.add_shape(1, Inches(bx), Inches(1.8), Inches(box_w), Inches(box_h))
+        bg_shape.fill.solid(); bg_shape.fill.fore_color.rgb = rgb(color)
         bg_shape.line.fill.background()
+        _add_text(s3, value, bx+0.15, 2.05, box_w-0.3, 1.3,
+                  bold=True, size=44, color=WHITE, align=PP_ALIGN.CENTER)
+        _add_text(s3, label, bx+0.15, 3.45, box_w-0.3, 0.45,
+                  size=11, color="A8C4E0", align=PP_ALIGN.CENTER, italic=True)
 
-        # Big number
-        add_textbox(s3, value,
-                    bx + 0.15, by + 0.25, box_w - 0.3, 1.3,
-                    bold=True, size=44, color=WHITE,
-                    align=PP_ALIGN.CENTER)
-        # Label
-        add_textbox(s3, label,
-                    bx + 0.15, by + 1.65, box_w - 0.3, 0.45,
-                    size=11, color="A8C4E0",
-                    align=PP_ALIGN.CENTER, italic=True)
-
-    # Company count note
     n = len(companies)
-    add_textbox(s3,
-                f"Based on {n} comparable compan{'y' if n==1 else 'ies'}  ·  Median shown",
-                0.3, 4.55, 12.73, 0.3,
-                size=8, color="9CA3AF", italic=True, align=PP_ALIGN.CENTER)
+    _add_text(s3, f"Based on {n} comparable compan{'y' if n==1 else 'ies'}  |  Median shown",
+              0.3, 4.55, 12.73, 0.3, size=8, color="9CA3AF", italic=True, align=PP_ALIGN.CENTER)
+    _footnote(s3)
 
-    add_footnote(s3)
+    # ── SLIDE 4 — Key takeaways ────────────────────────────────────────────
+    s4 = prs.slides.add_slide(blank); _white_bg(s4)
+    _header(s4, "Key Observations", date_str)
 
-    # ──────────────────────────────────────────────────────────────────────
-    # SLIDE 4 — Key takeaways
-    # ──────────────────────────────────────────────────────────────────────
-    s4 = prs.slides.add_slide(blank); _set_white_bg(s4)
-    add_slide_header(s4, "Key Observations", date_str)
-
-    # Auto-generate observations from the data
     observations = []
-    ev_vals  = stat_vals("ev_ebitda")
-    rev_vals = stat_vals("ev_revenue")
-    pe_vals  = stat_vals("pe")
+    ev_vals = stat_vals("ev_ebitda")
+    pe_vals_list = stat_vals("pe")
 
     if ev_vals:
         hi = max(companies, key=lambda c: c.get("ev_ebitda") or 0)
@@ -841,10 +732,10 @@ def generate_comp_deck_pptx(payload: dict) -> bytes:
             f"to {fmt_mult(hi.get('ev_ebitda'))} ({hi.get('ticker','')}), "
             f"median {fmt_mult(med('ev_ebitda'))}"
         )
-    if pe_vals:
+    if pe_vals_list:
         observations.append(
-            f"P/E multiples range {fmt_mult(min(pe_vals))}–{fmt_mult(max(pe_vals))}, "
-            f"median {fmt_mult(med('pe'))}"
+            f"P/E multiples range {fmt_mult(min(pe_vals_list))} to "
+            f"{fmt_mult(max(pe_vals_list))}, median {fmt_mult(med('pe'))}"
         )
     margins = stat_vals("ebitda_margin")
     if margins:
@@ -867,38 +758,27 @@ def generate_comp_deck_pptx(payload: dict) -> bytes:
         observations = [
             "See trading comps table on prior slide for full detail",
             f"Analysis covers {len(companies)} publicly traded comparable companies",
-            "All figures sourced from Financial Modeling Prep (FMP)"
         ]
 
     bullet_y = 1.15
     for obs in observations[:5]:
-        # Bullet marker
-        add_textbox(s4, "▸", 0.4, bullet_y, 0.3, 0.45,
-                    bold=True, size=10, color=NAVY)
-        add_textbox(s4, obs, 0.75, bullet_y, 11.8, 0.45,
-                    size=10.5, color=DARK_TEXT)
+        _add_text(s4, "▸", 0.4, bullet_y, 0.3, 0.45,
+                  bold=True, size=10, color=NAVY)
+        _add_text(s4, obs, 0.75, bullet_y, 11.8, 0.45,
+                  size=10.5, color=DARK_TEXT)
         bullet_y += 0.7
 
-    add_footnote(s4)
+    _footnote(s4)
 
     buf = io.BytesIO()
     prs.save(buf)
     return buf.getvalue()
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  Utility
+# ══════════════════════════════════════════════════════════════════════════════
+
 def _safe_float(v, default=None):
     try: return round(float(v), 2) if v is not None else default
-    except: return default
-
-def _safe_pct(v, default=None):
-    """Return as decimal (0.35 not 35) — formatters handle display."""
-    try:
-        f = float(v)
-        return f / 100 if f > 1 else f  # normalise if stored as 35.0
-    except: return default
-
-def _safe_billions(v, default=None):
-    try:
-        f = float(v)
-        return round(f / 1e9, 2) if f > 1e6 else round(f, 2)
     except: return default
