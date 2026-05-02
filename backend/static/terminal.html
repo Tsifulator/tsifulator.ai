@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>tsifl terminal</title>
+  <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0B0E13;
+      --bg2:       #111520;
+      --bg3:       #181D2A;
+      --border:    #1E2535;
+      --navy:      #0D3A8C;
+      --blue:      #1A6EFF;
+      --green:     #00C48C;
+      --red:       #FF4757;
+      --text:      #E2E8F0;
+      --muted:     #64748B;
+      --label:     #94A3B8;
+      --accent:    #38BDF8;
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--text);
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; font-size: 13px; }
+
+    /* ── TOP BAR ── */
+    #topbar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 8px 16px; background: var(--bg2);
+      border-bottom: 1px solid var(--border); height: 48px;
+    }
+    #logo { font-size: 15px; font-weight: 700; color: var(--accent);
+      letter-spacing: 1px; white-space: nowrap; }
+    #search-wrap { position: relative; flex: 1; max-width: 480px; }
+    #search-input {
+      width: 100%; background: var(--bg3); border: 1px solid var(--border);
+      color: var(--text); font-family: inherit; font-size: 14px;
+      padding: 6px 12px; border-radius: 4px; outline: none;
+      transition: border-color 0.15s;
+    }
+    #search-input:focus { border-color: var(--blue); }
+    #search-input::placeholder { color: var(--muted); }
+    #search-dropdown {
+      display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+      background: var(--bg3); border: 1px solid var(--border); border-radius: 4px;
+      z-index: 100; max-height: 240px; overflow-y: auto;
+    }
+    .search-item {
+      padding: 8px 12px; cursor: pointer; display: flex;
+      align-items: center; gap: 10px; border-bottom: 1px solid var(--border);
+    }
+    .search-item:last-child { border-bottom: none; }
+    .search-item:hover, .search-item.active { background: var(--bg2); }
+    .search-ticker { font-weight: 700; color: var(--accent); min-width: 60px; }
+    .search-name { color: var(--label); font-size: 12px; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap; }
+    .search-exch { color: var(--muted); font-size: 11px; margin-left: auto; }
+
+    #period-btns { display: flex; gap: 4px; }
+    .period-btn {
+      padding: 4px 10px; background: transparent; border: 1px solid var(--border);
+      color: var(--label); font-family: inherit; font-size: 12px;
+      border-radius: 3px; cursor: pointer; transition: all 0.12s;
+    }
+    .period-btn:hover { border-color: var(--blue); color: var(--text); }
+    .period-btn.active { background: var(--navy); border-color: var(--blue); color: white; }
+
+    #send-excel-btn {
+      padding: 6px 14px; background: var(--navy); border: 1px solid var(--blue);
+      color: white; font-family: inherit; font-size: 12px; font-weight: 600;
+      border-radius: 4px; cursor: pointer; white-space: nowrap;
+      transition: background 0.15s;
+    }
+    #send-excel-btn:hover { background: var(--blue); }
+    #send-excel-btn:disabled { opacity: 0.4; cursor: default; }
+
+    /* ── MAIN LAYOUT ── */
+    #main { display: flex; height: calc(100vh - 48px); overflow: hidden; }
+
+    /* ── WATCHLIST ── */
+    #watchlist {
+      width: 180px; flex-shrink: 0; background: var(--bg2);
+      border-right: 1px solid var(--border); display: flex; flex-direction: column;
+    }
+    #watchlist-header {
+      padding: 8px 12px; font-size: 11px; font-weight: 700;
+      color: var(--muted); letter-spacing: 1px; border-bottom: 1px solid var(--border);
+      text-transform: uppercase;
+    }
+    #watchlist-list { flex: 1; overflow-y: auto; }
+    .watch-item {
+      padding: 9px 12px; cursor: pointer; border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+      transition: background 0.1s;
+    }
+    .watch-item:hover { background: var(--bg3); }
+    .watch-item.active { background: var(--bg3); border-left: 2px solid var(--blue); }
+    .watch-sym { font-weight: 700; font-size: 13px; }
+    .watch-chg { font-size: 11px; font-weight: 600; }
+    .up { color: var(--green); }
+    .dn { color: var(--red); }
+    #watchlist-add {
+      padding: 8px 12px; border-top: 1px solid var(--border);
+      font-size: 11px; color: var(--muted); cursor: pointer;
+      text-align: center; transition: color 0.1s;
+    }
+    #watchlist-add:hover { color: var(--accent); }
+
+    /* ── CENTER PANEL ── */
+    #center { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+    /* ── TICKER HEADER ── */
+    #ticker-header {
+      padding: 12px 16px; background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: flex-end; gap: 20px; flex-wrap: wrap;
+    }
+    #ticker-symbol { font-size: 24px; font-weight: 800; color: white; }
+    #ticker-name { font-size: 13px; color: var(--muted); margin-bottom: 2px; }
+    #ticker-price { font-size: 28px; font-weight: 700; color: white; }
+    #ticker-change { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+    #ticker-meta { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+
+    /* ── CHART ── */
+    #chart-wrap { flex: 1; min-height: 0; position: relative; }
+    #chart { width: 100%; height: 100%; }
+
+    /* ── STATS PANEL ── */
+    #stats-panel {
+      width: 220px; flex-shrink: 0; background: var(--bg2);
+      border-left: 1px solid var(--border);
+      display: flex; flex-direction: column; overflow-y: auto;
+    }
+    .stats-section { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+    .stats-section-title {
+      font-size: 10px; font-weight: 700; color: var(--muted);
+      letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px;
+    }
+    .stat-row { display: flex; justify-content: space-between;
+      align-items: center; margin-bottom: 6px; }
+    .stat-label { color: var(--muted); font-size: 11px; }
+    .stat-value { color: var(--text); font-size: 12px; font-weight: 600; text-align: right; }
+
+    /* ── EMPTY STATE ── */
+    #empty-state {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; height: 100%; color: var(--muted);
+      gap: 12px;
+    }
+    #empty-state .big { font-size: 48px; }
+    #empty-state .hint { font-size: 13px; }
+    #empty-state .hint span { color: var(--accent); }
+
+    /* ── LOADING ── */
+    #loading {
+      display: none; position: absolute; inset: 0;
+      background: rgba(11,14,19,0.7); align-items: center;
+      justify-content: center; z-index: 10;
+    }
+    .spinner {
+      width: 28px; height: 28px; border: 3px solid var(--border);
+      border-top-color: var(--blue); border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── TOAST ── */
+    #toast {
+      display: none; position: fixed; bottom: 24px; right: 24px;
+      background: var(--bg3); border: 1px solid var(--border);
+      color: var(--text); padding: 10px 16px; border-radius: 6px;
+      font-size: 12px; z-index: 200; box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    }
+
+    /* scrollbar */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<!-- ── TOP BAR ── -->
+<div id="topbar">
+  <div id="logo">tsifl</div>
+
+  <div id="search-wrap">
+    <input id="search-input" type="text" placeholder="Search ticker or company...  ⌘K" autocomplete="off" spellcheck="false"/>
+    <div id="search-dropdown"></div>
+  </div>
+
+  <div id="period-btns">
+    <button class="period-btn" data-p="1d"  data-i="5m">1D</button>
+    <button class="period-btn" data-p="5d"  data-i="15m">5D</button>
+    <button class="period-btn active" data-p="1y"  data-i="1d">1Y</button>
+    <button class="period-btn" data-p="5y"  data-i="1wk">5Y</button>
+  </div>
+
+  <button id="send-excel-btn" disabled>📊 Send to Excel</button>
+</div>
+
+<!-- ── MAIN ── -->
+<div id="main">
+
+  <!-- WATCHLIST -->
+  <div id="watchlist">
+    <div id="watchlist-header">Watchlist</div>
+    <div id="watchlist-list"></div>
+    <div id="watchlist-add">+ Add ticker</div>
+  </div>
+
+  <!-- CENTER -->
+  <div id="center">
+    <div id="ticker-header" style="display:none;">
+      <div>
+        <div id="ticker-symbol">—</div>
+        <div id="ticker-name"></div>
+      </div>
+      <div>
+        <div id="ticker-price">—</div>
+        <div id="ticker-change"></div>
+      </div>
+      <div>
+        <div id="ticker-meta"></div>
+      </div>
+    </div>
+
+    <div id="chart-wrap">
+      <div id="empty-state">
+        <div class="big">📈</div>
+        <div class="hint">Type a ticker and press <span>Enter</span></div>
+      </div>
+      <div id="chart"></div>
+      <div id="loading"><div class="spinner"></div></div>
+    </div>
+  </div>
+
+  <!-- STATS PANEL -->
+  <div id="stats-panel">
+    <div class="stats-section">
+      <div class="stats-section-title">Price</div>
+      <div class="stat-row"><span class="stat-label">Open</span><span class="stat-value" id="s-open">—</span></div>
+      <div class="stat-row"><span class="stat-label">52W High</span><span class="stat-value" id="s-52h">—</span></div>
+      <div class="stat-row"><span class="stat-label">52W Low</span><span class="stat-value" id="s-52l">—</span></div>
+      <div class="stat-row"><span class="stat-label">Volume</span><span class="stat-value" id="s-vol">—</span></div>
+      <div class="stat-row"><span class="stat-label">Avg Volume</span><span class="stat-value" id="s-avgvol">—</span></div>
+    </div>
+    <div class="stats-section">
+      <div class="stats-section-title">Valuation</div>
+      <div class="stat-row"><span class="stat-label">Mkt Cap</span><span class="stat-value" id="s-mc">—</span></div>
+      <div class="stat-row"><span class="stat-label">P/E (TTM)</span><span class="stat-value" id="s-pe">—</span></div>
+      <div class="stat-row"><span class="stat-label">EPS (TTM)</span><span class="stat-value" id="s-eps">—</span></div>
+    </div>
+    <div class="stats-section">
+      <div class="stats-section-title">Fundamentals</div>
+      <div class="stat-row"><span class="stat-label">Revenue</span><span class="stat-value" id="s-rev">—</span></div>
+      <div class="stat-row"><span class="stat-label">EBITDA</span><span class="stat-value" id="s-ebitda">—</span></div>
+      <div class="stat-row"><span class="stat-label">Gross Margin</span><span class="stat-value" id="s-gm">—</span></div>
+      <div class="stat-row"><span class="stat-label">EBITDA Margin</span><span class="stat-value" id="s-em">—</span></div>
+      <div class="stat-row"><span class="stat-label">Net Margin</span><span class="stat-value" id="s-nm">—</span></div>
+    </div>
+    <div class="stats-section">
+      <div class="stats-section-title">Info</div>
+      <div class="stat-row"><span class="stat-label">Sector</span><span class="stat-value" id="s-sector">—</span></div>
+      <div class="stat-row"><span class="stat-label">Industry</span><span class="stat-value" id="s-industry" style="font-size:10px;max-width:120px;text-align:right;word-break:break-word;">—</span></div>
+    </div>
+  </div>
+
+</div>
+
+<div id="toast"></div>
+
+<script>
+const API = "";  // same origin
+
+// ── State ──────────────────────────────────────────────────────────────────
+let currentTicker = null;
+let chart = null;
+let candleSeries = null;
+let currentPeriod = "1y";
+let currentInterval = "1d";
+let watchlist = JSON.parse(localStorage.getItem("tsifl_watchlist") || '["AAPL","MSFT","GOOGL","META"]');
+let searchTimeout = null;
+let searchResults = [];
+let searchIdx = -1;
+
+// ── Chart init ─────────────────────────────────────────────────────────────
+function initChart() {
+  const wrap = document.getElementById("chart-wrap");
+  chart = LightweightCharts.createChart(document.getElementById("chart"), {
+    layout: { background: { color: "#0B0E13" }, textColor: "#94A3B8" },
+    grid: { vertLines: { color: "#1E2535" }, horzLines: { color: "#1E2535" } },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    rightPriceScale: { borderColor: "#1E2535" },
+    timeScale: { borderColor: "#1E2535", timeVisible: true },
+    width: wrap.clientWidth - 1,
+    height: wrap.clientHeight,
+  });
+  candleSeries = chart.addCandlestickSeries({
+    upColor: "#00C48C", downColor: "#FF4757",
+    borderUpColor: "#00C48C", borderDownColor: "#FF4757",
+    wickUpColor: "#00C48C", wickDownColor: "#FF4757",
+  });
+  window.addEventListener("resize", () => {
+    chart.applyOptions({ width: wrap.clientWidth - 1, height: wrap.clientHeight });
+  });
+}
+
+// ── Load ticker ────────────────────────────────────────────────────────────
+async function loadTicker(ticker) {
+  if (!ticker) return;
+  ticker = ticker.toUpperCase().trim();
+  currentTicker = ticker;
+
+  document.getElementById("empty-state").style.display = "none";
+  document.getElementById("chart").style.display = "block";
+  document.getElementById("loading").style.display = "flex";
+  document.getElementById("ticker-header").style.display = "flex";
+  document.getElementById("send-excel-btn").disabled = false;
+
+  // Highlight watchlist
+  document.querySelectorAll(".watch-item").forEach(el => {
+    el.classList.toggle("active", el.dataset.ticker === ticker);
+  });
+
+  try {
+    const [quoteRes, fundRes, histRes] = await Promise.all([
+      fetch(`${API}/terminal/quote/${ticker}`).then(r => r.json()),
+      fetch(`${API}/terminal/fundamentals/${ticker}`).then(r => r.ok ? r.json() : {}),
+      fetch(`${API}/terminal/history/${ticker}?period=${currentPeriod}&interval=${currentInterval}`).then(r => r.json()),
+    ]);
+
+    // Header
+    document.getElementById("ticker-symbol").textContent = ticker;
+    document.getElementById("ticker-name").textContent = quoteRes.name || "";
+    const price = quoteRes.price || 0;
+    const chg = quoteRes.change || 0;
+    const chgPct = quoteRes.change_pct || 0;
+    document.getElementById("ticker-price").textContent = `$${price.toFixed(2)}`;
+    const chgEl = document.getElementById("ticker-change");
+    chgEl.textContent = `${chg >= 0 ? "+" : ""}${chg.toFixed(2)}  (${chg >= 0 ? "+" : ""}${chgPct.toFixed(2)}%)`;
+    chgEl.className = chg >= 0 ? "up" : "dn";
+    document.getElementById("ticker-meta").textContent =
+      [quoteRes.sector, quoteRes.industry].filter(Boolean).join("  ·  ");
+
+    // Stats panel
+    const fmtN = (v, dec=2) => v != null ? v.toFixed(dec) : "—";
+    const fmtB = (v) => v != null ? `$${v.toFixed(1)}B` : "—";
+    const fmtM = (v) => v != null ? `$${(v/1e3).toFixed(1)}B` : "—";
+    const fmtPct = (v) => v != null ? `${v.toFixed(1)}%` : "—";
+    const fmtVol = (v) => v != null ? (v >= 1e6 ? `${(v/1e6).toFixed(1)}M` : `${(v/1e3).toFixed(0)}K`) : "—";
+
+    set("s-52h",   quoteRes.week52_high != null ? `$${quoteRes.week52_high.toFixed(2)}` : "—");
+    set("s-52l",   quoteRes.week52_low  != null ? `$${quoteRes.week52_low.toFixed(2)}`  : "—");
+    set("s-vol",   fmtVol(quoteRes.volume));
+    set("s-avgvol",fmtVol(quoteRes.avg_volume));
+    set("s-mc",    fmtB(quoteRes.market_cap_B));
+    set("s-pe",    quoteRes.pe != null ? quoteRes.pe.toFixed(1) + "x" : "—");
+    set("s-eps",   quoteRes.eps != null ? `$${quoteRes.eps.toFixed(2)}` : "—");
+
+    const rev_m = fundRes.revenue_ltm_M;
+    const ebitda_m = fundRes.ebitda_ltm_M;
+    set("s-rev",   rev_m   != null ? fmtM(rev_m)   : "—");
+    set("s-ebitda",ebitda_m!= null ? fmtM(ebitda_m): "—");
+    set("s-gm",    fmtPct(fundRes.gross_margin_pct));
+    set("s-em",    rev_m && ebitda_m ? fmtPct(ebitda_m/rev_m*100) : "—");
+    set("s-nm",    fmtPct(fundRes.operating_margin_pct));
+    set("s-sector",   quoteRes.sector   || "—");
+    set("s-industry", quoteRes.industry || "—");
+
+    // Chart
+    if (histRes.bars && histRes.bars.length) {
+      candleSeries.setData(histRes.bars);
+      chart.timeScale().fitContent();
+    }
+
+    // Update watchlist prices
+    updateWatchlistItem(ticker, price, chgPct);
+
+  } catch(e) {
+    showToast("Failed to load " + ticker);
+  } finally {
+    document.getElementById("loading").style.display = "none";
+  }
+}
+
+function set(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+
+// ── Period buttons ─────────────────────────────────────────────────────────
+document.querySelectorAll(".period-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".period-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    currentPeriod   = btn.dataset.p;
+    currentInterval = btn.dataset.i;
+    if (currentTicker) loadTicker(currentTicker);
+  });
+});
+
+// ── Search ─────────────────────────────────────────────────────────────────
+const searchInput = document.getElementById("search-input");
+const searchDrop  = document.getElementById("search-dropdown");
+
+searchInput.addEventListener("input", () => {
+  clearTimeout(searchTimeout);
+  const q = searchInput.value.trim();
+  if (!q) { searchDrop.style.display = "none"; return; }
+  searchTimeout = setTimeout(() => doSearch(q), 200);
+});
+
+async function doSearch(q) {
+  try {
+    const res = await fetch(`${API}/terminal/search/${encodeURIComponent(q)}`).then(r => r.json());
+    searchResults = res.results || [];
+    searchIdx = -1;
+    renderDropdown();
+  } catch(_) {}
+}
+
+function renderDropdown() {
+  if (!searchResults.length) { searchDrop.style.display = "none"; return; }
+  searchDrop.innerHTML = searchResults.map((r, i) => `
+    <div class="search-item${i === searchIdx ? " active" : ""}" data-i="${i}">
+      <span class="search-ticker">${r.ticker}</span>
+      <span class="search-name">${r.name}</span>
+      <span class="search-exch">${r.exchange}</span>
+    </div>`).join("");
+  searchDrop.style.display = "block";
+  searchDrop.querySelectorAll(".search-item").forEach(el => {
+    el.addEventListener("click", () => selectResult(parseInt(el.dataset.i)));
+  });
+}
+
+function selectResult(i) {
+  const r = searchResults[i];
+  if (!r) return;
+  searchInput.value = r.ticker;
+  searchDrop.style.display = "none";
+  loadTicker(r.ticker);
+  maybeAddToWatchlist(r.ticker);
+}
+
+searchInput.addEventListener("keydown", e => {
+  if (e.key === "ArrowDown") { e.preventDefault(); searchIdx = Math.min(searchIdx + 1, searchResults.length - 1); renderDropdown(); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); searchIdx = Math.max(searchIdx - 1, -1); renderDropdown(); }
+  else if (e.key === "Enter") {
+    e.preventDefault();
+    if (searchIdx >= 0) { selectResult(searchIdx); }
+    else {
+      const t = searchInput.value.trim().toUpperCase();
+      if (t) { searchDrop.style.display = "none"; loadTicker(t); maybeAddToWatchlist(t); }
+    }
+  }
+  else if (e.key === "Escape") { searchDrop.style.display = "none"; }
+});
+
+document.addEventListener("click", e => {
+  if (!document.getElementById("search-wrap").contains(e.target)) {
+    searchDrop.style.display = "none";
+  }
+});
+
+// ── Keyboard shortcut: ⌘K focuses search ──────────────────────────────────
+document.addEventListener("keydown", e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+    e.preventDefault();
+    searchInput.focus(); searchInput.select();
+  }
+});
+
+// ── Watchlist ──────────────────────────────────────────────────────────────
+function renderWatchlist() {
+  const list = document.getElementById("watchlist-list");
+  list.innerHTML = watchlist.map(t => `
+    <div class="watch-item${t === currentTicker ? " active" : ""}" data-ticker="${t}">
+      <span class="watch-sym">${t}</span>
+      <span class="watch-chg" id="wchg-${t}">—</span>
+    </div>`).join("");
+  list.querySelectorAll(".watch-item").forEach(el => {
+    el.addEventListener("click", () => {
+      searchInput.value = el.dataset.ticker;
+      loadTicker(el.dataset.ticker);
+    });
+  });
+}
+
+function updateWatchlistItem(ticker, price, chgPct) {
+  const el = document.getElementById(`wchg-${ticker}`);
+  if (!el) return;
+  el.textContent = `${chgPct >= 0 ? "+" : ""}${chgPct.toFixed(1)}%`;
+  el.className = "watch-chg " + (chgPct >= 0 ? "up" : "dn");
+}
+
+function maybeAddToWatchlist(ticker) {
+  if (!watchlist.includes(ticker)) {
+    watchlist.unshift(ticker);
+    if (watchlist.length > 20) watchlist.pop();
+    localStorage.setItem("tsifl_watchlist", JSON.stringify(watchlist));
+    renderWatchlist();
+  }
+}
+
+document.getElementById("watchlist-add").addEventListener("click", () => {
+  searchInput.focus(); searchInput.select();
+});
+
+// ── Send to Excel ──────────────────────────────────────────────────────────
+document.getElementById("send-excel-btn").addEventListener("click", async () => {
+  if (!currentTicker) return;
+  const btn = document.getElementById("send-excel-btn");
+  btn.textContent = "⏳ Sending..."; btn.disabled = true;
+
+  try {
+    const [q, f] = await Promise.all([
+      fetch(`${API}/terminal/quote/${currentTicker}`).then(r => r.json()),
+      fetch(`${API}/terminal/fundamentals/${currentTicker}`).then(r => r.ok ? r.json() : {}),
+    ]);
+
+    const payload = {
+      ticker:       currentTicker,
+      name:         q.name,
+      price:        q.price,
+      change_pct:   q.change_pct,
+      market_cap_B: q.market_cap_B,
+      revenue_B:    f.revenue_ltm_M != null ? +(f.revenue_ltm_M / 1e3).toFixed(2) : null,
+      ebitda_B:     f.ebitda_ltm_M  != null ? +(f.ebitda_ltm_M  / 1e3).toFixed(2) : null,
+      gross_margin: f.gross_margin_pct,
+      pe:           q.pe,
+    };
+
+    // Push via transfer endpoint — Excel add-in polls this and writes to sheet
+    const BACKEND = "https://focused-solace-production-6839.up.railway.app";
+    const resp = await fetch(`${BACKEND}/transfer/store`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from_app:  "terminal",
+        to_app:    "excel",
+        data_type: "terminal_quote",
+        data:      JSON.stringify(payload),
+        metadata:  {
+          message: `Write ${currentTicker} market data to the active sheet: ticker in A1, then key metrics as labeled rows below it (Price, Market Cap $B, Revenue $B, EBITDA $B, Gross Margin %, P/E). Bold labels, number formats.`
+        },
+      }),
+    });
+
+    if (resp.ok) {
+      showToast(`✅ ${currentTicker} sent to Excel`);
+    } else {
+      showToast("⚠️ Make sure tsifl add-in is open in Excel");
+    }
+  } catch(e) {
+    showToast("⚠️ Could not send — is Excel open?");
+  } finally {
+    btn.textContent = "📊 Send to Excel"; btn.disabled = false;
+  }
+});
+
+// ── Toast ──────────────────────────────────────────────────────────────────
+function showToast(msg, ms = 3000) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.style.display = "block";
+  setTimeout(() => { t.style.display = "none"; }, ms);
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+initChart();
+renderWatchlist();
+
+// Load watchlist quotes in background
+(async () => {
+  for (const ticker of watchlist.slice(0, 8)) {
+    try {
+      const q = await fetch(`${API}/terminal/quote/${ticker}`).then(r => r.json());
+      updateWatchlistItem(ticker, q.price, q.change_pct || 0);
+    } catch(_) {}
+  }
+})();
+
+// Auto-load first watchlist item
+if (watchlist.length) {
+  searchInput.value = watchlist[0];
+  loadTicker(watchlist[0]);
+}
+</script>
+</body>
+</html>

@@ -197,6 +197,9 @@ app.include_router(computer_use.router)
 app.include_router(billing.router, prefix="/billing")
 app.include_router(generate.router, prefix="/generate")
 
+from routes import terminal as terminal_routes
+app.include_router(terminal_routes.router, prefix="/terminal")
+
 # --- Add-in static files (production build served at /addin/*) ---------------
 _ADDIN_DIR = Path(__file__).parent / "static" / "addin"
 if _ADDIN_DIR.exists():
@@ -238,7 +241,14 @@ async def market_fundamentals_batch(req: SnapshotRequest):
     return {"results": await get_fundamentals_batch(req.tickers[:15])}
 
 # --- Notes App (served as static HTML) ---
-NOTES_APP_PATH = Path(__file__).parent / "static" / "notes.html"
+NOTES_APP_PATH    = Path(__file__).parent / "static" / "notes.html"
+TERMINAL_APP_PATH = Path(__file__).parent / "static" / "terminal.html"
+
+@app.get("/terminal-app")
+async def serve_terminal():
+    if TERMINAL_APP_PATH.exists():
+        return FileResponse(TERMINAL_APP_PATH, media_type="text/html")
+    return JSONResponse({"error": "terminal not found"}, status_code=404)
 
 @app.get("/notes-app")
 async def serve_notes_app():
