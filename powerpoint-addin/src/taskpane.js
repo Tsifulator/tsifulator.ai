@@ -633,7 +633,7 @@ async function executeAction(action) {
         const defaultContentColor = isTitleSlide ? "#E2E8F0" : "#334155";
         const defaultSubColor = isTitleSlide ? "#CBD5E1" : "#64748B";
 
-        // Add title
+        // Add title — named "tsifl-title" so modify_slide can find it
         if (payload.title) {
           const titleBox = newSlide.shapes.addTextBox(payload.title);
           if (isTitleSlide) {
@@ -642,6 +642,7 @@ async function executeAction(action) {
             titleBox.left = 50; titleBox.top = 20; titleBox.width = 620; titleBox.height = 55;
           }
           await ctx.sync();
+          titleBox.name = "tsifl-title";
           titleBox.textFrame.textRange.load("font");
           await ctx.sync();
           const titleFont = titleBox.textFrame.textRange.font;
@@ -652,11 +653,12 @@ async function executeAction(action) {
           await ctx.sync();
         }
 
-        // Add subtitle (title slides only)
+        // Add subtitle — named "tsifl-subtitle" so modify_slide can find it
         if (payload.subtitle && isTitleSlide) {
           const subBox = newSlide.shapes.addTextBox(payload.subtitle);
           subBox.left = 50; subBox.top = 240; subBox.width = 620; subBox.height = 40;
           await ctx.sync();
+          subBox.name = "tsifl-subtitle";
           subBox.textFrame.textRange.load("font");
           await ctx.sync();
           subBox.textFrame.textRange.font.size = 18;
@@ -1055,19 +1057,66 @@ async function executeAction(action) {
         shapes.load("items");
         await ctx.sync();
 
-        // Apply changes to shapes
+        // Load shape names so we can find tsifl-named boxes
+        for (const s of shapes.items) { s.load("name"); }
+        await ctx.sync();
+
         const changes = payload.changes || {};
+
+        // Special shorthand: payload.title / payload.subtitle / payload.background_color
+        // These are set by the model when modifying a slide's core properties
+        const specialKeys = {
+          title: { tag: "tsifl-title", isTitleSlide: true,
+            left: 50, top: 150, width: 620, height: 80, size: 36, bold: true, color: "#FFFFFF" },
+          subtitle: { tag: "tsifl-subtitle", isTitleSlide: true,
+            left: 50, top: 240, width: 620, height: 40, size: 18, bold: false, color: "#CBD5E1" },
+        };
+        for (const [key, cfg] of Object.entries(specialKeys)) {
+          const text = payload[key] ?? changes[key]?.text ?? changes["Title"]?.text ?? changes["Subtitle"]?.text;
+          if (key === "title" && !payload.title && !changes.title && !changes["Title"]) continue;
+          if (key === "subtitle" && !payload.subtitle && !changes.subtitle && !changes["Subtitle"]) continue;
+          const finalText = payload[key] || changes[key]?.text || changes["Title"]?.text || changes["Subtitle"]?.text || "";
+          if (!finalText) continue;
+          let box = shapes.items.find(s => s.name === cfg.tag);
+          if (!box) {
+            // Shape not found — add it
+            box = slide.shapes.addTextBox(finalText);
+            box.left = cfg.left; box.top = cfg.top;
+            box.width = cfg.width; box.height = cfg.height;
+            await ctx.sync();
+            box.name = cfg.tag;
+          } else {
+            box.textFrame.textRange.text = finalText;
+          }
+          box.textFrame.textRange.load("font");
+          await ctx.sync();
+          box.textFrame.textRange.font.size = cfg.size;
+          box.textFrame.textRange.font.bold = cfg.bold;
+          box.textFrame.textRange.font.color = cfg.color;
+          box.textFrame.textRange.font.name = "Calibri";
+          await ctx.sync();
+        }
+
+        // Apply named-shape changes (model passes {shapeName: {text, left, top, ...}})
         for (const [shapeName, updates] of Object.entries(changes)) {
+          if (shapeName === "title" || shapeName === "subtitle" ||
+              shapeName === "Title" || shapeName === "Subtitle") continue; // handled above
           const shape = shapes.items.find(s => s.name === shapeName);
           if (!shape) continue;
-          if (updates.text !== undefined) {
-            shape.textFrame.textRange.text = updates.text;
-          }
+          if (updates.text !== undefined) shape.textFrame.textRange.text = updates.text;
           if (updates.left !== undefined) shape.left = updates.left;
           if (updates.top !== undefined) shape.top = updates.top;
           if (updates.width !== undefined) shape.width = updates.width;
           if (updates.height !== undefined) shape.height = updates.height;
         }
+
+        // Background color shorthand
+        if (payload.background_color) {
+          try {
+            slide.background.fill.setSolidColor(payload.background_color);
+          } catch(e) {}
+        }
+
         await ctx.sync();
       });
       break;
