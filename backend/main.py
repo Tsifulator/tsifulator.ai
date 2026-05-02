@@ -183,7 +183,7 @@ def health_dashboard():
 
 # --- Routes ---
 from routes import chat, auth, gmail, files, notes
-from routes import transfer, calendar, computer_use, billing
+from routes import transfer, calendar, computer_use, billing, generate
 
 app.include_router(chat.router, prefix="/chat")
 app.include_router(auth.router, prefix="/auth")
@@ -194,6 +194,7 @@ app.include_router(transfer.router, prefix="/transfer")
 app.include_router(calendar.router, prefix="/calendar")
 app.include_router(computer_use.router)
 app.include_router(billing.router, prefix="/billing")
+app.include_router(generate.router, prefix="/generate")
 
 # --- Market Data (Polygon.io) ---
 from pydantic import BaseModel as _BaseModel

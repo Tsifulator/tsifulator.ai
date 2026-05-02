@@ -270,6 +270,15 @@ function showChatScreen(user) {
     deckBtn.addEventListener("click", handleBuildDeck);
   }
 
+  const exportXlsxBtn = document.getElementById("export-xlsx-btn");
+  if (exportXlsxBtn) {
+    exportXlsxBtn.addEventListener("click", () => handleExportFormatted("xlsx"));
+  }
+  const exportPptxBtn = document.getElementById("export-pptx-btn");
+  if (exportPptxBtn) {
+    exportPptxBtn.addEventListener("click", () => handleExportFormatted("pptx"));
+  }
+
   // History panel toggle (Improvement 12)
   const histToggle = document.getElementById("history-toggle");
   if (histToggle) {
@@ -3879,6 +3888,103 @@ async function handleBuildDeck() {
     showToast("Deck build failed: " + err.message, "error", 4000);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = "📊 Build Deck"; }
+  }
+}
+
+// ── Export formatted file (server-side template engine) ──────────────────────
+// Reads tickers from the active sheet, calls /generate/comp-table.xlsx or
+// /generate/comp-slide.pptx, and triggers a browser download.
+// This produces deterministic, IB-grade output — no Office.js, no locale bugs.
+async function handleExportFormatted(format) {
+  const btnId = format === "xlsx" ? "export-xlsx-btn" : "export-pptx-btn";
+  const btn   = document.getElementById(btnId);
+  const label = format === "xlsx" ? "📥 .xlsx" : "📥 .pptx";
+  if (btn) { btn.disabled = true; btn.textContent = "⏳..."; }
+
+  try {
+    // Read sheet — extract title + all data
+    let sheetTitle = "Trading Comps";
+    let sheetValues = [];
+
+    await Excel.run(async (ctx) => {
+      const sheet = ctx.workbook.worksheets.getActiveWorksheet();
+      sheet.load("name");
+      const range = sheet.getUsedRange();
+      range.load(["values","rowCount","columnCount"]);
+      await ctx.sync();
+      sheetTitle  = sheet.name;
+      sheetValues = range.values.slice(0, 80).map(r => r.slice(0, 20));
+    });
+
+    if (!sheetValues.length) {
+      showToast("No data found on active sheet", "error", 3000);
+      return;
+    }
+
+    // Extract tickers — look for a row that looks like a header with a Ticker column
+    // then pull values in that column. Fall back to sending raw payload.
+    const tickers = [];
+    let tickerCol = -1;
+    for (let r = 0; r < sheetValues.length; r++) {
+      const row = sheetValues[r];
+      const ti  = row.findIndex(c => typeof c === "string" && /^ticker$/i.test(String(c).trim()));
+      if (ti !== -1) { tickerCol = ti; continue; }
+      if (tickerCol !== -1 && row[tickerCol] && String(row[tickerCol]).trim().length >= 2) {
+        const v = String(row[tickerCol]).trim();
+        if (/^[A-Z]{1,5}$/.test(v)) tickers.push(v);
+      }
+    }
+
+    setStatus(format === "xlsx" ? "Generating .xlsx..." : "Generating .pptx...");
+
+    const endpoint = format === "xlsx"
+      ? `${BACKEND_URL}/generate/comp-table.xlsx`
+      : `${BACKEND_URL}/generate/comp-slide.pptx`;
+
+    const body = tickers.length >= 2
+      ? { tickers, title: sheetTitle }
+      : {
+          payload: {
+            title:     sheetTitle,
+            date:      new Date().toLocaleDateString("en-US", { month:"long", year:"numeric" }),
+            currency:  "USD ($B)",
+            companies: [],           // server falls back to raw sheet data via Claude
+          }
+        };
+
+    const resp = await fetch(endpoint, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(body),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+
+    // Trigger download
+    const blob     = await resp.blob();
+    const url      = URL.createObjectURL(blob);
+    const anchor   = document.createElement("a");
+    const filename = sheetTitle.replace(/[^a-zA-Z0-9_\-]/g, "_") +
+                     (format === "xlsx" ? ".xlsx" : ".pptx");
+    anchor.href     = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+
+    setStatus("Downloaded ✓");
+    showToast(`Downloaded ${filename}`, "success", 4000);
+
+  } catch (err) {
+    console.error("[tsifl] Export error:", err);
+    showToast("Export failed: " + err.message, "error", 4000);
+    setStatus("Export failed");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = label; }
   }
 }
 
