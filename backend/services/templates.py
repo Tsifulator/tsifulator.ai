@@ -298,6 +298,10 @@ def generate_comp_slide_pptx(payload: dict) -> bytes:
     blank_layout = prs.slide_layouts[6]  # blank
     slide = prs.slides.add_slide(blank_layout)
 
+    # ── White background ──────────────────────────────────────────────────
+    _bg = slide.background; _bg.fill.solid()
+    _bg.fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+
     # ── Title bar ─────────────────────────────────────────────────────────
     from pptx.util import Inches, Pt, Emu
     title_box = slide.shapes.add_textbox(
@@ -761,16 +765,10 @@ def generate_comp_deck_pptx(payload: dict) -> bytes:
         for shape in src_slide.shapes:
             el = copy.deepcopy(shape._element)
             new_slide.shapes._spTree.insert(2, el)
-        # Copy background
-        bg = src_slide.background
+        # Force white background (never inherit black/transparent)
         new_bg = new_slide.background
-        fill = bg.fill
-        if fill.type is not None:
-            new_bg.fill.solid()
-            try:
-                new_bg.fill.fore_color.rgb = fill.fore_color.rgb
-            except Exception:
-                pass
+        new_bg.fill.solid()
+        new_bg.fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
         return new_slide
 
     _clone_slide(prs2, template_slide, prs)
