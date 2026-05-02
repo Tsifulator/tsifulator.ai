@@ -46,8 +46,19 @@ def _cache_set(key: str, data: dict, ttl: int = CACHE_TTL):
 
 # ── Polygon helpers ──────────────────────────────────────────────────────────
 
+# Rate-limit guard: max 2 concurrent Polygon API calls (free tier = 5/min)
+_polygon_sem: asyncio.Semaphore | None = None
+
+
+def _get_sem() -> asyncio.Semaphore:
+    global _polygon_sem
+    if _polygon_sem is None:
+        _polygon_sem = asyncio.Semaphore(2)
+    return _polygon_sem
+
+
 async def _polygon_get(path: str, params: dict = {}, ttl: int = CACHE_TTL) -> dict:
-    """Generic Polygon API GET with API key injection + cache."""
+    """Generic Polygon API GET with API key injection + cache + rate limiting."""
     key = _cache_key(path, params)
     cached = _cache_get(key)
     if cached is not None:
@@ -56,19 +67,30 @@ async def _polygon_get(path: str, params: dict = {}, ttl: int = CACHE_TTL) -> di
     api_key = os.getenv("POLYGON_API_KEY", "")
     if not api_key:
         return {"error": "POLYGON_API_KEY not set"}
+
     import httpx
-    params = {**params, "apiKey": api_key}
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.get(f"{POLYGON_BASE}{path}", params=params)
-            data = r.json()
-            # Only cache successful responses
-            if r.status_code == 200 and "error" not in data:
-                _cache_set(key, data, ttl)
-            return data
-    except Exception as e:
-        logger.warning(f"[polygon] {path} failed: {e}")
-        return {"error": str(e)}
+    sem = _get_sem()
+    async with sem:
+        # Double-check cache after acquiring semaphore (another task may have cached it)
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
+
+        params = {**params, "apiKey": api_key}
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                r = await client.get(f"{POLYGON_BASE}{path}", params=params)
+                data = r.json()
+                # Only cache successful responses
+                if r.status_code == 200 and "error" not in data:
+                    _cache_set(key, data, ttl)
+                elif r.status_code == 429:
+                    # Rate limited — wait 1s and let next caller try
+                    await asyncio.sleep(1.0)
+                return data
+        except Exception as e:
+            logger.warning(f"[polygon] {path} failed: {e}")
+            return {"error": str(e)}
 
 
 # ── Quote (single) ──────────────────────────────────────────────────────────
