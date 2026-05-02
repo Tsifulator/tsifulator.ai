@@ -2212,7 +2212,7 @@ async function executeAction(action) {
         range.load("rowCount,columnCount");
         await ctx.sync();
       }
-      const fmtStr = payload.format || payload.number_format || "General";
+      const fmtStr = _localeSafeFmt(payload.format || payload.number_format || "General");
       const fmt = Array.from({ length: range.rowCount }, () =>
         Array.from({ length: range.columnCount }, () => fmtStr)
       );
@@ -3134,6 +3134,19 @@ async function executeAction(action) {
   }
 }
 
+// ── Locale-safe format normalizer ─────────────────────────────────────────────
+// On non-US locales, "$" in Excel format strings maps to the system currency
+// symbol (e.g. € in EU). Force explicit USD with [$$-409] (LCID 409 = en-US).
+// Also normalises bare "$#,##0" variants that Claude emits.
+function _localeSafeFmt(fmt) {
+  if (typeof fmt !== "string") return fmt;
+  // Already locale-safe or not a dollar format — leave alone
+  if (fmt.startsWith("[$$-") || fmt.startsWith("[$€") || fmt.startsWith("[$")) return fmt;
+  // "$#,##0.00" → "[$$-409]#,##0.00"
+  // "$#,##0"    → "[$$-409]#,##0"
+  return fmt.replace(/^\$/, "[$$-409]");
+}
+
 // ── Format helper (shared by write_cell, write_range, format_range) ──────────
 
 function _applyFormat(range, p) {
@@ -3149,13 +3162,21 @@ function _applyFormat(range, p) {
   if (p.row_height)                range.format.rowHeight       = p.row_height;
   if (p.col_width)                 range.format.columnWidth     = p.col_width;
   if (p.number_format) {
-    // number_format needs to be a 2D array matching the range dimensions.
-    // Best-effort: try setting it; if it fails (size mismatch), skip silently.
+    // number_format must be a 2D array matching range dimensions.
+    // Load rowCount/columnCount if available on the range object so we can
+    // build the correct array; fall back to [[fmt]] if not yet loaded.
     try {
-      if (typeof p.number_format === "string") {
-        range.numberFormat = [[p.number_format]];
+      const fmtStr = _localeSafeFmt(
+        typeof p.number_format === "string" ? p.number_format : null
+      ) || p.number_format;
+      if (typeof fmtStr === "string") {
+        const rows = range.rowCount || 1;
+        const cols = range.columnCount || 1;
+        range.numberFormat = Array.from({ length: rows }, () =>
+          Array.from({ length: cols }, () => fmtStr)
+        );
       } else {
-        range.numberFormat = p.number_format;
+        range.numberFormat = fmtStr;
       }
     } catch (e) { /* size mismatch — skip */ }
   }
