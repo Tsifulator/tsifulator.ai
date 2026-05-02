@@ -485,39 +485,95 @@ async def build_comp_payload(tickers: list[str], title: str = None) -> dict:
     """
     Fetch live data for a list of tickers and return a payload
     ready for generate_comp_table_xlsx / generate_comp_slide_pptx.
+
+    Data flow:
+      1. Polygon → price, market_cap_B, shares_outstanding
+      2. FMP → revenue_ltm_M, ebitda_ltm_M, margins, net_debt_M
+         (yfinance fallback if FMP rate-limited or no key)
+      3. Compute EV = market_cap + net_debt
+         EV/EBITDA, EV/Revenue, P/E from combined data
     """
+    import asyncio
     from datetime import datetime
     from services.fmp import get_fundamentals as fmp_get
     from services.yfinance_service import get_fundamentals as yf_get
+    from services.polygon import get_stocks_batch
 
+    upper = [t.upper() for t in tickers]
+
+    # ── 1. Fetch price + market cap from Polygon (fast, reliable) ──────────
+    mkt_list = await get_stocks_batch(upper)
+    mkt = {m["ticker"]: m for m in mkt_list if not m.get("error")}
+
+    # ── 2. Fetch fundamentals (FMP first, yfinance fallback) concurrently ──
+    async def get_fund(ticker):
+        d = await fmp_get(ticker)
+        if d.get("error"):
+            d = await yf_get(ticker)
+        return ticker, d
+
+    fund_results = await asyncio.gather(*[get_fund(t) for t in upper])
+    fund = {t: d for t, d in fund_results}
+
+    # ── 3. Assemble payload ──────────────────────────────────────────────────
     companies = []
-    for ticker in tickers:
-        data = await fmp_get(ticker.upper())
-        if data.get("error"):
-            data = await yf_get(ticker.upper())
-        if data.get("error"):
-            continue
+    for ticker in upper:
+        m = mkt.get(ticker, {})
+        f = fund.get(ticker, {})
+
+        if f.get("error") and not m:
+            continue  # no data at all — skip
+
+        # Price + market cap from Polygon
+        price     = _safe_float(m.get("price"))
+        mkt_cap_b = _safe_float(m.get("market_cap_B"))
+
+        # Fundamentals — both FMP and yfinance use _ltm_M / _pct naming
+        rev_m    = _safe_float(f.get("revenue_ltm_M"))
+        ebitda_m = _safe_float(f.get("ebitda_ltm_M"))
+        ni_m     = _safe_float(f.get("net_income_ltm_M"))
+        gm_pct   = _safe_float(f.get("gross_margin_pct"))    # 0-100
+        ebitda_margin_pct = (
+            round(ebitda_m / rev_m * 100, 1)
+            if ebitda_m and rev_m else None
+        )
+        net_debt_m = _safe_float(f.get("net_debt_M"))
+
+        # EV = market_cap_B + net_debt_B
+        ev_b = None
+        if mkt_cap_b is not None and net_debt_m is not None:
+            ev_b = round(mkt_cap_b + net_debt_m / 1e3, 2)
+        elif mkt_cap_b is not None:
+            ev_b = mkt_cap_b  # approximate if no debt data
+
+        # Multiples
+        ev_ebitda = round(ev_b * 1e3 / ebitda_m, 1) if ev_b and ebitda_m and ebitda_m > 0 else None
+        ev_rev    = round(ev_b * 1e3 / rev_m,    1) if ev_b and rev_m    and rev_m    > 0 else None
+        pe        = round(mkt_cap_b * 1e3 / ni_m, 1) if mkt_cap_b and ni_m and ni_m > 0 else None
+
+        # Period label
+        period = f.get("period_label") or "LTM"
 
         companies.append({
-            "ticker":        ticker.upper(),
-            "name":          data.get("name", ticker),
-            "period":        data.get("period", "LTM"),
-            "revenue":       _safe_float(data.get("revenue")),
-            "gross_margin":  _safe_pct(data.get("gross_margin")),
-            "ebitda":        _safe_float(data.get("ebitda")),
-            "ebitda_margin": _safe_pct(data.get("ebitda_margin")),
-            "share_price":   _safe_float(data.get("price")),
-            "market_cap":    _safe_billions(data.get("market_cap")),
-            "ev":            _safe_billions(data.get("ev")),
-            "pe":            _safe_float(data.get("pe")),
-            "ev_ebitda":     _safe_float(data.get("ev_ebitda")),
-            "ev_revenue":    _safe_float(data.get("ev_revenue")),
+            "ticker":        ticker,
+            "name":          f.get("name") or m.get("name") or ticker,
+            "period":        period,
+            "revenue":       round(rev_m / 1e3, 2) if rev_m else None,   # → $B for display
+            "gross_margin":  gm_pct / 100 if gm_pct else None,           # → decimal
+            "ebitda":        round(ebitda_m / 1e3, 2) if ebitda_m else None,
+            "ebitda_margin": ebitda_margin_pct / 100 if ebitda_margin_pct else None,
+            "share_price":   price,
+            "market_cap":    mkt_cap_b,
+            "ev":            ev_b,
+            "pe":            pe,
+            "ev_ebitda":     ev_ebitda,
+            "ev_revenue":    ev_rev,
         })
 
     return {
-        "title":    title or f"Trading Comps — {', '.join(tickers)}",
-        "date":     f"As of {datetime.utcnow().strftime('%B %Y')}",
-        "currency": "USD ($B)",
+        "title":     title or f"Trading Comps — {', '.join(upper)}",
+        "date":      f"As of {datetime.utcnow().strftime('%B %Y')}",
+        "currency":  "USD ($B)",
         "companies": companies,
     }
 
