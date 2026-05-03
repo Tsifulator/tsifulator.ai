@@ -2367,23 +2367,31 @@ async def chat(request: ChatRequest):
         err_str = str(e).lower()
         logger.error(f"[chat] Claude API error ({type(e).__name__}): {str(e)[:300]}")
 
-        # If we had images, retry without them — covers ALL failure modes:
-        # size errors, context window, overloaded, rate limits, bad image
-        # data, etc. Better to answer text-only than crash with 500.
-        if safe_images:
-            logger.error(f"[chat] Retrying without {len(safe_images)} images...")
+        # If we had images or a large context, retry stripped-down.
+        # Use original message (no injections), minimal context, no images.
+        # Better to answer with less context than crash with 500.
+        if safe_images or len(str(request.context)) > 5000:
+            img_note = f" ({len(safe_images)} image(s) were too large to include)" if safe_images else ""
+            logger.error(f"[chat] Retrying stripped-down{img_note}...")
             try:
-                note = f"\n\n(Note: {len(safe_images)} attached image(s) were too large to process. Please describe what's in the images, or try attaching fewer/smaller files.)"
+                minimal_ctx = {"app": app}
                 result = await get_claude_response(
-                    message=message + note,
-                    context=request.context,
+                    message=request.message + (f"\n\n(Note: your attached images couldn't be processed — describe what's in them or try fewer/smaller files.)" if safe_images else ""),
+                    context=minimal_ctx,
                     session_id=request.session_id,
                     history=[],
                     images=[]
                 )
             except Exception as e2:
-                logger.error(f"[chat] Retry also failed: {type(e2).__name__}: {e2}")
-                raise HTTPException(status_code=500, detail=f"Claude API failed: {type(e).__name__}. Try again with fewer attachments.")
+                logger.error(f"[chat] Stripped retry also failed: {type(e2).__name__}: {str(e2)[:200]}")
+                # Last resort: return a graceful error response instead of 500
+                return ChatResponse(
+                    reply=f"I couldn't process that request — the payload was too large ({type(e).__name__}). Try with fewer attachments or a shorter message.",
+                    action={},
+                    actions=[],
+                    tasks_remaining=-1,
+                    memory_active=False,
+                )
         else:
             raise
 
