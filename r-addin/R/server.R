@@ -2012,8 +2012,20 @@ run_tsifl_server <- function(port = 7444) {
           set_status("done")
 
         }, error = function(e) {
+          # Extract the actual error detail from the backend's JSON response
+          # instead of showing a generic "HTTP 500 Internal Server Error"
+          detail <- e$message
+          if (!is.null(e$resp)) {
+            tryCatch({
+              body <- httr2::resp_body_json(e$resp, simplifyVector = FALSE)
+              if (!is.null(body$detail) && nchar(body$detail) > 0) {
+                detail <- body$detail
+              }
+            }, error = function(x) {})
+          }
+          cat("[tsifl] Backend error:", detail, "\n")
           add_message("assistant",
-            paste0("Could not reach backend.\n", e$message))
+            paste0("Could not reach backend.\n", detail))
           set_status("error", "Disconnected")
         })
         }, delay = 0.05)

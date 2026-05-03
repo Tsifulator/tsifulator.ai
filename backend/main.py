@@ -77,10 +77,15 @@ async def log_requests(request: Request, call_next):
     latency_ms = round((time.time() - start) * 1000, 1)
     if response.status_code >= 500:
         _last_error_time = datetime.utcnow().isoformat()
+    # Silence noisy polling endpoints — these 404 every second and drown
+    # out real error logs, causing Railway to rate-limit everything.
+    path = request.url.path
+    if "/computer-use/status/" in path and response.status_code == 404:
+        return response
     log_entry = {
         "ts": datetime.utcnow().isoformat(),
         "method": request.method,
-        "path": request.url.path,
+        "path": path,
         "status": response.status_code,
         "latency_ms": latency_ms,
     }

@@ -2184,6 +2184,9 @@ async def chat(request: ChatRequest):
 
     # 5. Save uploaded data files (CSV, TSV, etc.) to /tmp/ so import_csv can use them
     images = [{"media_type": img.media_type, "data": img.data, "file_name": img.file_name} for img in request.images] if request.images else []
+    if images:
+        total_kb = sum(len(im.get("data", "")) for im in images) // 1024
+        logger.info(f"[chat] {len(images)} images received ({total_kb}KB b64 total)")
     message = request.message
 
     # 5a. URL fetcher: detect SEC filing URLs in the message, pull them
@@ -2362,24 +2365,25 @@ async def chat(request: ChatRequest):
         )
     except Exception as e:
         err_str = str(e).lower()
-        # Catch ALL payload-too-large variants: 413, request_too_large,
-        # context window exceeded, max input tokens, overloaded, etc.
-        is_size_error = any(k in err_str for k in [
-            "413", "request_too_large", "too many", "exceeds",
-            "max_tokens", "context window", "input is too long",
-        ])
-        if is_size_error and safe_images:
-            logger.error(f"[chat] Claude API payload too large ({len(safe_images)} images). Retrying without images...")
+        logger.error(f"[chat] Claude API error ({type(e).__name__}): {str(e)[:300]}")
+
+        # If we had images, retry without them — covers ALL failure modes:
+        # size errors, context window, overloaded, rate limits, bad image
+        # data, etc. Better to answer text-only than crash with 500.
+        if safe_images:
+            logger.error(f"[chat] Retrying without {len(safe_images)} images...")
             try:
+                note = f"\n\n(Note: {len(safe_images)} attached image(s) were too large to process. Please describe what's in the images, or try attaching fewer/smaller files.)"
                 result = await get_claude_response(
-                    message=message,
+                    message=message + note,
                     context=request.context,
                     session_id=request.session_id,
                     history=[],
                     images=[]
                 )
             except Exception as e2:
-                raise HTTPException(status_code=413, detail="Request too large for Claude API, even after stripping images. Try a shorter message.")
+                logger.error(f"[chat] Retry also failed: {type(e2).__name__}: {e2}")
+                raise HTTPException(status_code=500, detail=f"Claude API failed: {type(e).__name__}. Try again with fewer attachments.")
         else:
             raise
 
