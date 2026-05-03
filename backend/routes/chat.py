@@ -2333,12 +2333,24 @@ async def chat(request: ChatRequest):
     # dropped, leading to "I don't see an image" replies. The desktop
     # panel resizes client-side to ~700KB, but we keep 5MB here as the
     # absolute ceiling for any other client that might POST raw images.
+    #
+    # ALSO cap cumulative base64 at 10MB — 5 retina screenshots at 4MB
+    # each = 20MB base64 ≈ 80K+ tokens which blows past Claude's context
+    # window and returns an unhandled error (not a clean 413).
     safe_images = []
+    total_b64 = 0
+    MAX_TOTAL_B64 = 10_000_000  # ~10MB cumulative base64
     for img in remaining_images[:5]:  # max 5 images
-        if len(img.get("data", "")) <= 5_000_000:  # Anthropic's documented limit
-            safe_images.append(img)
+        img_size = len(img.get("data", ""))
+        if img_size > 5_000_000:
+            logger.warning(f"[chat] Dropping oversized image ({img_size//1000}KB): {img.get('file_name','')}")
+        elif total_b64 + img_size > MAX_TOTAL_B64:
+            logger.warning(f"[chat] Dropping image (cumulative cap {MAX_TOTAL_B64//1_000_000}MB reached): {img.get('file_name','')}")
         else:
-            logger.warning(f"[chat] Dropping oversized image ({len(img.get('data',''))//1000}KB): {img.get('file_name','')}")
+            safe_images.append(img)
+            total_b64 += img_size
+    if len(safe_images) < len(remaining_images):
+        logger.info(f"[chat] Kept {len(safe_images)}/{len(remaining_images)} images ({total_b64//1000}KB total)")
 
     try:
         result = await get_claude_response(
@@ -2349,10 +2361,15 @@ async def chat(request: ChatRequest):
             images=safe_images
         )
     except Exception as e:
-        err_str = str(e)
-        if "413" in err_str or "request_too_large" in err_str:
-            logger.error(f"[chat] Claude API 413: request too large. Retrying without images...")
-            # Retry without images
+        err_str = str(e).lower()
+        # Catch ALL payload-too-large variants: 413, request_too_large,
+        # context window exceeded, max input tokens, overloaded, etc.
+        is_size_error = any(k in err_str for k in [
+            "413", "request_too_large", "too many", "exceeds",
+            "max_tokens", "context window", "input is too long",
+        ])
+        if is_size_error and safe_images:
+            logger.error(f"[chat] Claude API payload too large ({len(safe_images)} images). Retrying without images...")
             try:
                 result = await get_claude_response(
                     message=message,

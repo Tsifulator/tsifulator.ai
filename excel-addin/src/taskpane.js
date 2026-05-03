@@ -4104,8 +4104,15 @@ async function handleBuildDeck() {
         showToast(`📊 ${filename} downloaded — open in PowerPoint`, "success", 6000);
         return;
       }
-      // Template generation failed — fall through to Claude path
-      console.warn("[tsifl] Template path failed, falling back to Claude");
+      // Template generation failed — show specific error for 422 (no data)
+      const errBody = await resp.json().catch(() => ({}));
+      if (resp.status === 422) {
+        setStatus("Rate limited");
+        showToast(errBody.detail || "Market data rate-limited — try again in 60s", "error", 5000);
+        appendMessage("assistant", `⚠️ ${errBody.detail || "Could not fetch ticker data. APIs may be rate-limited — wait 60s and retry."}`);
+        return;
+      }
+      console.warn("[tsifl] Template path failed:", resp.status, errBody.detail || "falling back to Claude");
     }
 
     // ── PATH B: Claude + Office.js transfer (fallback for non-comp sheets) ──

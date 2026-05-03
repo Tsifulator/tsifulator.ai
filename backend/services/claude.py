@@ -3141,10 +3141,19 @@ TRANSACTIONS PROJECT SPECIFICS:
         ) as stream:
             collected_response = stream.get_final_message()
         response = collected_response
-    except anthropic.BadRequestError as e:
-        if "content filtering" in str(e).lower() or "blocked" in str(e).lower():
+    except (anthropic.BadRequestError, anthropic.APIStatusError) as e:
+        err_lower = str(e).lower()
+        if "content filtering" in err_lower or "blocked" in err_lower:
             return {
                 "reply": "I can't generate that exact content due to API content policies, but I can help you rephrase or approach it differently. Try rewording your request.",
+                "action": {},
+                "actions": [],
+                "model_used": selected_model,
+            }
+        # Overloaded / rate-limited — give user a meaningful message
+        if "overloaded" in err_lower or "529" in str(e):
+            return {
+                "reply": "Claude is temporarily overloaded — try again in a few seconds.",
                 "action": {},
                 "actions": [],
                 "model_used": selected_model,

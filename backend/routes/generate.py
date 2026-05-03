@@ -36,6 +36,13 @@ async def generate_comp_xlsx(req: CompRequest):
     else:
         raise HTTPException(400, "Provide either tickers or payload")
 
+    if not payload.get("companies"):
+        raise HTTPException(
+            422,
+            "Could not fetch data for any tickers. "
+            "Market data APIs may be rate-limited — try again in 60 seconds."
+        )
+
     try:
         xlsx_bytes = generate_comp_table_xlsx(payload)
     except Exception as e:
@@ -65,6 +72,13 @@ async def generate_comp_pptx(req: CompRequest):
         payload = req.payload
     else:
         raise HTTPException(400, "Provide either tickers or payload")
+
+    if not payload.get("companies"):
+        raise HTTPException(
+            422,
+            "Could not fetch data for any tickers. "
+            "Market data APIs may be rate-limited — try again in 60 seconds."
+        )
 
     try:
         pptx_bytes = generate_comp_deck_pptx(payload)
