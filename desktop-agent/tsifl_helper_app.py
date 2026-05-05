@@ -320,13 +320,17 @@ def _send_to_backend(message: str, frontmost_app: str, images: list | None = Non
         "BACKEND_URL",
         "https://focused-solace-production-6839.up.railway.app",
     )
-    app_map = {
-        "Microsoft Excel": "excel",
-        "RStudio": "rstudio",
-        "Microsoft PowerPoint": "powerpoint",
-        "Microsoft Word": "word",
-    }
-    app = app_map.get(frontmost_app, "shortcut")
+
+    # Always route through the desktop agent context now — tsifl is a
+    # Mac automation agent, not an add-in chat relay.
+    app = "shortcut"
+
+    # Capture rich context about the Mac state
+    try:
+        from executor import get_system_context
+        mac_context = get_system_context()
+    except Exception:
+        mac_context = {"frontmost_app": frontmost_app}
 
     body = {
         "user_id": "shortcut-anon",
@@ -335,13 +339,13 @@ def _send_to_backend(message: str, frontmost_app: str, images: list | None = Non
             "app": app,
             "source": "global-shortcut",
             "frontmost_app": frontmost_app,
+            "mac": mac_context,
         },
     }
     if images:
         body["images"] = images
 
-    # Diagnostic log: what's about to be POSTed (helps debug "Claude says
-    # it can't see the image"). Logs to ~/Library/Logs/tsifl-shortcut.log.
+    # Diagnostic log
     try:
         img_summary = (
             ", ".join(
@@ -358,16 +362,60 @@ def _send_to_backend(message: str, frontmost_app: str, images: list | None = Non
         pass
 
     try:
-        # Image-attached requests can be larger so we bump the timeout
         timeout = 120 if images else 60
         with _httpx.Client(timeout=timeout) as client:
             r = client.post(f"{backend.rstrip('/')}/chat/", json=body)
             if r.status_code == 200:
-                return r.json()
+                data = r.json()
+                # Parse plan from Claude's JSON reply (desktop agent mode)
+                plan = _extract_plan_from_reply(data)
+                if plan is not None:
+                    data["_plan"] = plan
+                return data
             return {"reply": f"Backend error ({r.status_code}): {r.text[:200]}",
                     "actions": []}
     except Exception as e:
         return {"reply": f"Could not reach tsifl: {e}", "actions": []}
+
+
+def _extract_plan_from_reply(data: dict) -> list | None:
+    """Try to parse an action plan from Claude's reply.
+
+    The desktop system prompt tells Claude to return JSON with a "plan"
+    array. The reply might be pure JSON, or JSON inside markdown fences.
+    Returns a list of action dicts, or None if no plan found.
+    """
+    reply = data.get("reply", "")
+    if not reply:
+        return None
+
+    import re
+
+    # Try parsing the entire reply as JSON
+    for candidate in [reply]:
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict) and "plan" in parsed:
+                # Overwrite reply with the human-readable version
+                if parsed.get("reply"):
+                    data["reply"] = parsed["reply"]
+                return parsed["plan"]
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Try extracting JSON from markdown code fences
+    json_blocks = re.findall(r"```(?:json)?\s*\n?({.*?})\s*\n?```", reply, re.DOTALL)
+    for block in json_blocks:
+        try:
+            parsed = json.loads(block)
+            if isinstance(parsed, dict) and "plan" in parsed:
+                if parsed.get("reply"):
+                    data["reply"] = parsed["reply"]
+                return parsed["plan"]
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    return None
 
 
 # ── Floating shortcut panel (Spotlight-style) ───────────────────────────────
@@ -392,6 +440,7 @@ _panel_thinking_timer: "object | None" = None  # rotates thinking punchlines
 _panel_expanded: bool = False              # True if panel is grown to show a response.
                                             # Tracks whether subviews were shifted up so
                                             # collapse only inverts the shift when needed.
+_pending_plan: list | None = None             # action plan waiting for user confirmation
 _panel_session_id: int = 0                  # bumps on each show; late callbacks compare
                                             # to know if their panel-instance is still
                                             # the active one (skip mutation otherwise).
@@ -946,14 +995,15 @@ def _define_panel_classes():
             if _panel_busy:
                 return  # ignore double-Enter while in flight
             text = str(sender.stringValue() or "").strip()
-            if text:
+            # Allow empty Enter to execute a pending plan
+            if text or _pending_plan:
                 _panel_submit(text)
 
         def sendClicked_(self, sender):
             if _panel_busy or _panel_input is None:
                 return
             text = str(_panel_input.stringValue() or "").strip()
-            if text:
+            if text or _pending_plan:
                 _panel_submit(text)
 
         def controlTextDidChange_(self, notification):
@@ -1519,9 +1569,10 @@ def _panel_dismiss():
     that left the panel blank/invisible/un-typeable on subsequent opens.
     Rebuild from scratch is ~5ms and bug-proof.
     """
-    global _panel_busy, _panel_thinking_timer
+    global _panel_busy, _panel_thinking_timer, _pending_plan
     global _panel_ref, _panel_input, _panel_send_btn, _panel_attach_btn
     global _panel_response, _panel_expanded
+    _pending_plan = None  # cancel any pending action plan
 
     if _panel_thinking_timer is not None:
         try: _panel_thinking_timer.stop()
@@ -1560,15 +1611,83 @@ def _panel_submit(text: str):
     """User pressed Enter or clicked Send. Don't dismiss — keep panel open,
     show 'thinking…' inline, fire backend, then show the reply inline.
 
+    If there's a pending action plan and the user presses Enter with an
+    empty input, execute the plan. If they type something new, treat it
+    as a new query (cancelling the pending plan).
+
     If the user dismisses the panel mid-request, the request still runs
     to completion in the background; the result surfaces as a macOS
     notification rather than being silently dropped.
     """
-    global _panel_busy, _panel_thinking_timer
+    global _panel_busy, _panel_thinking_timer, _pending_plan
 
     global _pending_images
     if _panel_busy:
         return
+
+    # ── Plan execution: empty Enter with a pending plan = EXECUTE ─────
+    if not text and _pending_plan:
+        plan_to_run = _pending_plan
+        _pending_plan = None
+        _panel_busy = True
+        _panel_show_response("Executing…")
+
+        def _run_plan():
+            try:
+                from executor import Action, Risk, execute_plan
+                actions = []
+                for step in plan_to_run:
+                    actions.append(Action(
+                        type=step.get("type", "shell"),
+                        description=step.get("description", ""),
+                        command=step.get("command", ""),
+                        risk=Risk(step.get("risk", "yellow")),
+                    ))
+                results = execute_plan(actions)
+
+                # Build result summary
+                lines = []
+                for a in results:
+                    icon = "✅" if a.success else "❌"
+                    lines.append(f"{icon} {a.description}")
+                    if a.result and len(a.result) < 200:
+                        lines.append(f"   → {a.result}")
+                    if a.error:
+                        lines.append(f"   ⚠️ {a.error}")
+                summary = "\n".join(lines)
+            except Exception as e:
+                summary = f"Execution failed: {e}"
+
+            def _show_results():
+                global _panel_busy, _last_response_text
+                _panel_busy = False
+                _last_response_text = summary
+                if _panel_is_visible():
+                    _panel_show_response(summary)
+                    if _panel_input is not None:
+                        try:
+                            _panel_input.setEditable_(True)
+                            _panel_input.setPlaceholderString_("Ask tsifl anything…")
+                            _panel_input.becomeFirstResponder()
+                        except Exception:
+                            pass
+                else:
+                    try:
+                        rumps.notification(title="tsifl", subtitle="Done", message=summary[:200])
+                    except Exception:
+                        pass
+
+            try:
+                from PyObjCTools.AppHelper import callAfter
+                callAfter(_show_results)
+            except Exception:
+                pass
+
+        threading.Thread(target=_run_plan, daemon=True).start()
+        return
+
+    # New query typed — cancel any pending plan
+    _pending_plan = None
     _panel_busy = True
 
     my_session = _panel_session_id
@@ -1632,35 +1751,53 @@ def _panel_submit(text: str):
                 _panel_thinking_timer = None
 
             reply_text = (result.get("reply") or "(no reply)").strip()
-            actions = result.get("actions") or []
-            cu_session = result.get("cu_session_id")
+            plan = result.get("_plan")  # parsed action plan from desktop agent mode
 
-            # Show the FULL reply (with paragraph breaks preserved) — the
-            # response field is multi-line wrap and the panel grows to fit.
-            # Cap at 1500 chars total so a runaway reply doesn't fill the
-            # screen; if longer, ellipsize with a hint.
+            # ── Plan mode: show confirmation UI ──────────────────────────
+            if plan and isinstance(plan, list) and len(plan) > 0:
+                # Build human-readable plan summary
+                risk_icons = {"green": "🟢", "yellow": "🟡", "red": "🔴"}
+                lines = [reply_text, ""]
+                for i, step in enumerate(plan, 1):
+                    icon = risk_icons.get(step.get("risk", "yellow"), "🟡")
+                    desc = step.get("description", step.get("type", "?"))
+                    lines.append(f"  {icon} {i}. {desc}")
+                lines.append("")
+                lines.append("Press Enter to execute  •  Esc to cancel")
+                display = "\n".join(lines)
+
+                global _last_response_text
+                _last_response_text = display
+
+                if _panel_session_id == my_session and _panel_is_visible():
+                    _panel_show_response(display)
+                    # Store plan for execution on confirm
+                    global _pending_plan
+                    _pending_plan = plan
+                    if _panel_input is not None:
+                        try:
+                            _panel_input.setEditable_(True)
+                            _panel_input.setStringValue_("")
+                            _panel_input.setPlaceholderString_("Enter = execute  •  type to ask something else")
+                            _panel_input.becomeFirstResponder()
+                        except Exception:
+                            pass
+                else:
+                    try:
+                        rumps.notification(title="tsifl", subtitle=text[:60], message=display)
+                    except Exception:
+                        pass
+                return
+
+            # ── Normal reply mode (no plan) ──────────────────────────────
             display = reply_text
             if len(display) > 1500:
                 display = display[:1497] + "…"
-            extras = []
-            if actions:
-                extras.append(f"{len(actions)} action(s) queued")
-            if cu_session:
-                extras.append("helper running")
-            tail = f"\n\n({', '.join(extras)})" if extras else ""
 
-            # Persist the last response so reopening the panel later still
-            # shows the answer (user feedback: "when i close, the answer
-            # disappears, i dont want that"). Cleared when next query is
-            # submitted, never disposed otherwise.
-            global _last_response_text
-            _last_response_text = display + tail
+            _last_response_text = display
 
-            # If the panel-instance is still the active one and visible,
-            # update inline AND re-enable the input so user can ask a
-            # follow-up. Otherwise surface as a notification.
             if _panel_session_id == my_session and _panel_is_visible():
-                _panel_show_response(display + tail)
+                _panel_show_response(display)
                 if _panel_input is not None:
                     try:
                         _panel_input.setEditable_(True)
@@ -1669,14 +1806,11 @@ def _panel_submit(text: str):
                     except Exception:
                         pass
             else:
-                # Panel was dismissed. Persisted response will surface on
-                # next show. Also fire a notification so the user knows
-                # the answer is ready.
                 try:
                     rumps.notification(
                         title="tsifl",
                         subtitle=text[:60],
-                        message=display + tail,
+                        message=display,
                     )
                 except Exception:
                     pass
