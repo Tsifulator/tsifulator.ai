@@ -2810,7 +2810,7 @@ DESKTOP_TOOLS = [
 # Only includes the sections relevant to the active app.
 # This saves ~12K tokens for Excel vs sending the full 17K prompt.
 
-def _build_system_prompt(app: str, message: str = "") -> str:
+def _build_system_prompt(app: str, message: str = "", context: dict = None) -> str:
     """Build an app-specific system prompt to minimize token usage."""
     # Base section: personality, output rules, action rules (always included)
     # Find where app-specific sections start
@@ -2887,7 +2887,7 @@ def _build_system_prompt(app: str, message: str = "") -> str:
     if app == "shortcut":
         app_sections += DESKTOP_AGENT_PROMPT
         # Inject persistent user memory (preferences, facts) if available
-        user_memory = context.get("user_memory", "")
+        user_memory = (context or {}).get("user_memory", "")
         if user_memory:
             app_sections += f"\n\n### USER MEMORY\n{user_memory}\n"
 
@@ -3177,7 +3177,7 @@ TRANSACTIONS PROJECT SPECIFICS:
         user_text = user_text + transactions_hints
 
     # Build app-specific system prompt (saves thousands of tokens)
-    system_prompt = _build_system_prompt(context.get("app", ""), message)
+    system_prompt = _build_system_prompt(context.get("app", ""), message, context=context)
 
     # Build message thread from history
     messages = []
@@ -4283,7 +4283,7 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
         user_text = user_text + homework_reminder
 
     # Build app-specific system prompt
-    system_prompt = _build_system_prompt(context.get("app", ""), message)
+    system_prompt = _build_system_prompt(context.get("app", ""), message, context=context)
 
     messages = []
     for h in history:
