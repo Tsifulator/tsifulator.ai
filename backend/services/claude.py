@@ -3004,6 +3004,13 @@ end tell
 8. For web searches, use open_url with a Google/DuckDuckGo search URL.
 9. NEVER include sensitive data (passwords, keys) in action commands.
 10. When context includes `frontmost_app`, tailor your response to what that app can do.
+11. For email: prefer `open_url` with a Gmail compose URL over AppleScript Mail, since most
+    users access email through browser-based Gmail, not Apple Mail. Format:
+    `https://mail.google.com/mail/?view=cm&to=EMAIL&su=SUBJECT&body=BODY`
+    URL-encode the subject and body. This is GREEN risk (just opens a browser tab for review).
+    Only use AppleScript Mail if the user explicitly asks for it or mentions Apple Mail.
+12. When user_memory contains facts, USE THEM. If the user says "email my boss", look for
+    their boss's email in the stored memories — don't ask for it again.
 """
 
 
