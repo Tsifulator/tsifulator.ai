@@ -3211,6 +3211,7 @@ TRANSACTIONS PROJECT SPECIFICS:
 
     # For certain contexts, allow text-only responses (no forced tool call)
     app_name = context.get("app", "")
+    is_desktop = app_name == "shortcut"
     is_browser_summary = app_name == "browser" and bool(context.get("full_page_text", ""))
     is_notes = app_name == "notes"
     # Detect messages that don't need actions (questions, greetings, chat)
@@ -3256,6 +3257,21 @@ TRANSACTIONS PROJECT SPECIFICS:
         selected_model = MODEL_FAST
         system_prompt = system_prompt + DISCUSS_MODE_ADDENDUM
         print(f"[routing] DISCUSS MODE → Haiku, no tools. msg={message[:60]!r}", flush=True)
+    elif is_desktop:
+        # Desktop agent: simple commands → Haiku (fast), complex → Sonnet
+        # DESKTOP_TOOLS is simple enough for Haiku to handle reliably.
+        _desktop_simple = re.compile(
+            r"^(open|launch|find|search|show|close|quit|play|pause|mute|"
+            r"unmute|volume|brightness|screenshot|clipboard|copy|what time|"
+            r"what day|what date|lock|sleep|restart|shut)\b",
+            re.IGNORECASE
+        )
+        if len(message) < 100 and _desktop_simple.match(message.strip()):
+            selected_model = MODEL_FAST
+            print(f"[routing] DESKTOP SIMPLE → Haiku. msg={message[:60]!r}", flush=True)
+        else:
+            selected_model = MODEL_STANDARD
+            print(f"[routing] DESKTOP COMPLEX → Sonnet. msg={message[:60]!r}", flush=True)
     else:
         selected_model = _select_model(message, context, has_attachments=bool(images))
 
@@ -3317,7 +3333,6 @@ TRANSACTIONS PROJECT SPECIFICS:
     tool_choice = {"type": "any"} if force_tools else {"type": "auto"}
 
     # Desktop agent: always use DESKTOP_TOOLS, never force tool_choice=any
-    is_desktop = app_name == "shortcut"
     if is_desktop:
         print(f"[routing] DESKTOP AGENT → DESKTOP_TOOLS, tool_choice=auto. msg={message[:60]!r}", flush=True)
 
