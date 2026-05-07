@@ -340,8 +340,25 @@ def _send_to_backend(message: str, frontmost_app: str, images: list | None = Non
     except Exception:
         pass
 
+    # Build recent conversation snippet for context
+    history_snippet = ""
+    if _conversation_history:
+        recent = _conversation_history[-_MAX_HISTORY:]
+        lines = []
+        for turn in recent:
+            prefix = "User" if turn["role"] == "user" else "tsifl"
+            lines.append(f"{prefix}: {turn['content'][:200]}")
+        history_snippet = "\n".join(lines)
+
+    # Include last search results if available
+    search_context = ""
+    if _last_search_results:
+        numbered = [f"  {i+1}. {p}" for i, p in enumerate(_last_search_results[:10])]
+        search_context = "Recent search results:\n" + "\n".join(numbered)
+
     body = {
         "user_id": "shortcut-anon",
+        "session_id": _backend_session_id,
         "message": message,
         "context": {
             "app": app,
@@ -349,6 +366,8 @@ def _send_to_backend(message: str, frontmost_app: str, images: list | None = Non
             "frontmost_app": frontmost_app,
             "mac": mac_context,
             "user_memory": memory_context,
+            "conversation_history": history_snippet,
+            "search_results": search_context,
         },
     }
     if images:
@@ -380,6 +399,16 @@ def _send_to_backend(message: str, frontmost_app: str, images: list | None = Non
                 plan = _extract_plan_from_reply(data)
                 if plan is not None:
                     data["_plan"] = plan
+
+                # Track conversation history for multi-turn context
+                reply_text = data.get("reply", "")
+                _conversation_history.append({"role": "user", "content": message})
+                if reply_text:
+                    _conversation_history.append({"role": "assistant", "content": reply_text})
+                # Trim to max
+                while len(_conversation_history) > _MAX_HISTORY * 2:
+                    _conversation_history.pop(0)
+
                 return data
             return {"reply": f"Backend error ({r.status_code}): {r.text[:200]}",
                     "actions": []}
@@ -522,6 +551,17 @@ _pending_plan: list | None = None             # action plan waiting for user con
 _panel_session_id: int = 0                  # bumps on each show; late callbacks compare
                                             # to know if their panel-instance is still
                                             # the active one (skip mutation otherwise).
+
+# ── Multi-turn conversation context ─────────────────────────────────────────
+# Keeps a short rolling history so the user can say "open the first one"
+# after a search, or "now email that to my boss" after finding a file.
+# Backend session_id is persistent across panel open/close so the server
+# also accumulates history on its side.
+import uuid as _uuid
+_backend_session_id: str = f"tsifl-desktop-{_uuid.uuid4().hex[:8]}"
+_conversation_history: list[dict] = []   # [{role, content}, ...] — max ~10 turns
+_MAX_HISTORY = 10
+_last_search_results: list[str] = []     # file paths from most recent search
 _last_response_text: str | None = None      # last successful reply — restored on next show
                                             # so the user doesn't lose the answer when they
                                             # ⌘⌥T-close. Cleared when a new query is sent.
@@ -1460,23 +1500,37 @@ def _build_floating_panel():
     # Multi-line text so the full reply is visible, not truncated to one
     # line. Width-bounded to the panel's content area; height grows
     # dynamically when we measure the reply (see _panel_show_response).
-    response_field = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 0, 0))
-    response_field.setBezeled_(False)
-    response_field.setBordered_(False)
-    response_field.setDrawsBackground_(False)
-    response_field.setFocusRingType_(NSFocusRingTypeNone)
-    response_field.setEditable_(False)
-    response_field.setSelectable_(True)
-    response_field.setFont_(NSFont.systemFontOfSize_(13.0))
-    response_field.setTextColor_(muted)
-    response_field.setStringValue_("")
-    # Multi-line + word wrap. NSLineBreakByWordWrapping = 0
-    NSLineBreakByWordWrapping = 0
-    response_field.setUsesSingleLineMode_(False)
-    response_field.cell().setWraps_(True)
-    response_field.cell().setLineBreakMode_(NSLineBreakByWordWrapping)
-    response_field.setHidden_(True)
-    content.addSubview_(response_field)
+    # ── Scrollable response area (NSTextView inside NSScrollView) ──────
+    from AppKit import NSScrollView, NSTextView, NSBorderType
+    NSNoBorder = 0
+
+    scroll_view = NSScrollView.alloc().initWithFrame_(NSMakeRect(0, 0, 0, 0))
+    scroll_view.setHasVerticalScroller_(True)
+    scroll_view.setHasHorizontalScroller_(False)
+    scroll_view.setBorderType_(NSNoBorder)
+    scroll_view.setDrawsBackground_(False)
+    scroll_view.setAutohidesScrollers_(True)
+    scroll_view.setHidden_(True)
+
+    text_view = NSTextView.alloc().initWithFrame_(NSMakeRect(0, 0, _PANEL_WIDTH - 36, 0))
+    text_view.setEditable_(False)
+    text_view.setSelectable_(True)
+    text_view.setFont_(NSFont.systemFontOfSize_(13.0))
+    text_view.setTextColor_(muted)
+    text_view.setDrawsBackground_(False)
+    text_view.setTextContainerInset_((0, 0))
+    # Word wrap to container width
+    text_view.textContainer().setWidthTracksTextView_(True)
+    text_view.setHorizontallyResizable_(False)
+    text_view.setVerticallyResizable_(True)
+
+    scroll_view.setDocumentView_(text_view)
+    content.addSubview_(scroll_view)
+
+    # We store scroll_view as the "response_field" — _panel_show_response
+    # knows to look inside for the NSTextView.
+    scroll_view._tsifl_text_view = text_view
+    response_field = scroll_view
 
     return panel, input_field, send_btn, attach_btn, response_field
 
@@ -1495,12 +1549,12 @@ def _make_panel_target():
 
 # ── Panel size constants ────────────────────────────────────────────────
 _INPUT_ROW_HEIGHT = 52.0
-_PANEL_WIDTH = 540.0
+_PANEL_WIDTH = 600.0
 _RESPONSE_PADDING_X = 18.0   # horizontal padding inside the response area
 _RESPONSE_PADDING_TOP = 8.0  # gap between response and input row
 _RESPONSE_PADDING_BOTTOM = 12.0
 _MIN_RESPONSE_HEIGHT = 36.0   # always show at least one full line + padding
-_MAX_RESPONSE_HEIGHT = 360.0  # cap so a 5000-char reply doesn't fill the screen
+_MAX_RESPONSE_HEIGHT = 500.0  # taller cap so long replies are readable
 
 
 def _measure_text_height(text: str, width: float, font_size: float = 13.0) -> float:
@@ -1581,14 +1635,22 @@ def _panel_show_response(text: str):
             f = sub.frame()
             sub.setFrameOrigin_((f.origin.x, f.origin.y + delta))
 
-        # Position the response field in the bottom area
+        # Position the response scroll view in the bottom area
         _panel_response.setFrame_(NSMakeRect(
             _RESPONSE_PADDING_X,
             _RESPONSE_PADDING_BOTTOM,
             text_width,
             response_height,
         ))
-        _panel_response.setStringValue_(text)
+        # Set text on the inner NSTextView (stored as _tsifl_text_view)
+        tv = getattr(_panel_response, '_tsifl_text_view', None)
+        if tv is not None:
+            tv.setString_(text)
+            # Scroll to top on new content
+            tv.scrollRangeToVisible_((0, 0))
+        else:
+            # Fallback for old-style NSTextField
+            _panel_response.setStringValue_(text)
         _panel_response.setHidden_(False)
         _panel_expanded = True
     except Exception as e:
@@ -1604,17 +1666,24 @@ def _panel_collapse_response():
     global _panel_expanded
     if _panel_ref is None or _panel_response is None:
         return
+    def _clear_response_text():
+        tv = getattr(_panel_response, '_tsifl_text_view', None)
+        if tv is not None:
+            tv.setString_("")
+        else:
+            _panel_response.setStringValue_("")
+
     if not _panel_expanded:
         try:
             _panel_response.setHidden_(True)
-            _panel_response.setStringValue_("")
+            _clear_response_text()
         except Exception:
             pass
         return
     try:
         from Foundation import NSMakeRect
         _panel_response.setHidden_(True)
-        _panel_response.setStringValue_("")
+        _clear_response_text()
 
         cur_frame = _panel_ref.frame()
         top_y = cur_frame.origin.y + cur_frame.size.height
@@ -1783,6 +1852,41 @@ def _panel_submit(text: str):
     except Exception:
         pass
 
+    # ── Quick "open N" for search results (no backend needed) ────────
+    if _last_search_results:
+        import re as _re
+        _open_match = _re.match(
+            r"^(?:open|launch|show)\s+(?:the\s+)?(?:(\d+)(?:st|nd|rd|th)?|first|second|third|last)$",
+            text.strip(), _re.IGNORECASE
+        )
+        if _open_match:
+            ordinals = {"first": 1, "second": 2, "third": 3, "last": -1}
+            num_str = _open_match.group(1)
+            if num_str:
+                idx = int(num_str)
+            else:
+                word = text.strip().split()[-1].lower()
+                idx = ordinals.get(word, 1)
+
+            if idx == -1:
+                idx = len(_last_search_results)
+            if 1 <= idx <= len(_last_search_results):
+                path = _last_search_results[idx - 1]
+                try:
+                    from executor import open_file
+                    ok, msg = open_file(path)
+                    result_text = f"✅ Opened {os.path.basename(path)}" if ok else f"❌ {msg}"
+                except Exception as e:
+                    result_text = f"❌ {e}"
+                _panel_show_response(result_text)
+                if _panel_input is not None:
+                    try:
+                        _panel_input.setStringValue_("")
+                        _panel_input.setPlaceholderString_("Ask tsifl anything…")
+                    except Exception:
+                        pass
+                return
+
     _panel_busy = True
 
     my_session = _panel_session_id
@@ -1818,9 +1922,12 @@ def _panel_submit(text: str):
             timer.stop()
             return
         if _panel_response is not None and not _panel_response.isHidden():
-            _panel_response.setStringValue_(
-                _THINKING_LINES[line_idx[0] % len(_THINKING_LINES)]
-            )
+            thinking_text = _THINKING_LINES[line_idx[0] % len(_THINKING_LINES)]
+            tv = getattr(_panel_response, '_tsifl_text_view', None)
+            if tv is not None:
+                tv.setString_(thinking_text)
+            else:
+                _panel_response.setStringValue_(thinking_text)
         line_idx[0] += 1
     t = rumps.Timer(_rotate, 1.5)
     t.start()
@@ -1878,6 +1985,13 @@ def _panel_submit(text: str):
                                 ))
                             results = execute_plan(actions)
 
+                            # Track search results for multi-turn ("open the first one")
+                            global _last_search_results
+                            for a in results:
+                                if a.type == "search_files" and a.success and a.result:
+                                    paths = [p.strip() for p in a.result.split("\n") if p.strip()]
+                                    _last_search_results = paths
+
                             # Build result summary
                             lines = []
                             if reply_text and reply_text != "(no reply)":
@@ -1886,10 +2000,21 @@ def _panel_submit(text: str):
                             for a in results:
                                 icon = "✅" if a.success else "❌"
                                 lines.append(f"{icon} {a.description}")
-                                if a.result and len(a.result) < 300:
+                                if a.type == "search_files" and a.success and a.result:
+                                    # Show numbered file results for easy reference
+                                    paths = [p.strip() for p in a.result.split("\n") if p.strip()]
+                                    for idx, p in enumerate(paths[:10], 1):
+                                        name = os.path.basename(p)
+                                        folder = os.path.dirname(p).replace(str(Path.home()), "~")
+                                        lines.append(f"   {idx}. {name}")
+                                        lines.append(f"      {folder}")
+                                elif a.result and len(a.result) < 300:
                                     lines.append(f"   → {a.result}")
                                 if a.error:
                                     lines.append(f"   ⚠️ {a.error}")
+                            if _last_search_results:
+                                lines.append("")
+                                lines.append("Say \"open 1\" or \"open the first one\" to open a result")
                             summary = "\n".join(lines)
                         except Exception as e:
                             summary = f"Execution failed: {e}"
