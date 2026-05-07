@@ -332,6 +332,14 @@ def _send_to_backend(message: str, frontmost_app: str, images: list | None = Non
     except Exception:
         mac_context = {"frontmost_app": frontmost_app}
 
+    # Load persistent user memories (preferences, facts)
+    memory_context = ""
+    try:
+        from memory import get_memory_context
+        memory_context = get_memory_context()
+    except Exception:
+        pass
+
     body = {
         "user_id": "shortcut-anon",
         "message": message,
@@ -340,6 +348,7 @@ def _send_to_backend(message: str, frontmost_app: str, images: list | None = Non
             "source": "global-shortcut",
             "frontmost_app": frontmost_app,
             "mac": mac_context,
+            "user_memory": memory_context,
         },
     }
     if images:
@@ -1757,6 +1766,23 @@ def _panel_submit(text: str):
 
     # New query typed — cancel any pending plan
     _pending_plan = None
+
+    # ── Local memory commands (no backend needed) ────────────────────
+    try:
+        from memory import check_memory_intent
+        mem_response = check_memory_intent(text)
+        if mem_response is not None:
+            _panel_show_response(mem_response)
+            if _panel_input is not None:
+                try:
+                    _panel_input.setStringValue_("")
+                    _panel_input.setPlaceholderString_("Ask tsifl anything…")
+                except Exception:
+                    pass
+            return
+    except Exception:
+        pass
+
     _panel_busy = True
 
     my_session = _panel_session_id
@@ -1811,6 +1837,7 @@ def _panel_submit(text: str):
             result = {"reply": f"Request failed: {e}", "actions": []}
 
         def _on_main():
+          try:
             global _panel_busy, _panel_thinking_timer
             # Always reset busy + stop rotation regardless of session state
             _panel_busy = False
@@ -1822,9 +1849,80 @@ def _panel_submit(text: str):
             reply_text = (result.get("reply") or "(no reply)").strip()
             plan = result.get("_plan")  # parsed action plan from desktop agent mode
 
-            # ── Plan mode: show confirmation UI ──────────────────────────
+            sys.stderr.write(f"[tsifl-helper] _on_main: reply={reply_text[:80]!r} plan={plan is not None} visible={_panel_is_visible()} session_match={_panel_session_id == my_session}\n")
+
+            # ── Plan mode ────────────────────────────────────────────────
             if plan and isinstance(plan, list) and len(plan) > 0:
-                # Build human-readable plan summary
+                # Determine if ALL steps are green (safe) → auto-execute
+                all_green = all(
+                    step.get("risk", "yellow") == "green" for step in plan
+                )
+
+                if all_green:
+                    # ── AUTO-EXECUTE: green actions run immediately ───────
+                    sys.stderr.write(f"[tsifl-helper] all-green plan ({len(plan)} steps) → auto-executing\n")
+                    if _panel_session_id == my_session and _panel_is_visible():
+                        _panel_show_response("Running…")
+                    _panel_busy = True
+
+                    def _auto_run():
+                        try:
+                            from executor import Action, Risk, execute_plan
+                            actions = []
+                            for step in plan:
+                                actions.append(Action(
+                                    type=step.get("type", "shell"),
+                                    description=step.get("description", ""),
+                                    command=step.get("command", ""),
+                                    risk=Risk(step.get("risk", "green")),
+                                ))
+                            results = execute_plan(actions)
+
+                            # Build result summary
+                            lines = []
+                            if reply_text and reply_text != "(no reply)":
+                                lines.append(reply_text)
+                                lines.append("")
+                            for a in results:
+                                icon = "✅" if a.success else "❌"
+                                lines.append(f"{icon} {a.description}")
+                                if a.result and len(a.result) < 300:
+                                    lines.append(f"   → {a.result}")
+                                if a.error:
+                                    lines.append(f"   ⚠️ {a.error}")
+                            summary = "\n".join(lines)
+                        except Exception as e:
+                            summary = f"Execution failed: {e}"
+
+                        def _show():
+                            global _panel_busy, _last_response_text
+                            _panel_busy = False
+                            _last_response_text = summary
+                            if _panel_is_visible():
+                                _panel_show_response(summary)
+                                if _panel_input is not None:
+                                    try:
+                                        _panel_input.setEditable_(True)
+                                        _panel_input.setPlaceholderString_("Ask tsifl anything…")
+                                        _panel_input.becomeFirstResponder()
+                                    except Exception:
+                                        pass
+                            else:
+                                try:
+                                    rumps.notification(title="tsifl", subtitle="Done", message=summary[:200])
+                                except Exception:
+                                    pass
+
+                        try:
+                            from PyObjCTools.AppHelper import callAfter
+                            callAfter(_show)
+                        except Exception:
+                            pass
+
+                    threading.Thread(target=_auto_run, daemon=True).start()
+                    return
+
+                # ── CONFIRM: yellow/red actions need user approval ────────
                 risk_icons = {"green": "🟢", "yellow": "🟡", "red": "🔴"}
                 lines = [reply_text, ""]
                 for i, step in enumerate(plan, 1):
@@ -1839,6 +1937,7 @@ def _panel_submit(text: str):
                 _last_response_text = display
 
                 if _panel_session_id == my_session and _panel_is_visible():
+                    sys.stderr.write(f"[tsifl-helper] showing plan confirmation ({len(plan)} steps)\n")
                     _panel_show_response(display)
                     # Store plan for execution on confirm
                     global _pending_plan
@@ -1852,8 +1951,9 @@ def _panel_submit(text: str):
                         except Exception:
                             pass
                 else:
+                    sys.stderr.write(f"[tsifl-helper] panel gone, sending notification instead\n")
                     try:
-                        rumps.notification(title="tsifl", subtitle=text[:60], message=display)
+                        rumps.notification(title="tsifl", subtitle=text[:60], message=display[:200])
                     except Exception:
                         pass
                 return
@@ -1883,6 +1983,10 @@ def _panel_submit(text: str):
                     )
                 except Exception:
                     pass
+          except Exception as e:
+            sys.stderr.write(f"[tsifl-helper] _on_main CRASHED: {type(e).__name__}: {e}\n")
+            import traceback
+            traceback.print_exc(file=sys.stderr)
 
         # PyObjCTools.AppHelper.callAfter is the canonical
         # "dispatch this to the main run loop from any thread" primitive.

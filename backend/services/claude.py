@@ -2886,6 +2886,10 @@ def _build_system_prompt(app: str, message: str = "") -> str:
     # Claude returns structured action plans that the Mac agent executes.
     if app == "shortcut":
         app_sections += DESKTOP_AGENT_PROMPT
+        # Inject persistent user memory (preferences, facts) if available
+        user_memory = context.get("user_memory", "")
+        if user_memory:
+            app_sections += f"\n\n### USER MEMORY\n{user_memory}\n"
 
     prompt = base + "\n" + app_sections + "\n" + scope + crossapp + crossapp_memory + mistakes
     return prompt
