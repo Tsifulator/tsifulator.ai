@@ -535,6 +535,12 @@ def _extract_plan_from_reply(data: dict) -> list | None:
 #   - Esc to dismiss, Enter to submit
 # Floats at horizontal center, ~30% from top of main screen — Spotlight-ish.
 
+# ── Command history (up/down arrow) ─────────────────────────────────────────
+_command_history: list[str] = []             # all submitted commands, newest last
+_history_index: int = -1                     # -1 = not browsing; 0..N = current position
+_history_saved_input: str = ""               # what user was typing before pressing up
+_MAX_COMMAND_HISTORY = 50
+
 _panel_ref: "object | None" = None         # NSPanel — module-level so it doesn't GC
 _panel_input: "object | None" = None       # NSTextField inside the panel
 _panel_send_btn: "object | None" = None    # send button (→)
@@ -907,6 +913,21 @@ def _define_panel_classes():
                 return NSTextView.readSelectionFromPasteboard_type_(self, pb, ptype)
             except Exception:
                 return False
+
+        def doCommandBySelector_(self, selector):
+            """Intercept up/down arrow for command history navigation."""
+            sel_name = str(selector)
+            if sel_name == "moveUp:" and _command_history:
+                _history_navigate(-1)  # older
+                return
+            if sel_name == "moveDown:" and _command_history:
+                _history_navigate(1)   # newer
+                return
+            # Default handling for everything else
+            try:
+                NSTextView.doCommandBySelector_(self, selector)
+            except Exception:
+                pass
 
     class _TsiflPanelDelegate(NSObject):
         """NSWindowDelegate that vends `_TsiflFieldEditor` as the field
@@ -1744,6 +1765,39 @@ def _panel_dismiss():
     _panel_expanded = False
 
 
+def _history_navigate(direction: int):
+    """Navigate command history. direction: -1 = older, +1 = newer."""
+    global _history_index, _history_saved_input
+    if not _command_history or _panel_input is None:
+        return
+
+    if _history_index == -1:
+        # Starting to browse — save current input
+        try:
+            _history_saved_input = str(_panel_input.stringValue() or "")
+        except Exception:
+            _history_saved_input = ""
+        _history_index = len(_command_history)
+
+    _history_index += direction
+
+    if _history_index < 0:
+        _history_index = 0
+    elif _history_index >= len(_command_history):
+        # Past the newest → restore saved input
+        _history_index = -1
+        try:
+            _panel_input.setStringValue_(_history_saved_input)
+        except Exception:
+            pass
+        return
+
+    try:
+        _panel_input.setStringValue_(_command_history[_history_index])
+    except Exception:
+        pass
+
+
 def _panel_is_visible() -> bool:
     """True if the panel is currently on-screen and key/visible."""
     if _panel_ref is None:
@@ -1886,6 +1940,14 @@ def _panel_submit(text: str):
                     except Exception:
                         pass
                 return
+
+    # Save to command history (skip duplicates of last command)
+    global _history_index
+    if not _command_history or _command_history[-1] != text:
+        _command_history.append(text)
+        if len(_command_history) > _MAX_COMMAND_HISTORY:
+            _command_history.pop(0)
+    _history_index = -1  # reset browse position
 
     _panel_busy = True
 
