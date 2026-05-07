@@ -378,32 +378,101 @@ def _send_to_backend(message: str, frontmost_app: str, images: list | None = Non
         return {"reply": f"Could not reach tsifl: {e}", "actions": []}
 
 
-def _extract_plan_from_reply(data: dict) -> list | None:
-    """Try to parse an action plan from Claude's reply.
+def _describe_action(atype: str, payload: dict) -> str:
+    """Generate a human-readable description for an action step."""
+    if atype == "search_files":
+        ft = payload.get("file_type", "")
+        q = payload.get("query", "")
+        return f"Search for {ft} files matching '{q}'" if ft else f"Search for '{q}'"
+    elif atype == "open_file":
+        p = payload.get("path", payload.get("file_path", ""))
+        return f"Open {Path(p).name}" if p else "Open file"
+    elif atype == "open_app":
+        return f"Open {payload.get('app', payload.get('app_name', payload.get('name', '?')))}"
+    elif atype == "open_url":
+        url = payload.get("url", "")
+        return f"Open {url[:60]}" if url else "Open URL"
+    elif atype == "applescript":
+        script = payload.get("script", payload.get("code", ""))
+        return f"Run AppleScript ({script[:50]}…)" if len(script) > 50 else f"Run: {script}"
+    elif atype == "shell":
+        cmd = payload.get("command", "")
+        return f"Run: {cmd[:60]}" if cmd else "Run shell command"
+    elif atype == "clipboard_copy":
+        return "Copy to clipboard"
+    elif atype == "notify":
+        return "Show notification"
+    return atype
 
-    The desktop system prompt tells Claude to return JSON with a "plan"
-    array. The reply might be pure JSON, or JSON inside markdown fences.
-    Returns a list of action dicts, or None if no plan found.
+
+def _extract_plan_from_reply(data: dict) -> list | None:
+    """Extract an executable action plan from the backend response.
+
+    Checks two sources:
+    1. `actions` list (Claude's tool-use output) — convert to plan steps
+    2. JSON in the reply text (fallback if Claude returned raw JSON)
+
+    Returns a list of action dicts, or None if no actionable plan found.
     """
+    # ── Source 1: Convert tool-use actions to plan steps ──────────────
+    # Desktop-compatible action types that our executor can handle
+    DESKTOP_TYPES = {
+        "search_files", "open_file", "open_app", "open_url",
+        "applescript", "shell", "clipboard_copy", "clipboard_read",
+        "notify",
+    }
+
+    # Risk mapping for known action types
+    RISK_MAP = {
+        "search_files": "green", "open_file": "green", "open_app": "green",
+        "open_url": "green", "shell": "green", "clipboard_read": "green",
+        "clipboard_copy": "green", "notify": "green",
+        "applescript": "yellow",  # AppleScript can do anything
+    }
+
+    actions = data.get("actions") or []
+    if not actions and data.get("action") and data["action"].get("type"):
+        actions = [data["action"]]
+
+    plan = []
+    for act in actions:
+        atype = act.get("type", "")
+        payload = act.get("payload", {})
+        if not isinstance(payload, dict):
+            payload = {}
+
+        if atype in DESKTOP_TYPES:
+            command = json.dumps(payload) if payload else atype
+            # Generate human-readable descriptions from the payload
+            desc = _describe_action(atype, payload)
+            plan.append({
+                "type": atype,
+                "description": desc,
+                "command": command,
+                "risk": RISK_MAP.get(atype, "yellow"),
+            })
+
+    if plan:
+        return plan
+
+    # ── Source 2: Parse JSON from reply text (fallback) ───────────────
     reply = data.get("reply", "")
     if not reply:
         return None
 
     import re
 
-    # Try parsing the entire reply as JSON
-    for candidate in [reply]:
-        try:
-            parsed = json.loads(candidate)
-            if isinstance(parsed, dict) and "plan" in parsed:
-                # Overwrite reply with the human-readable version
-                if parsed.get("reply"):
-                    data["reply"] = parsed["reply"]
-                return parsed["plan"]
-        except (json.JSONDecodeError, TypeError):
-            pass
+    # Try the entire reply as JSON
+    try:
+        parsed = json.loads(reply)
+        if isinstance(parsed, dict) and "plan" in parsed:
+            if parsed.get("reply"):
+                data["reply"] = parsed["reply"]
+            return parsed["plan"]
+    except (json.JSONDecodeError, TypeError):
+        pass
 
-    # Try extracting JSON from markdown code fences
+    # Try JSON inside markdown fences
     json_blocks = re.findall(r"```(?:json)?\s*\n?({.*?})\s*\n?```", reply, re.DOTALL)
     for block in json_blocks:
         try:

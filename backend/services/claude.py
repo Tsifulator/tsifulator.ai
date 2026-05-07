@@ -2744,6 +2744,65 @@ TOOLS = [
     }
 ]
 
+# Desktop-only tools — used when app == "shortcut". Lean tool set focused
+# on Mac automation instead of the hundreds of Excel/PPT action types.
+DESKTOP_TOOLS = [
+    {
+        "name": "execute_actions",
+        "description": (
+            "Execute one or more actions on the user's Mac. "
+            "Always call this tool — never output JSON as plain text."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "actions": {
+                    "type": "array",
+                    "description": "Ordered list of Mac actions to execute.",
+                    "items": {
+                        "type": "object",
+                        "required": ["type", "payload"],
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "enum": [
+                                    "search_files", "open_file", "open_app",
+                                    "open_url", "applescript", "shell",
+                                    "clipboard_copy", "notify",
+                                ],
+                                "description": (
+                                    "search_files: Search Spotlight. "
+                                    "open_file: Open a file. "
+                                    "open_app: Launch/activate an app. "
+                                    "open_url: Open URL in browser. "
+                                    "applescript: Run AppleScript to control any Mac app. "
+                                    "shell: Run a read-only shell command. "
+                                    "clipboard_copy: Copy text to clipboard. "
+                                    "notify: Show macOS notification."
+                                ),
+                            },
+                            "payload": {
+                                "type": "object",
+                                "description": (
+                                    "search_files: {query, file_type? (excel/pdf/word/ppt/image/csv/text)}. "
+                                    "open_file: {path}. "
+                                    "open_app: {name}. "
+                                    "open_url: {url}. "
+                                    "applescript: {script}. "
+                                    "shell: {command}. "
+                                    "clipboard_copy: {text}. "
+                                    "notify: {message}."
+                                ),
+                            },
+                        },
+                    },
+                },
+            },
+            "required": ["actions"],
+        },
+    }
+]
+
 # ── File/Document Processing ──────────────────────────────────────────────────
 
 # MIME types Claude can handle as images (vision)
@@ -3233,7 +3292,8 @@ TRANSACTIONS PROJECT SPECIFICS:
         r")",
         re.IGNORECASE
     )
-    asks_impossible = bool(_HAS_IMPOSSIBLE_REQUEST.search(message))
+    # Desktop agent (shortcut) CAN do these things — skip impossible check
+    asks_impossible = bool(_HAS_IMPOSSIBLE_REQUEST.search(message)) and app_name != "shortcut"
     if asks_impossible:
         print(f"[routing] IMPOSSIBLE FEATURE → tool_choice=auto + reply allowed. msg={message[:80]!r}", flush=True)
 
@@ -3245,14 +3305,20 @@ TRANSACTIONS PROJECT SPECIFICS:
     )
     tool_choice = {"type": "any"} if force_tools else {"type": "auto"}
 
+    # Desktop agent: always use DESKTOP_TOOLS, never force tool_choice=any
+    is_desktop = app_name == "shortcut"
+    if is_desktop:
+        print(f"[routing] DESKTOP AGENT → DESKTOP_TOOLS, tool_choice=auto. msg={message[:60]!r}", flush=True)
+
     try:
         # Use streaming to collect the full response (SDK requires streaming for large max_tokens)
         collected_response = None
+        tools_to_use = DESKTOP_TOOLS if is_desktop else TOOLS
         with client.messages.stream(
             model       = selected_model,
             max_tokens  = 16384,
             system      = _system_block(system_prompt),
-            tools       = [] if skip_tools else TOOLS,
+            tools       = [] if skip_tools else tools_to_use,
             tool_choice = tool_choice,
             messages    = messages,
         ) as stream:

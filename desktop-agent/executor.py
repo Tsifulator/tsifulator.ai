@@ -288,9 +288,17 @@ def execute_action(action: Action) -> Action:
     Returns the same Action with `result`, `success`, and `error` filled in.
     """
     try:
+        # Parse command — might be a raw string or a JSON payload dict
+        cmd = action.command
+        cmd_data = {}
+        if cmd.startswith("{"):
+            try:
+                cmd_data = json.loads(cmd)
+            except json.JSONDecodeError:
+                pass
+
         if action.type == "search_files":
-            # command is JSON: {"query": "...", "file_type": "..."}
-            params = json.loads(action.command) if action.command.startswith("{") else {"query": action.command}
+            params = cmd_data if cmd_data else {"query": cmd}
             paths = search_files(
                 query=params.get("query", ""),
                 file_type=params.get("file_type"),
@@ -304,19 +312,28 @@ def execute_action(action: Action) -> Action:
                 action.success = True  # search succeeded, just no results
 
         elif action.type == "open_file":
-            action.success, action.result = open_file(action.command)
+            path = cmd_data.get("path", cmd_data.get("file_path", cmd))
+            action.success, action.result = open_file(path)
 
         elif action.type == "open_app":
-            action.success, action.result = open_app(action.command)
+            app_name = cmd_data.get("app", cmd_data.get("app_name", cmd_data.get("name", cmd)))
+            action.success, action.result = open_app(app_name)
 
         elif action.type == "open_url":
-            action.success, action.result = open_url(action.command)
+            url = cmd_data.get("url", cmd)
+            action.success, action.result = open_url(url)
 
         elif action.type == "applescript":
-            action.success, action.result = run_applescript(action.command)
+            script = cmd_data.get("script", cmd_data.get("code", cmd))
+            action.success, action.result = run_applescript(script)
 
         elif action.type == "shell":
-            action.success, action.result = run_shell(action.command)
+            shell_cmd = cmd_data.get("command", cmd)
+            action.success, action.result = run_shell(shell_cmd)
+
+        elif action.type == "clipboard_copy":
+            text = cmd_data.get("text", cmd)
+            action.success, action.result = set_clipboard(text)
 
         elif action.type == "clipboard_copy":
             action.success, action.result = set_clipboard(action.command)
