@@ -2210,14 +2210,17 @@ def _panel_submit(text: str):
 
             # ── Plan mode ────────────────────────────────────────────────
             if plan and isinstance(plan, list) and len(plan) > 0:
-                # Determine if ALL steps are green (safe) → auto-execute
-                all_green = all(
-                    step.get("risk", "yellow") == "green" for step in plan
+                # Auto-execute green + yellow actions. Only RED requires
+                # explicit confirmation (irreversible: send email, delete,
+                # purchase). This allows the vision loop to flow without
+                # stopping on every click/type action.
+                has_red = any(
+                    step.get("risk", "yellow") == "red" for step in plan
                 )
 
-                if all_green:
-                    # ── AUTO-EXECUTE: green actions run immediately ───────
-                    sys.stderr.write(f"[tsifl-helper] all-green plan ({len(plan)} steps) → auto-executing\n")
+                if not has_red:
+                    # ── AUTO-EXECUTE: green/yellow actions run immediately ─
+                    sys.stderr.write(f"[tsifl-helper] no-red plan ({len(plan)} steps) → auto-executing\n")
                     if _panel_session_id == my_session and _panel_is_visible():
                         _panel_show_response("Running…")
                     _panel_busy = True
