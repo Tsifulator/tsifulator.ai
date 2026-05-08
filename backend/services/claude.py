@@ -3045,22 +3045,35 @@ Use this when the task involves navigating a GUI (browser, desktop app, etc.).
 | `scroll` | `{direction, amount?, x?, y?}` | green |
 | `wait` | `{seconds}` — let UI settle (max 10s) | green |
 
+**CRITICAL: When to use the vision loop:**
+- If the task ONLY requires opening an app/file/URL → just `open_app`/`open_url` (no vision needed)
+- If the task requires ANY interaction INSIDE an app (clicking, searching, playing, navigating) →
+  you MUST chain: `open_app` → `wait` (2s) → `screenshot` so the vision loop engages
+- NEVER just open an app and stop if the user asked you to DO something in it
+- Example: "play Drake on Spotify" needs vision. "open Spotify" does not.
+
 **Critical rules for vision mode:**
-1. ALWAYS `screenshot` first to see what's on screen before clicking
-2. Use `wait` (1-2s) after clicking buttons or loading pages, then screenshot again
+1. ALWAYS end your action list with `screenshot` if you need to see what happened and continue
+2. Use `wait` (1-2s) BEFORE screenshot after opening apps or clicking buttons — UI needs time to load
 3. Click coordinates must be precise — aim for the CENTER of buttons/links
-4. For text input: click the field first, then `type_text`
-5. Set `"continue": true` in your response when you need another round of actions
-6. Set `"continue": false` (or omit) when the task is complete
-7. Screen actions are YELLOW risk (they interact with the UI)
-8. Keep the user informed — your `reply` should say what you're doing
+4. For text input: click the field first, wait briefly, then `type_text`
+5. The agent will automatically continue the loop if your actions include a `screenshot`
+6. To STOP the loop, return a plan WITHOUT a screenshot (or an empty plan)
+7. Screen actions are YELLOW risk (they interact with the UI) — they auto-execute
+8. Keep the user informed — your `reply` should say what you're doing each round
+
+**Example: "Play Drake on Spotify"**
+Round 1 (your first response): `open_app` Spotify → `wait` 2s → `screenshot`
+Round 2 (you see Spotify home): `click_at` search icon → `wait` 1s → `screenshot`
+Round 3 (you see search bar): `type_text` "Drake" → `key_combo` "return" → `wait` 2s → `screenshot`
+Round 4 (you see search results): `click_at` top result → `wait` 1s → `screenshot`
+Round 5 (you see Drake's page): `click_at` Play button → done (no screenshot = loop ends)
 
 **Example: "Book a table on OpenTable for Friday 7pm"**
-Round 1: `screenshot` → see desktop
-Round 2: `open_url` OpenTable → `wait` 2s → `screenshot`
-Round 3: see OpenTable homepage → `click_at` search box → `type_text` "Italian" → `key_combo` "return" → `wait` 2s → `screenshot`
-Round 4: see results → `click_at` restaurant → `wait` → `screenshot`
-...continue until booking is confirmed.
+Round 1: `open_url` OpenTable → `wait` 2s → `screenshot`
+Round 2: see homepage → `click_at` search → `type_text` "Italian" → `key_combo` "return" → `wait` 2s → `screenshot`
+Round 3: see results → `click_at` restaurant → `wait` → `screenshot`
+...continue until done. Final round has no `screenshot`.
 
 ### APPLESCRIPT CAPABILITIES
 
