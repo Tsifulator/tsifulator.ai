@@ -2769,6 +2769,8 @@ DESKTOP_TOOLS = [
                                     "search_files", "open_file", "open_app",
                                     "open_url", "applescript", "shell",
                                     "clipboard_copy", "notify",
+                                    "check_inbox", "search_email", "read_email",
+                                    "send_email", "draft_email",
                                 ],
                                 "description": (
                                     "search_files: Search Spotlight. "
@@ -2778,7 +2780,12 @@ DESKTOP_TOOLS = [
                                     "applescript: Run AppleScript to control any Mac app. "
                                     "shell: Run a read-only shell command. "
                                     "clipboard_copy: Copy text to clipboard. "
-                                    "notify: Show macOS notification."
+                                    "notify: Show macOS notification. "
+                                    "check_inbox: Fetch recent emails from Gmail inbox. "
+                                    "search_email: Search Gmail with a query. "
+                                    "read_email: Read the full body of a specific email. "
+                                    "send_email: Send an email via Gmail (requires confirmation). "
+                                    "draft_email: Create a draft email in Gmail."
                                 ),
                             },
                             "payload": {
@@ -2791,7 +2798,12 @@ DESKTOP_TOOLS = [
                                     "applescript: {script}. "
                                     "shell: {command}. "
                                     "clipboard_copy: {text}. "
-                                    "notify: {message}."
+                                    "notify: {message}. "
+                                    "check_inbox: {max_results? (default 10)}. "
+                                    "search_email: {query, max_results? (default 10)}. Uses Gmail query syntax (from:, subject:, is:unread, etc). "
+                                    "read_email: {message_id}. Use the id from check_inbox or search_email results. "
+                                    "send_email: {to, subject, body, reply_to_id?}. reply_to_id = message id to thread the reply. "
+                                    "draft_email: {to, subject, body}."
                                 ),
                             },
                         },
@@ -2890,6 +2902,18 @@ def _build_system_prompt(app: str, message: str = "", context: dict = None) -> s
         user_memory = (context or {}).get("user_memory", "")
         if user_memory:
             app_sections += f"\n\n### USER MEMORY\n{user_memory}\n"
+        # Inject recent conversation history for multi-turn context
+        conv_history = (context or {}).get("conversation_history", "")
+        if conv_history:
+            app_sections += f"\n\n### RECENT CONVERSATION\n{conv_history}\n"
+        # Inject recent search results (files) for follow-up references
+        search_ctx = (context or {}).get("search_results", "")
+        if search_ctx:
+            app_sections += f"\n\n### FILE SEARCH CONTEXT\n{search_ctx}\n"
+        # Inject recent email results so user can reference by number
+        email_ctx = (context or {}).get("email_results", "")
+        if email_ctx:
+            app_sections += f"\n\n### EMAIL CONTEXT\n{email_ctx}\nUse these message IDs when the user says 'read 3' or 'reply to the first one'.\n"
 
     prompt = base + "\n" + app_sections + "\n" + scope + crossapp + crossapp_memory + mistakes
     return prompt
@@ -2944,8 +2968,40 @@ If no actions are needed (just answering a question), return:
 ### RISK CLASSIFICATION
 
 - **green**: Read-only. Search, open, show info. Auto-executable.
-- **yellow**: Writes data. Create file, type text, move file. One-click confirm.
+- **yellow**: Writes data. Create file, type text, move file, draft email. One-click confirm.
 - **red**: Irreversible. Send email, delete file, submit form. Explicit confirm required.
+
+### GMAIL ACTIONS
+
+You can read, search, and compose emails directly via Gmail API. The user's Gmail is connected.
+
+| Type | Description | Risk |
+|------|-------------|------|
+| `check_inbox` | Fetch recent inbox emails | green |
+| `search_email` | Search emails using Gmail query syntax | green |
+| `read_email` | Read the full body of a specific email | green |
+| `send_email` | Send an email (or reply to a thread) | **red** |
+| `draft_email` | Create a draft without sending | yellow |
+
+**Gmail query syntax for search_email:**
+- `from:dave` — emails from Dave
+- `subject:meeting` — subject contains "meeting"
+- `is:unread` — unread emails only
+- `newer_than:2d` — last 2 days
+- `has:attachment` — emails with attachments
+- Combine: `from:dave subject:meeting newer_than:7d`
+
+**Workflow for "reply to X":**
+1. `search_email` to find the email (e.g. `from:dave newer_than:3d`)
+2. `read_email` with the message_id from the search results to see the content
+3. `send_email` with `reply_to_id` set to thread the reply
+
+**Workflow for "check my inbox":**
+1. `check_inbox` with max_results (default 10)
+2. Results show sender, subject, snippet, and message id
+3. User can say "read email 1" or "reply to the first one"
+
+Keep email message IDs in context so the user can reference them by number in follow-up turns.
 
 ### APPLESCRIPT CAPABILITIES
 
@@ -3004,13 +3060,17 @@ end tell
 8. For web searches, use open_url with a Google/DuckDuckGo search URL.
 9. NEVER include sensitive data (passwords, keys) in action commands.
 10. When context includes `frontmost_app`, tailor your response to what that app can do.
-11. For email: prefer `open_url` with a Gmail compose URL over AppleScript Mail, since most
-    users access email through browser-based Gmail, not Apple Mail. Format:
-    `https://mail.google.com/mail/?view=cm&to=EMAIL&su=SUBJECT&body=BODY`
-    URL-encode the subject and body. This is GREEN risk (just opens a browser tab for review).
-    Only use AppleScript Mail if the user explicitly asks for it or mentions Apple Mail.
+11. For email: use the Gmail actions (`check_inbox`, `search_email`, `read_email`, `send_email`,
+    `draft_email`) for all email operations. These use the Gmail API directly — faster and more
+    capable than opening browser tabs. Fall back to `open_url` with a Gmail compose URL only if
+    Gmail API is not available.
 12. When user_memory contains facts, USE THEM. If the user says "email my boss", look for
     their boss's email in the stored memories — don't ask for it again.
+13. For email replies: ALWAYS search first to get the message_id, then use `send_email` with
+    `reply_to_id` to keep the thread intact. Never send a reply as a new email.
+14. `send_email` is ALWAYS red risk. `draft_email` is yellow. Reading/searching is green.
+15. When showing inbox or search results, remember the message IDs so the user can say
+    "read 3" or "reply to the second one" in follow-up messages.
 """
 
 

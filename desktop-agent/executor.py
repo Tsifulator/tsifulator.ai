@@ -280,6 +280,212 @@ def get_system_context() -> dict:
     return ctx
 
 
+# ── Gmail operations (local Gmail API via OAuth token) ──────────────────────
+# The desktop agent talks to Gmail directly using the local OAuth token at
+# ~/.tsifulator_gmail_token.json. No backend round-trip needed — faster and
+# works offline (for reads). If the token doesn't exist, we tell the user
+# to run the setup script.
+
+_GMAIL_TOKEN_PATH = Path.home() / ".tsifulator_gmail_token.json"
+
+
+def _get_gmail_service():
+    """Build an authenticated Gmail API service from the local token.
+
+    Returns the service object, or raises RuntimeError with a user-friendly
+    message if setup is needed.
+    """
+    try:
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request
+        from googleapiclient.discovery import build
+    except ImportError:
+        raise RuntimeError(
+            "Gmail libraries missing. Run:\n"
+            "  pip install google-api-python-client google-auth-oauthlib"
+        )
+
+    if not _GMAIL_TOKEN_PATH.exists():
+        raise RuntimeError(
+            "Gmail not connected yet. Run:\n"
+            "  cd tsifulator.ai && python3 gmail-client/gmail_setup.py"
+        )
+
+    creds = Credentials.from_authorized_user_file(str(_GMAIL_TOKEN_PATH))
+
+    if creds and creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+        _GMAIL_TOKEN_PATH.write_text(creds.to_json())
+
+    return build("gmail", "v1", credentials=creds)
+
+
+def _extract_email_body(payload: dict) -> str:
+    """Recursively extract plain text body from Gmail message payload."""
+    import base64
+    if payload.get("mimeType") == "text/plain":
+        data = payload.get("body", {}).get("data", "")
+        if data:
+            return base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="replace")
+    if "parts" in payload:
+        for part in payload["parts"]:
+            result = _extract_email_body(part)
+            if result:
+                return result
+    return ""
+
+
+def gmail_check_inbox(max_results: int = 10) -> tuple[bool, str]:
+    """Fetch recent inbox messages using the local Gmail API."""
+    try:
+        service = _get_gmail_service()
+        results = service.users().messages().list(
+            userId="me", labelIds=["INBOX"], maxResults=max_results
+        ).execute()
+
+        messages = results.get("messages", [])
+        if not messages:
+            return True, "Inbox is empty."
+
+        lines = [f"📬 {len(messages)} recent emails:"]
+        for i, msg in enumerate(messages, 1):
+            detail = service.users().messages().get(
+                userId="me", id=msg["id"],
+                format="metadata",
+                metadataHeaders=["From", "Subject", "Date"],
+            ).execute()
+            headers = {h["name"]: h["value"] for h in detail["payload"]["headers"]}
+            unread = "📩" if "UNREAD" in detail.get("labelIds", []) else "  "
+            sender = headers.get("From", "?")
+            if "<" in sender:
+                sender = sender.split("<")[0].strip().strip('"')
+            lines.append(f"{unread} {i}. {sender}")
+            lines.append(f"     {headers.get('Subject', '(no subject)')}")
+            snippet = detail.get("snippet", "")
+            if snippet:
+                lines.append(f"     {snippet[:100]}")
+            lines.append(f"     [id:{msg['id']}]")
+        return True, "\n".join(lines)
+    except RuntimeError as e:
+        return False, str(e)
+    except Exception as e:
+        return False, f"Gmail error: {e}"
+
+
+def gmail_search(query: str, max_results: int = 10) -> tuple[bool, str]:
+    """Search emails using Gmail query syntax."""
+    try:
+        service = _get_gmail_service()
+        results = service.users().messages().list(
+            userId="me", q=query, maxResults=max_results
+        ).execute()
+
+        messages = results.get("messages", [])
+        if not messages:
+            return True, f"No emails found for '{query}'."
+
+        lines = [f"Found {len(messages)} email(s) for '{query}':"]
+        for i, msg in enumerate(messages, 1):
+            detail = service.users().messages().get(
+                userId="me", id=msg["id"],
+                format="metadata",
+                metadataHeaders=["From", "Subject", "Date"],
+            ).execute()
+            headers = {h["name"]: h["value"] for h in detail["payload"]["headers"]}
+            sender = headers.get("From", "?")
+            if "<" in sender:
+                sender = sender.split("<")[0].strip().strip('"')
+            lines.append(f"  {i}. {sender}")
+            lines.append(f"     {headers.get('Subject', '(no subject)')}")
+            snippet = detail.get("snippet", "")
+            if snippet:
+                lines.append(f"     {snippet[:100]}")
+            lines.append(f"     [id:{msg['id']}]")
+        return True, "\n".join(lines)
+    except RuntimeError as e:
+        return False, str(e)
+    except Exception as e:
+        return False, f"Gmail search failed: {e}"
+
+
+def gmail_read_message(message_id: str) -> tuple[bool, str]:
+    """Read the full body of a specific email message."""
+    try:
+        service = _get_gmail_service()
+        msg = service.users().messages().get(
+            userId="me", id=message_id, format="full"
+        ).execute()
+
+        headers = {h["name"]: h["value"] for h in msg["payload"]["headers"]}
+        body_text = _extract_email_body(msg["payload"])
+        if len(body_text) > 2000:
+            body_text = body_text[:1997] + "…"
+
+        lines = [
+            f"From: {headers.get('From', '?')}",
+            f"To: {headers.get('To', '?')}",
+            f"Subject: {headers.get('Subject', '(no subject)')}",
+            f"Date: {headers.get('Date', '?')}",
+            "",
+            body_text or "(no body)",
+        ]
+        return True, "\n".join(lines)
+    except RuntimeError as e:
+        return False, str(e)
+    except Exception as e:
+        return False, f"Gmail read failed: {e}"
+
+
+def gmail_send(to: str, subject: str, body: str, reply_to_id: str = "") -> tuple[bool, str]:
+    """Send an email (or reply to a thread) via Gmail API."""
+    try:
+        import base64
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+
+        service = _get_gmail_service()
+        msg = MIMEMultipart("alternative")
+        msg["To"] = to
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body, "plain"))
+
+        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+        send_body = {"raw": raw}
+        if reply_to_id:
+            send_body["threadId"] = reply_to_id
+
+        sent = service.users().messages().send(userId="me", body=send_body).execute()
+        return True, f"✉️ Email sent to {to}"
+    except RuntimeError as e:
+        return False, str(e)
+    except Exception as e:
+        return False, f"Gmail send failed: {e}"
+
+
+def gmail_draft(to: str, subject: str, body: str) -> tuple[bool, str]:
+    """Create a draft email in Gmail (doesn't send)."""
+    try:
+        import base64
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+
+        service = _get_gmail_service()
+        msg = MIMEMultipart("alternative")
+        msg["To"] = to
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body, "plain"))
+
+        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+        draft = service.users().drafts().create(
+            userId="me", body={"message": {"raw": raw}}
+        ).execute()
+        return True, f"📝 Draft created for {to}"
+    except RuntimeError as e:
+        return False, str(e)
+    except Exception as e:
+        return False, f"Gmail draft failed: {e}"
+
+
 # ── Action executor ──────────────────────────────────────────────────────────
 
 def execute_action(action: Action) -> Action:
@@ -335,9 +541,6 @@ def execute_action(action: Action) -> Action:
             text = cmd_data.get("text", cmd)
             action.success, action.result = set_clipboard(text)
 
-        elif action.type == "clipboard_copy":
-            action.success, action.result = set_clipboard(action.command)
-
         elif action.type == "clipboard_read":
             text = get_clipboard()
             action.result = text or "(clipboard empty)"
@@ -357,6 +560,35 @@ def execute_action(action: Action) -> Action:
             except Exception as e:
                 action.success = False
                 action.error = str(e)
+
+        # ── Gmail actions ───────────────────────────────────────────────
+        elif action.type == "check_inbox":
+            max_r = cmd_data.get("max_results", 10)
+            action.success, action.result = gmail_check_inbox(max_r)
+
+        elif action.type == "search_email":
+            query = cmd_data.get("query", cmd)
+            max_r = cmd_data.get("max_results", 10)
+            action.success, action.result = gmail_search(query, max_r)
+
+        elif action.type == "read_email":
+            msg_id = cmd_data.get("message_id", cmd)
+            action.success, action.result = gmail_read_message(msg_id)
+
+        elif action.type == "send_email":
+            action.success, action.result = gmail_send(
+                to=cmd_data.get("to", ""),
+                subject=cmd_data.get("subject", ""),
+                body=cmd_data.get("body", ""),
+                reply_to_id=cmd_data.get("reply_to_id", ""),
+            )
+
+        elif action.type == "draft_email":
+            action.success, action.result = gmail_draft(
+                to=cmd_data.get("to", ""),
+                subject=cmd_data.get("subject", ""),
+                body=cmd_data.get("body", ""),
+            )
 
         else:
             action.success = False

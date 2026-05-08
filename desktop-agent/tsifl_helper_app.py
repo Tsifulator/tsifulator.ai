@@ -356,6 +356,17 @@ def _send_to_backend(message: str, frontmost_app: str, images: list | None = Non
         numbered = [f"  {i+1}. {p}" for i, p in enumerate(_last_search_results[:10])]
         search_context = "Recent search results:\n" + "\n".join(numbered)
 
+    # Include recent email results so Claude can reference them by number
+    email_context = ""
+    if _last_email_results:
+        email_lines = ["Recent email results:"]
+        for i, e in enumerate(_last_email_results[:10], 1):
+            sender = e.get("from", "?")
+            if "<" in sender:
+                sender = sender.split("<")[0].strip().strip('"')
+            email_lines.append(f"  {i}. from={sender} subject={e.get('subject', '?')} id={e.get('id', '?')}")
+        email_context = "\n".join(email_lines)
+
     body = {
         "user_id": "shortcut-anon",
         "session_id": _backend_session_id,
@@ -368,6 +379,7 @@ def _send_to_backend(message: str, frontmost_app: str, images: list | None = Non
             "user_memory": memory_context,
             "conversation_history": history_snippet,
             "search_results": search_context,
+            "email_results": email_context,
         },
     }
     if images:
@@ -440,6 +452,22 @@ def _describe_action(atype: str, payload: dict) -> str:
         return "Copy to clipboard"
     elif atype == "notify":
         return "Show notification"
+    # Gmail actions
+    elif atype == "check_inbox":
+        n = payload.get("max_results", 10)
+        return f"Check inbox (last {n} emails)"
+    elif atype == "search_email":
+        q = payload.get("query", "")
+        return f"Search emails: '{q}'" if q else "Search emails"
+    elif atype == "read_email":
+        mid = payload.get("message_id", "")
+        return f"Read email [{mid[:12]}…]" if len(mid) > 12 else f"Read email [{mid}]"
+    elif atype == "send_email":
+        to = payload.get("to", "?")
+        return f"Send email to {to}"
+    elif atype == "draft_email":
+        to = payload.get("to", "?")
+        return f"Draft email to {to}"
     return atype
 
 
@@ -458,6 +486,9 @@ def _extract_plan_from_reply(data: dict) -> list | None:
         "search_files", "open_file", "open_app", "open_url",
         "applescript", "shell", "clipboard_copy", "clipboard_read",
         "notify",
+        # Gmail actions
+        "check_inbox", "search_email", "read_email",
+        "send_email", "draft_email",
     }
 
     # Risk mapping for known action types
@@ -466,6 +497,9 @@ def _extract_plan_from_reply(data: dict) -> list | None:
         "open_url": "green", "shell": "green", "clipboard_read": "green",
         "clipboard_copy": "green", "notify": "green",
         "applescript": "yellow",  # AppleScript can do anything
+        # Gmail: reads are green, draft is yellow, send is red
+        "check_inbox": "green", "search_email": "green", "read_email": "green",
+        "send_email": "red", "draft_email": "yellow",
     }
 
     actions = data.get("actions") or []
@@ -541,6 +575,7 @@ _history_index: int = -1                     # -1 = not browsing; 0..N = current
 _history_saved_input: str = ""               # what user was typing before pressing up
 _MAX_COMMAND_HISTORY = 50
 
+_response_text_view: "object | None" = None # NSTextView inside the scroll view
 _panel_ref: "object | None" = None         # NSPanel — module-level so it doesn't GC
 _panel_input: "object | None" = None       # NSTextField inside the panel
 _panel_send_btn: "object | None" = None    # send button (→)
@@ -568,6 +603,7 @@ _backend_session_id: str = f"tsifl-desktop-{_uuid.uuid4().hex[:8]}"
 _conversation_history: list[dict] = []   # [{role, content}, ...] — max ~10 turns
 _MAX_HISTORY = 10
 _last_search_results: list[str] = []     # file paths from most recent search
+_last_email_results: list[dict] = []     # email dicts from most recent inbox/search
 _last_response_text: str | None = None      # last successful reply — restored on next show
                                             # so the user doesn't lose the answer when they
                                             # ⌘⌥T-close. Cleared when a new query is sent.
@@ -1548,9 +1584,10 @@ def _build_floating_panel():
     scroll_view.setDocumentView_(text_view)
     content.addSubview_(scroll_view)
 
-    # We store scroll_view as the "response_field" — _panel_show_response
-    # knows to look inside for the NSTextView.
-    scroll_view._tsifl_text_view = text_view
+    # Store the inner text view in a module-level ref — can't set attrs
+    # on ObjC objects, so we use a global instead.
+    global _response_text_view
+    _response_text_view = text_view
     response_field = scroll_view
 
     return panel, input_field, send_btn, attach_btn, response_field
@@ -1664,7 +1701,7 @@ def _panel_show_response(text: str):
             response_height,
         ))
         # Set text on the inner NSTextView (stored as _tsifl_text_view)
-        tv = getattr(_panel_response, '_tsifl_text_view', None)
+        tv = _response_text_view
         if tv is not None:
             tv.setString_(text)
             # Scroll to top on new content
@@ -1688,7 +1725,7 @@ def _panel_collapse_response():
     if _panel_ref is None or _panel_response is None:
         return
     def _clear_response_text():
-        tv = getattr(_panel_response, '_tsifl_text_view', None)
+        tv = _response_text_view
         if tv is not None:
             tv.setString_("")
         else:
@@ -1762,6 +1799,8 @@ def _panel_dismiss():
     _panel_send_btn = None
     _panel_attach_btn = None
     _panel_response = None
+    global _response_text_view
+    _response_text_view = None
     _panel_expanded = False
 
 
@@ -1985,7 +2024,7 @@ def _panel_submit(text: str):
             return
         if _panel_response is not None and not _panel_response.isHidden():
             thinking_text = _THINKING_LINES[line_idx[0] % len(_THINKING_LINES)]
-            tv = getattr(_panel_response, '_tsifl_text_view', None)
+            tv = _response_text_view
             if tv is not None:
                 tv.setString_(thinking_text)
             else:
@@ -2048,11 +2087,20 @@ def _panel_submit(text: str):
                             results = execute_plan(actions)
 
                             # Track search results for multi-turn ("open the first one")
-                            global _last_search_results
+                            global _last_search_results, _last_email_results
                             for a in results:
                                 if a.type == "search_files" and a.success and a.result:
                                     paths = [p.strip() for p in a.result.split("\n") if p.strip()]
                                     _last_search_results = paths
+
+                            # Track email results for multi-turn ("read 3", "reply to the first one")
+                            # Email results contain [id:XXX] markers — parse them out
+                            for a in results:
+                                if a.type in ("check_inbox", "search_email") and a.success and a.result:
+                                    import re as _re_mod
+                                    ids = _re_mod.findall(r"\[id:([^\]]+)\]", a.result)
+                                    if ids:
+                                        _last_email_results = [{"id": mid} for mid in ids]
 
                             # Build result summary
                             lines = []
@@ -2070,6 +2118,9 @@ def _panel_submit(text: str):
                                         folder = os.path.dirname(p).replace(str(Path.home()), "~")
                                         lines.append(f"   {idx}. {name}")
                                         lines.append(f"      {folder}")
+                                elif a.type in ("check_inbox", "search_email", "read_email") and a.success and a.result:
+                                    # Email results get more display room
+                                    lines.append(a.result)
                                 elif a.result and len(a.result) < 300:
                                     lines.append(f"   → {a.result}")
                                 if a.error:
@@ -2202,7 +2253,9 @@ def _show_shortcut_panel():
     global _panel_session_id, _panel_expanded
 
     # TOGGLE: hotkey while panel is up → close (and destroy)
+    sys.stderr.write(f"[tsifl-helper] _show_shortcut_panel: visible={_panel_is_visible()} ref={_panel_ref is not None}\n")
     if _panel_is_visible():
+        sys.stderr.write("[tsifl-helper] panel visible → dismissing (toggle)\n")
         _panel_dismiss()
         return
 
