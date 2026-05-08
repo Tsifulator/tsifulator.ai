@@ -1797,8 +1797,16 @@ def _panel_dismiss():
     """
     global _panel_busy, _panel_thinking_timer, _pending_plan
     global _panel_ref, _panel_input, _panel_send_btn, _panel_attach_btn
-    global _panel_response, _panel_expanded
+    global _panel_response, _panel_expanded, _vision_loop_active
     _pending_plan = None  # cancel any pending action plan
+    # Kill any running vision loop — Esc is the emergency stop
+    if _vision_loop_active:
+        _vision_loop_active = False
+        sys.stderr.write("[tsifl-helper] VISION LOOP KILLED by Esc/dismiss\n")
+        try:
+            rumps.notification(title="tsifl", subtitle="", message="⏹️ Vision loop stopped.")
+        except Exception:
+            pass
 
     if _panel_thinking_timer is not None:
         try: _panel_thinking_timer.stop()
@@ -1868,7 +1876,9 @@ def _panel_is_visible() -> bool:
         return False
 
 
-_MAX_VISION_ROUNDS = 8  # safety cap — don't loop forever
+_MAX_VISION_ROUNDS = 8   # safety cap — don't loop forever
+_vision_loop_active = False  # True while a vision loop is running
+                              # Set to False by Esc or error → kills the loop
 
 
 def _vision_loop_continue(original_task: str, screenshot_b64: str,
@@ -1878,12 +1888,51 @@ def _vision_loop_continue(original_task: str, screenshot_b64: str,
 
     This is the core of screen automation: screenshot → Claude → actions → repeat.
     Runs on a background thread. Called from _auto_run when a screenshot is captured.
+
+    Safety:
+    - Checks `_vision_loop_active` before each round — Esc kills it
+    - Stops on any action failure (don't blindly continue after errors)
+    - Hard cap at _MAX_VISION_ROUNDS (8)
+    - Panel hides during vision so it doesn't cover the screen
     """
-    if round_num > _MAX_VISION_ROUNDS:
-        _vision_loop_done(f"Stopped after {_MAX_VISION_ROUNDS} rounds (safety limit)", session_id)
+    global _vision_loop_active
+
+    # ── Safety checks ────────────────────────────────────────────────
+    if not _vision_loop_active:
+        sys.stderr.write("[tsifl-helper] vision loop killed (flag cleared)\n")
+        _vision_loop_done("⏹️ Vision loop stopped.", session_id)
         return
 
-    # Build a follow-up message with the screenshot
+    if round_num > _MAX_VISION_ROUNDS:
+        _vision_loop_active = False
+        _vision_loop_done(f"⏹️ Stopped after {_MAX_VISION_ROUNDS} rounds (safety limit).", session_id)
+        return
+
+    # Check for errors in previous round — stop if anything failed
+    for a in prev_results:
+        if a.type != "screenshot" and not a.success:
+            _vision_loop_active = False
+            _vision_loop_done(
+                f"⏹️ Stopped: {a.description} failed\n   ⚠️ {a.error or 'unknown error'}",
+                session_id,
+            )
+            return
+
+    # ── Hide panel so it doesn't appear in the screenshot ────────────
+    def _hide_panel_for_vision():
+        if _panel_ref is not None:
+            try:
+                _panel_ref.orderOut_(None)
+            except Exception:
+                pass
+    try:
+        from PyObjCTools.AppHelper import callAfter
+        callAfter(_hide_panel_for_vision)
+    except Exception:
+        pass
+    time.sleep(0.3)  # let panel animate away before screenshot
+
+    # ── Build follow-up message ──────────────────────────────────────
     action_summary = []
     for a in prev_results:
         if a.type != "screenshot":
@@ -1896,39 +1945,48 @@ def _vision_loop_continue(original_task: str, screenshot_b64: str,
         f"{actions_text}\n\n"
         f"Here is a screenshot of the current screen. "
         f"Original task: \"{original_task}\"\n"
-        f"Continue executing the task. If done, set continue=false."
+        f"Continue with the next steps. When done, return an empty plan."
     )
 
-    # Send screenshot as an image attachment (JPEG for speed)
     images = [{
         "data": screenshot_b64,
         "media_type": "image/jpeg",
         "file_name": f"screen_round_{round_num}.jpg",
     }]
 
-    # Update panel to show progress
-    def _show_progress():
-        if _panel_is_visible() and _panel_session_id == session_id:
-            _panel_show_response(f"👁️ Seeing screen… (round {round_num})")
+    # Show a macOS notification instead of panel (panel is hidden)
     try:
-        from PyObjCTools.AppHelper import callAfter
-        callAfter(_show_progress)
+        rumps.notification(
+            title="tsifl 👁️",
+            subtitle=f"Vision round {round_num}",
+            message=f"Analyzing screen…",
+        )
     except Exception:
         pass
 
     sys.stderr.write(f"[tsifl-helper] vision loop round {round_num}: sending screenshot to Claude\n")
+
+    # ── Kill check before network call ───────────────────────────────
+    if not _vision_loop_active:
+        _vision_loop_done("⏹️ Vision loop stopped.", session_id)
+        return
 
     frontmost = _detect_frontmost_app()
     result = _send_to_backend(follow_up, frontmost, images=images)
     plan = result.get("_plan")
     reply_text = (result.get("reply") or "").strip()
 
-    if not plan or not isinstance(plan, list) or len(plan) == 0:
-        # Claude is done or didn't return actions
-        _vision_loop_done(reply_text or last_reply or "Done.", session_id)
+    # ── Kill check after network call ────────────────────────────────
+    if not _vision_loop_active:
+        _vision_loop_done("⏹️ Vision loop stopped.", session_id)
         return
 
-    # Execute the next round of actions
+    if not plan or not isinstance(plan, list) or len(plan) == 0:
+        _vision_loop_active = False
+        _vision_loop_done(reply_text or last_reply or "✅ Done.", session_id)
+        return
+
+    # ── Execute the next round of actions ────────────────────────────
     from executor import Action, Risk, execute_plan
     actions = []
     for step in plan:
@@ -1938,7 +1996,17 @@ def _vision_loop_continue(original_task: str, screenshot_b64: str,
             command=step.get("command", ""),
             risk=Risk(step.get("risk", "green")),
         ))
+
+    # Log what we're about to do
+    step_names = [s.get("type", "?") for s in plan]
+    sys.stderr.write(f"[tsifl-helper] vision round {round_num} executing: {step_names}\n")
+
     results = execute_plan(actions)
+
+    # ── Kill check after execution ───────────────────────────────────
+    if not _vision_loop_active:
+        _vision_loop_done("⏹️ Vision loop stopped.", session_id)
+        return
 
     # Check for screenshot in results → continue loop
     screenshot_b64_next = None
@@ -1946,16 +2014,14 @@ def _vision_loop_continue(original_task: str, screenshot_b64: str,
         if a.type == "screenshot" and a.success and a.result:
             screenshot_b64_next = a.result
 
-    wants_continue = result.get("continue", False)
-
-    if screenshot_b64_next and (wants_continue or True):
-        # Continue the loop with the new screenshot
+    if screenshot_b64_next:
         _vision_loop_continue(
             original_task, screenshot_b64_next, reply_text,
             session_id, results, round_num + 1,
         )
     else:
-        # No more screenshots or Claude says done
+        # No screenshot requested — Claude is done
+        _vision_loop_active = False
         lines = []
         if reply_text:
             lines.append(reply_text)
@@ -1966,15 +2032,24 @@ def _vision_loop_continue(original_task: str, screenshot_b64: str,
                 lines.append(f"{icon} {a.description}")
                 if a.result and len(a.result) < 300:
                     lines.append(f"   → {a.result}")
-        _vision_loop_done("\n".join(lines) or "Done.", session_id)
+        _vision_loop_done("\n".join(lines) or "✅ Done.", session_id)
 
 
 def _vision_loop_done(summary: str, session_id: int):
-    """Finish the vision loop and show results."""
+    """Finish the vision loop — show panel again with results."""
+    global _vision_loop_active
+    _vision_loop_active = False
+
     def _show():
         global _panel_busy, _last_response_text
         _panel_busy = False
         _last_response_text = summary
+        # Re-show the panel with the result
+        if _panel_ref is not None:
+            try:
+                _panel_ref.makeKeyAndOrderFront_(None)
+            except Exception:
+                pass
         if _panel_is_visible() and _panel_session_id == session_id:
             _panel_show_response(summary)
             if _panel_input is not None:
@@ -2268,7 +2343,9 @@ def _panel_submit(text: str):
 
                             if screenshot_b64 and (wants_continue or any(a.type == "screenshot" for a in results)):
                                 # Vision loop: send screenshot back to Claude
-                                sys.stderr.write(f"[tsifl-helper] vision loop: sending screenshot back to Claude\n")
+                                global _vision_loop_active
+                                _vision_loop_active = True
+                                sys.stderr.write(f"[tsifl-helper] vision loop STARTING for: {text[:60]!r}\n")
                                 _vision_loop_continue(
                                     text, screenshot_b64, reply_text,
                                     my_session, results
