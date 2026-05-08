@@ -3393,12 +3393,22 @@ TRANSACTIONS PROJECT SPECIFICS:
         # Desktop agent: simple commands → Haiku (fast), complex → Sonnet
         # DESKTOP_TOOLS is simple enough for Haiku to handle reliably.
         _desktop_simple = re.compile(
-            r"^(open|launch|find|search|show|close|quit|play|pause|mute|"
-            r"unmute|volume|brightness|screenshot|clipboard|copy|what time|"
+            r"^(open|launch|find|show|close|quit|pause|mute|"
+            r"unmute|volume|brightness|clipboard|copy|what time|"
             r"what day|what date|lock|sleep|restart|shut)\b",
             re.IGNORECASE
         )
-        if len(message) < 100 and _desktop_simple.match(message.strip()):
+        # Tasks that need vision (interaction inside an app) always go to Sonnet
+        _needs_vision = re.compile(
+            r"(play|search.*on|go to|navigate|click|type|book|order|"
+            r"reply.*email|send.*email|check.*inbox|create.*event|"
+            r"sign.*in|log.*in|fill.*form|download|upload)",
+            re.IGNORECASE
+        )
+        if _needs_vision.search(message.strip()):
+            selected_model = MODEL_STANDARD
+            print(f"[routing] DESKTOP VISION → Sonnet. msg={message[:60]!r}", flush=True)
+        elif len(message) < 100 and _desktop_simple.match(message.strip()):
             selected_model = MODEL_FAST
             print(f"[routing] DESKTOP SIMPLE → Haiku. msg={message[:60]!r}", flush=True)
         else:
