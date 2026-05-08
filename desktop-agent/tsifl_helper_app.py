@@ -468,6 +468,21 @@ def _describe_action(atype: str, payload: dict) -> str:
     elif atype == "draft_email":
         to = payload.get("to", "?")
         return f"Draft email to {to}"
+    # Screen automation
+    elif atype == "screenshot":
+        return "Capture screen"
+    elif atype == "click_at":
+        x, y = payload.get("x", "?"), payload.get("y", "?")
+        return f"Click at ({x}, {y})"
+    elif atype == "type_text":
+        t = payload.get("text", "")
+        return f"Type: {t[:40]}…" if len(t) > 40 else f"Type: {t}"
+    elif atype == "key_combo":
+        return f"Press {payload.get('keys', '?')}"
+    elif atype == "scroll":
+        return f"Scroll {payload.get('direction', 'down')}"
+    elif atype == "wait":
+        return f"Wait {payload.get('seconds', 1)}s"
     return atype
 
 
@@ -489,6 +504,9 @@ def _extract_plan_from_reply(data: dict) -> list | None:
         # Gmail actions
         "check_inbox", "search_email", "read_email",
         "send_email", "draft_email",
+        # Screen automation (vision loop)
+        "screenshot", "click_at", "type_text", "key_combo",
+        "scroll", "wait",
     }
 
     # Risk mapping for known action types
@@ -500,6 +518,9 @@ def _extract_plan_from_reply(data: dict) -> list | None:
         # Gmail: reads are green, draft is yellow, send is red
         "check_inbox": "green", "search_email": "green", "read_email": "green",
         "send_email": "red", "draft_email": "yellow",
+        # Screen: screenshot/scroll/wait are green, interaction is yellow
+        "screenshot": "green", "scroll": "green", "wait": "green",
+        "click_at": "yellow", "type_text": "yellow", "key_combo": "yellow",
     }
 
     actions = data.get("actions") or []
@@ -1847,6 +1868,134 @@ def _panel_is_visible() -> bool:
         return False
 
 
+_MAX_VISION_ROUNDS = 8  # safety cap — don't loop forever
+
+
+def _vision_loop_continue(original_task: str, screenshot_b64: str,
+                          last_reply: str, session_id: int,
+                          prev_results: list, round_num: int = 1):
+    """Send a screenshot back to Claude and execute the next round of actions.
+
+    This is the core of screen automation: screenshot → Claude → actions → repeat.
+    Runs on a background thread. Called from _auto_run when a screenshot is captured.
+    """
+    if round_num > _MAX_VISION_ROUNDS:
+        _vision_loop_done(f"Stopped after {_MAX_VISION_ROUNDS} rounds (safety limit)", session_id)
+        return
+
+    # Build a follow-up message with the screenshot
+    action_summary = []
+    for a in prev_results:
+        if a.type != "screenshot":
+            icon = "✅" if a.success else "❌"
+            action_summary.append(f"{icon} {a.description}")
+    actions_text = "\n".join(action_summary) if action_summary else "(screenshot only)"
+
+    follow_up = (
+        f"[VISION ROUND {round_num}] I executed the actions. Results:\n"
+        f"{actions_text}\n\n"
+        f"Here is a screenshot of the current screen. "
+        f"Original task: \"{original_task}\"\n"
+        f"Continue executing the task. If done, set continue=false."
+    )
+
+    # Send screenshot as an image attachment (JPEG for speed)
+    images = [{
+        "data": screenshot_b64,
+        "media_type": "image/jpeg",
+        "file_name": f"screen_round_{round_num}.jpg",
+    }]
+
+    # Update panel to show progress
+    def _show_progress():
+        if _panel_is_visible() and _panel_session_id == session_id:
+            _panel_show_response(f"👁️ Seeing screen… (round {round_num})")
+    try:
+        from PyObjCTools.AppHelper import callAfter
+        callAfter(_show_progress)
+    except Exception:
+        pass
+
+    sys.stderr.write(f"[tsifl-helper] vision loop round {round_num}: sending screenshot to Claude\n")
+
+    frontmost = _detect_frontmost_app()
+    result = _send_to_backend(follow_up, frontmost, images=images)
+    plan = result.get("_plan")
+    reply_text = (result.get("reply") or "").strip()
+
+    if not plan or not isinstance(plan, list) or len(plan) == 0:
+        # Claude is done or didn't return actions
+        _vision_loop_done(reply_text or last_reply or "Done.", session_id)
+        return
+
+    # Execute the next round of actions
+    from executor import Action, Risk, execute_plan
+    actions = []
+    for step in plan:
+        actions.append(Action(
+            type=step.get("type", "shell"),
+            description=step.get("description", ""),
+            command=step.get("command", ""),
+            risk=Risk(step.get("risk", "green")),
+        ))
+    results = execute_plan(actions)
+
+    # Check for screenshot in results → continue loop
+    screenshot_b64_next = None
+    for a in results:
+        if a.type == "screenshot" and a.success and a.result:
+            screenshot_b64_next = a.result
+
+    wants_continue = result.get("continue", False)
+
+    if screenshot_b64_next and (wants_continue or True):
+        # Continue the loop with the new screenshot
+        _vision_loop_continue(
+            original_task, screenshot_b64_next, reply_text,
+            session_id, results, round_num + 1,
+        )
+    else:
+        # No more screenshots or Claude says done
+        lines = []
+        if reply_text:
+            lines.append(reply_text)
+            lines.append("")
+        for a in results:
+            if a.type != "screenshot":
+                icon = "✅" if a.success else "❌"
+                lines.append(f"{icon} {a.description}")
+                if a.result and len(a.result) < 300:
+                    lines.append(f"   → {a.result}")
+        _vision_loop_done("\n".join(lines) or "Done.", session_id)
+
+
+def _vision_loop_done(summary: str, session_id: int):
+    """Finish the vision loop and show results."""
+    def _show():
+        global _panel_busy, _last_response_text
+        _panel_busy = False
+        _last_response_text = summary
+        if _panel_is_visible() and _panel_session_id == session_id:
+            _panel_show_response(summary)
+            if _panel_input is not None:
+                try:
+                    _panel_input.setEditable_(True)
+                    _panel_input.setPlaceholderString_("Ask tsifl anything…")
+                    _panel_input.becomeFirstResponder()
+                except Exception:
+                    pass
+        else:
+            try:
+                rumps.notification(title="tsifl", subtitle="Done", message=summary[:200])
+            except Exception:
+                pass
+    try:
+        from PyObjCTools.AppHelper import callAfter
+        callAfter(_show)
+    except Exception:
+        pass
+
+
 def _panel_submit(text: str):
     """User pressed Enter or clicked Send. Don't dismiss — keep panel open,
     show 'thinking…' inline, fire backend, then show the reply inline.
@@ -2094,13 +2243,34 @@ def _panel_submit(text: str):
                                     _last_search_results = paths
 
                             # Track email results for multi-turn ("read 3", "reply to the first one")
-                            # Email results contain [id:XXX] markers — parse them out
                             for a in results:
                                 if a.type in ("check_inbox", "search_email") and a.success and a.result:
                                     import re as _re_mod
                                     ids = _re_mod.findall(r"\[id:([^\]]+)\]", a.result)
                                     if ids:
                                         _last_email_results = [{"id": mid} for mid in ids]
+
+                            # ── Vision loop: if a screenshot was captured, feed it
+                            # back to Claude so it can see what happened and decide
+                            # the next step. This is the core of screen automation.
+                            screenshot_b64 = None
+                            for a in results:
+                                if a.type == "screenshot" and a.success and a.result:
+                                    screenshot_b64 = a.result
+
+                            # Check if Claude asked for continuation
+                            wants_continue = result.get("continue", False)
+                            if isinstance(result.get("_raw_reply"), dict):
+                                wants_continue = result["_raw_reply"].get("continue", wants_continue)
+
+                            if screenshot_b64 and (wants_continue or any(a.type == "screenshot" for a in results)):
+                                # Vision loop: send screenshot back to Claude
+                                sys.stderr.write(f"[tsifl-helper] vision loop: sending screenshot back to Claude\n")
+                                _vision_loop_continue(
+                                    text, screenshot_b64, reply_text,
+                                    my_session, results
+                                )
+                                return  # _vision_loop_continue handles the rest
 
                             # Build result summary
                             lines = []
@@ -2111,7 +2281,6 @@ def _panel_submit(text: str):
                                 icon = "✅" if a.success else "❌"
                                 lines.append(f"{icon} {a.description}")
                                 if a.type == "search_files" and a.success and a.result:
-                                    # Show numbered file results for easy reference
                                     paths = [p.strip() for p in a.result.split("\n") if p.strip()]
                                     for idx, p in enumerate(paths[:10], 1):
                                         name = os.path.basename(p)
@@ -2119,9 +2288,8 @@ def _panel_submit(text: str):
                                         lines.append(f"   {idx}. {name}")
                                         lines.append(f"      {folder}")
                                 elif a.type in ("check_inbox", "search_email", "read_email") and a.success and a.result:
-                                    # Email results get more display room
                                     lines.append(a.result)
-                                elif a.result and len(a.result) < 300:
+                                elif a.type != "screenshot" and a.result and len(a.result) < 300:
                                     lines.append(f"   → {a.result}")
                                 if a.error:
                                     lines.append(f"   ⚠️ {a.error}")

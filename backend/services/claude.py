@@ -2771,6 +2771,8 @@ DESKTOP_TOOLS = [
                                     "clipboard_copy", "notify",
                                     "check_inbox", "search_email", "read_email",
                                     "send_email", "draft_email",
+                                    "screenshot", "click_at", "type_text",
+                                    "key_combo", "scroll", "wait",
                                 ],
                                 "description": (
                                     "search_files: Search Spotlight. "
@@ -2785,7 +2787,13 @@ DESKTOP_TOOLS = [
                                     "search_email: Search Gmail with a query. "
                                     "read_email: Read the full body of a specific email. "
                                     "send_email: Send an email via Gmail (requires confirmation). "
-                                    "draft_email: Create a draft email in Gmail."
+                                    "draft_email: Create a draft email in Gmail. "
+                                    "screenshot: Capture the screen — returns base64 PNG for analysis. "
+                                    "click_at: Click at screen coordinates. "
+                                    "type_text: Type text using the keyboard. "
+                                    "key_combo: Press a keyboard shortcut (e.g. cmd+c, return). "
+                                    "scroll: Scroll up or down. "
+                                    "wait: Wait for UI to settle."
                                 ),
                             },
                             "payload": {
@@ -2803,7 +2811,13 @@ DESKTOP_TOOLS = [
                                     "search_email: {query, max_results? (default 10)}. Uses Gmail query syntax (from:, subject:, is:unread, etc). "
                                     "read_email: {message_id}. Use the id from check_inbox or search_email results. "
                                     "send_email: {to, subject, body, reply_to_id?}. reply_to_id = message id to thread the reply. "
-                                    "draft_email: {to, subject, body}."
+                                    "draft_email: {to, subject, body}. "
+                                    "screenshot: {region? {x, y, width, height}}. Omit region for full screen. "
+                                    "click_at: {x, y, click_type? ('left'/'right'/'double')}. Screen pixel coordinates. "
+                                    "type_text: {text}. Types via keyboard — works in any focused app. "
+                                    "key_combo: {keys}. Examples: 'cmd+c', 'cmd+shift+t', 'return', 'tab', 'escape'. "
+                                    "scroll: {direction ('up'/'down'), amount? (default 3), x?, y?}. "
+                                    "wait: {seconds}. Max 10s. Use after actions that trigger UI changes."
                                 ),
                             },
                         },
@@ -3002,6 +3016,51 @@ You can read, search, and compose emails directly via Gmail API. The user's Gmai
 3. User can say "read email 1" or "reply to the first one"
 
 Keep email message IDs in context so the user can reference them by number in follow-up turns.
+
+### SCREEN AUTOMATION (VISION MODE)
+
+You can see and control ANY app on the user's Mac — no API integrations needed.
+Use this when the task involves navigating a GUI (browser, desktop app, etc.).
+
+**How the vision loop works:**
+1. You request a `screenshot` — the agent captures the screen and sends it back as an image
+2. You analyze what's on screen and decide what to do next
+3. You send actions: `click_at`, `type_text`, `key_combo`, `scroll`
+4. You request another `screenshot` to see the result
+5. Repeat until the task is done
+
+**When to use vision mode vs APIs:**
+- Use `check_inbox`/`search_email` for Gmail (faster, more reliable)
+- Use vision mode for EVERYTHING ELSE: any website, any desktop app, any UI
+- Vision mode is the universal fallback — it works with literally anything
+
+**Screen action types:**
+
+| Type | Payload | Risk |
+|------|---------|------|
+| `screenshot` | `{region?}` — full screen or sub-region | green |
+| `click_at` | `{x, y, click_type?}` — pixel coords from screenshot | yellow |
+| `type_text` | `{text}` — types in focused field | yellow |
+| `key_combo` | `{keys}` — e.g. "cmd+c", "return", "tab" | yellow |
+| `scroll` | `{direction, amount?, x?, y?}` | green |
+| `wait` | `{seconds}` — let UI settle (max 10s) | green |
+
+**Critical rules for vision mode:**
+1. ALWAYS `screenshot` first to see what's on screen before clicking
+2. Use `wait` (1-2s) after clicking buttons or loading pages, then screenshot again
+3. Click coordinates must be precise — aim for the CENTER of buttons/links
+4. For text input: click the field first, then `type_text`
+5. Set `"continue": true` in your response when you need another round of actions
+6. Set `"continue": false` (or omit) when the task is complete
+7. Screen actions are YELLOW risk (they interact with the UI)
+8. Keep the user informed — your `reply` should say what you're doing
+
+**Example: "Book a table on OpenTable for Friday 7pm"**
+Round 1: `screenshot` → see desktop
+Round 2: `open_url` OpenTable → `wait` 2s → `screenshot`
+Round 3: see OpenTable homepage → `click_at` search box → `type_text` "Italian" → `key_combo` "return" → `wait` 2s → `screenshot`
+Round 4: see results → `click_at` restaurant → `wait` → `screenshot`
+...continue until booking is confirmed.
 
 ### APPLESCRIPT CAPABILITIES
 
