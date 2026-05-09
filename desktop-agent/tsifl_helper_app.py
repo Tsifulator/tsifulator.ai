@@ -454,6 +454,14 @@ def _describe_action(atype: str, payload: dict) -> str:
         src = payload.get("source_app", "?")
         dst = payload.get("destination", "?")
         return f"Export data from {src} → {Path(dst).name if dst != '?' else '?'}"
+    elif atype == "play_media":
+        platform = payload.get("platform", "?")
+        query = payload.get("query", "?")
+        return f"Play '{query}' on {platform}"
+    elif atype == "web_search":
+        query = payload.get("query", "?")
+        engine = payload.get("engine", "google")
+        return f"Search {engine}: '{query}'"
     elif atype == "notify":
         return "Show notification"
     # Gmail actions
@@ -507,7 +515,7 @@ def _extract_plan_from_reply(data: dict) -> list | None:
     DESKTOP_TYPES = {
         "search_files", "open_file", "open_app", "open_url",
         "applescript", "shell", "clipboard_copy", "clipboard_read",
-        "write_file", "notify", "data_export",
+        "write_file", "notify", "data_export", "play_media", "web_search",
         # Gmail actions
         "check_inbox", "search_email", "read_email",
         "send_email", "draft_email",
@@ -524,6 +532,7 @@ def _extract_plan_from_reply(data: dict) -> list | None:
         "open_url": "green", "shell": "green", "clipboard_read": "green",
         "clipboard_copy": "green", "write_file": "yellow", "notify": "green",
         "applescript": "yellow", "data_export": "yellow",
+        "play_media": "green", "web_search": "green",
         # Gmail: reads are green, draft is yellow, send is red
         "check_inbox": "green", "search_email": "green", "read_email": "green",
         "send_email": "red", "draft_email": "yellow",
@@ -1887,7 +1896,7 @@ def _panel_is_visible() -> bool:
         return False
 
 
-_MAX_VISION_ROUNDS = 12  # safety cap — don't loop forever
+_MAX_VISION_ROUNDS = 5  # safety cap — 5 rounds max, then stop and report
 _vision_loop_active = False  # True while a vision loop is running
 _app_before_panel = ""       # App that was active before tsifl panel opened
                               # Set to False by Esc or error → kills the loop
@@ -2373,7 +2382,8 @@ def _panel_submit(text: str):
                                     risk=Risk(step.get("risk", "green")),
                                 ))
                             sys.stderr.write(f"[tsifl-helper] executing {len(actions)} actions: {[a.type for a in actions]}\n")
-                            results = execute_plan(actions)
+                            # Don't stop on error — try all actions even if one fails
+                            results = execute_plan(actions, stop_on_error=False)
                             for a in results:
                                 sys.stderr.write(f"[tsifl-helper]   {a.type}: {'✅' if a.success else '❌'} {a.result or a.error or ''}\n")
 

@@ -2769,7 +2769,7 @@ DESKTOP_TOOLS = [
                                     "search_files", "open_file", "open_app",
                                     "open_url", "applescript", "shell",
                                     "clipboard_copy", "notify",
-                                    "data_export",
+                                    "data_export", "play_media", "web_search",
                                     "check_inbox", "search_email", "read_email",
                                     "send_email", "draft_email",
                                     "screenshot", "click_at", "type_text",
@@ -2821,7 +2821,9 @@ DESKTOP_TOOLS = [
                                     "key_combo: {keys}. Examples: 'cmd+c', 'cmd+shift+t', 'return', 'tab', 'escape'. "
                                     "scroll: {direction ('up'/'down'), amount? (default 3), x?, y?}. "
                                     "wait: {seconds}. Max 10s. Use after actions that trigger UI changes. "
-                                    "data_export: {source_app, destination, format?}. Export data FROM an app TO a file. The executor has battle-tested scripts for Numbers, Excel, etc. Example: {\"source_app\": \"Numbers\", \"destination\": \"~/Desktop/data.csv\", \"format\": \"csv\"}. ALWAYS use this instead of writing your own AppleScript for data export. "
+                                    "data_export: {source_app, destination, format?}. Export data FROM an app TO a file. ALWAYS use this instead of writing AppleScript for data export. Example: {\"source_app\": \"Numbers\", \"destination\": \"~/Desktop/data.csv\"}. "
+                                    "play_media: {platform, query}. Play music/video — handles everything. platform: 'youtube'/'spotify'/'apple music'. Example: {\"platform\": \"youtube\", \"query\": \"relaxing lofi\"}. ONE action, no vision needed. "
+                                    "web_search: {query, engine?}. Open a web search. engine: 'google'/'youtube'/'bing'. Example: {\"query\": \"best restaurants nearby\"}. ONE action, instant. "
                                     "spotify_play: {query}. Searches Spotify and plays the top result instantly. Example: {\"query\": \"Drake\"}"
                                 ),
                             },
@@ -3098,11 +3100,18 @@ Pay close attention to WHICH app/platform the user wants:
 **CRITICAL: "play" means PLAY, not just open a search page.**
 If the user says "play X on YouTube", you must open the search AND click a video. Just opening search results is NOT playing. Use the vision loop to click through.
 
-**Routing priority:**
-1. Dedicated actions (`spotify_play`, `check_inbox`, etc.) — instant, one action
-2. `open_url` + vision loop — for web tasks that need clicking (YouTube, booking, etc.)
-3. AppleScript / shell — for Mac app control
-4. Pure vision loop (screenshot → click_at) — for anything else
+**Routing priority — ALWAYS use the HIGHEST available option:**
+1. Dedicated actions — instant, one action, ALWAYS prefer these:
+   - `play_media` for ANY music/video request (YouTube, Spotify, Apple Music)
+   - `web_search` for ANY search request
+   - `data_export` for ANY data copy/paste/export between apps
+   - `spotify_play` for Spotify specifically
+   - `check_inbox`/`search_email` for Gmail
+2. `open_url` — for opening a specific known URL
+3. `applescript` — for Mac app control that has no dedicated action
+4. Vision loop (screenshot → click_at) — LAST RESORT, only when you literally need to click something specific on screen
+
+**CRITICAL: If a dedicated action exists, use it. NEVER use vision loop or AppleScript for tasks that have dedicated actions.** "Play X on YouTube" = `play_media`, NOT open_url + vision loop. "Search for X" = `web_search`, NOT open_url.
 
 **Rules:**
 - NEVER just open an app/page and stop if the user asked you to DO something

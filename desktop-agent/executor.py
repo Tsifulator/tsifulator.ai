@@ -115,6 +115,68 @@ def search_files(query: str, max_results: int = 10, file_type: str = None) -> li
         return []
 
 
+# ── Deterministic action handlers ────────────────────────────────────────────
+# These handle common tasks WITHOUT relying on Claude to write AppleScript.
+# Claude just says WHAT to do, the executor knows HOW.
+
+import urllib.parse as _urlparse
+
+
+def _play_media(platform: str, query: str) -> tuple[bool, str]:
+    """Play media on a specific platform — deterministic, no vision needed."""
+    import sys
+    sys.stderr.write(f"[play_media] platform={platform!r} query={query!r}\n")
+
+    if platform in ("youtube", "yt"):
+        encoded = _urlparse.quote_plus(query)
+        url = f"https://www.youtube.com/results?search_query={encoded}"
+        try:
+            subprocess.run(["open", url], check=True, timeout=5)
+            return True, f"Opened YouTube search for '{query}'"
+        except Exception as e:
+            return False, str(e)
+
+    elif platform in ("spotify",):
+        return spotify_play(query)
+
+    elif platform in ("apple music", "music"):
+        # Open Apple Music search
+        encoded = _urlparse.quote_plus(query)
+        url = f"https://music.apple.com/search?term={encoded}"
+        try:
+            subprocess.run(["open", url], check=True, timeout=5)
+            return True, f"Opened Apple Music search for '{query}'"
+        except Exception as e:
+            return False, str(e)
+
+    else:
+        # Fallback: try opening as URL search
+        encoded = _urlparse.quote_plus(query)
+        url = f"https://www.google.com/search?q={encoded}+{platform}"
+        try:
+            subprocess.run(["open", url], check=True, timeout=5)
+            return True, f"Searched for '{query}' on {platform}"
+        except Exception as e:
+            return False, str(e)
+
+
+def _web_search(query: str, engine: str = "google") -> tuple[bool, str]:
+    """Open a web search — deterministic, no vision needed."""
+    encoded = _urlparse.quote_plus(query)
+    urls = {
+        "google": f"https://www.google.com/search?q={encoded}",
+        "youtube": f"https://www.youtube.com/results?search_query={encoded}",
+        "bing": f"https://www.bing.com/search?q={encoded}",
+        "duckduckgo": f"https://duckduckgo.com/?q={encoded}",
+    }
+    url = urls.get(engine, urls["google"])
+    try:
+        subprocess.run(["open", url], check=True, timeout=5)
+        return True, f"Opened {engine} search for '{query}'"
+    except Exception as e:
+        return False, str(e)
+
+
 # ── Data Export — battle-tested per-app scripts ─────────────────────────────
 # Claude just says {"type": "data_export", "source_app": "Numbers", "destination": "~/Desktop/data.csv"}
 # and we handle the AppleScript perfectly every time.
@@ -1185,6 +1247,18 @@ def execute_action(action: Action) -> Action:
                 expanded = str(Path(dest_path).expanduser())
                 Path(expanded).parent.mkdir(parents=True, exist_ok=True)
                 action.success, action.result = _data_export(source_app, expanded, fmt)
+
+        elif action.type == "play_media":
+            # Deterministic media playback — no vision needed.
+            platform = cmd_data.get("platform", "youtube").lower()
+            query = cmd_data.get("query", cmd)
+            action.success, action.result = _play_media(platform, query)
+
+        elif action.type == "web_search":
+            # Deterministic web search — just open the URL, no vision.
+            query = cmd_data.get("query", cmd)
+            engine = cmd_data.get("engine", "google").lower()
+            action.success, action.result = _web_search(query, engine)
 
         else:
             action.success = False
