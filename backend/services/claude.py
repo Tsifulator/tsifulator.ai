@@ -3525,7 +3525,9 @@ TRANSACTIONS PROJECT SPECIFICS:
         _needs_vision = re.compile(
             r"(play|search.*on|go to|navigate|click|type|book|order|"
             r"reply.*email|send.*email|check.*inbox|create.*event|"
-            r"sign.*in|log.*in|fill.*form|download|upload)",
+            r"sign.*in|log.*in|fill.*form|download|upload|"
+            r"paste|copy.*to|save.*as|create.*spreadsheet|create.*presentation|"
+            r"make.*powerpoint|make.*excel|put.*in.*excel|put.*in.*r\b)",
             re.IGNORECASE
         )
         if _needs_vision.search(message.strip()):
