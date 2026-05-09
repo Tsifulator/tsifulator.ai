@@ -3239,50 +3239,54 @@ One AppleScript action can create an entire spreadsheet, presentation, or docume
 
 ### COMMON WORKFLOW PATTERNS
 
-**CRITICAL: The `frontmost_app` in the context tells you what app the user has open. Use it to build the right AppleScript.**
+**CRITICAL: The `frontmost_app` and `other_open_documents` in CURRENT MAC STATE tell you where data is. Use them.**
 
-**"Copy/paste this data and save as X" — user has data in Numbers:**
-ONE action. The AppleScript activates the app, copies via System Events, saves via shell:
+**"Copy/paste this data and save as X" — data is in Numbers:**
+Use Numbers' built-in export command — NO keyboard shortcuts, NO clipboard. This is 100% reliable:
 ```json
 {"plan": [
-  {"type": "applescript", "command": "tell application \"Numbers\" to activate\ndelay 0.5\ntell application \"System Events\" to tell process \"Numbers\"\n    keystroke \"a\" using command down\n    delay 0.3\n    keystroke \"c\" using command down\nend tell\ndelay 0.5\ndo shell script \"pbpaste > \" & quoted form of (POSIX path of (path to home folder)) & \"Desktop/data.csv\"", "description": "Copy all data from Numbers and save as data.csv", "risk": "yellow"},
+  {"type": "applescript", "command": "tell application \"Numbers\"\n    set theDoc to front document\n    set exportPath to ((path to home folder as text) & \"Desktop:data.csv\")\n    export theDoc to file exportPath as CSV\nend tell", "description": "Export Numbers data as CSV", "risk": "yellow"},
   {"type": "open_file", "command": "~/Desktop/data.csv", "description": "Open the saved file", "risk": "green"}
 ]}
 ```
 
-**"Copy/paste this data and save as X" — user has data in Excel:**
+**"Copy/paste this data and save as X" — data is in Excel:**
 ```json
 {"plan": [
-  {"type": "applescript", "command": "tell application \"Microsoft Excel\" to activate\ndelay 0.5\ntell application \"System Events\" to tell process \"Microsoft Excel\"\n    keystroke \"a\" using command down\n    delay 0.3\n    keystroke \"c\" using command down\nend tell\ndelay 0.5\ndo shell script \"pbpaste > \" & quoted form of (POSIX path of (path to home folder)) & \"Desktop/data.csv\"", "description": "Copy all data from Excel and save as data.csv", "risk": "yellow"},
+  {"type": "applescript", "command": "tell application \"Microsoft Excel\"\n    set filePath to (POSIX path of (path to home folder)) & \"Desktop/data.csv\"\n    save active workbook in filePath as CSV file format\nend tell", "description": "Save Excel data as CSV", "risk": "yellow"},
   {"type": "open_file", "command": "~/Desktop/data.csv", "description": "Open the saved file", "risk": "green"}
 ]}
 ```
 
-**"Copy/paste this data and save as X" — user has data in browser (Chrome/Safari):**
+**"Copy/paste this data and save as X" — data is in browser (Chrome/Safari):**
+For browser data, use clipboard (no export API available):
 ```json
 {"plan": [
-  {"type": "applescript", "command": "tell application \"Google Chrome\" to activate\ndelay 0.5\ntell application \"System Events\" to tell process \"Google Chrome\"\n    keystroke \"a\" using command down\n    delay 0.3\n    keystroke \"c\" using command down\nend tell\ndelay 0.5\ndo shell script \"pbpaste > \" & quoted form of (POSIX path of (path to home folder)) & \"Desktop/data.csv\"", "description": "Copy page content from Chrome and save as data.csv", "risk": "yellow"},
+  {"type": "applescript", "command": "tell application \"Google Chrome\" to activate\ndelay 1\ntell application \"System Events\" to tell process \"Google Chrome\"\n    set frontmost to true\n    delay 0.5\n    keystroke \"a\" using command down\n    delay 0.5\n    keystroke \"c\" using command down\nend tell\ndelay 1\ndo shell script \"pbpaste > \" & quoted form of (POSIX path of (path to home folder)) & \"Desktop/data.csv\"", "description": "Copy page content from Chrome and save as data.csv", "risk": "yellow"},
   {"type": "open_file", "command": "~/Desktop/data.csv", "description": "Open the saved file", "risk": "green"}
 ]}
 ```
 
-**"Paste this to R / save as .Rmd / .R file" — user has data in any app:**
+**"Paste this to R / save as .Rmd / .R file" — data is in Numbers:**
+Export from Numbers as CSV, then open in RStudio:
 ```json
 {"plan": [
-  {"type": "applescript", "command": "tell application \"Numbers\" to activate\ndelay 0.5\ntell application \"System Events\" to tell process \"Numbers\"\n    keystroke \"a\" using command down\n    delay 0.3\n    keystroke \"c\" using command down\nend tell\ndelay 0.5\ndo shell script \"pbpaste > \" & quoted form of \"/Users/nicholastsiflikiotis/Desktop/data.Rmd\"", "description": "Copy all data from Numbers and save as data.Rmd", "risk": "yellow"},
-  {"type": "open_file", "command": "~/Desktop/data.Rmd", "description": "Open data.Rmd in RStudio", "risk": "green"}
+  {"type": "applescript", "command": "tell application \"Numbers\"\n    set theDoc to front document\n    set exportPath to ((path to home folder as text) & \"Desktop:data.csv\")\n    export theDoc to file exportPath as CSV\nend tell", "description": "Export Numbers data as CSV", "risk": "yellow"},
+  {"type": "open_file", "command": "~/Desktop/data.csv", "description": "Open in RStudio", "risk": "green"}
 ]}
 ```
-Replace "Numbers" with whatever `frontmost_app` shows. The key: NEVER open RStudio and paste via keystrokes — save the file first with `pbpaste`, THEN open it.
+Note: always export as .csv for data even if the user says .Rmd — data belongs in CSV, not R Markdown. If user specifically wants an .Rmd file, export as CSV first, then write an .Rmd that reads the CSV.
 
-**The pattern is ALWAYS the same:**
+**CRITICAL DATA SOURCE RULES:**
 1. Figure out WHERE the data is:
-   - If user says "paste this to X" and `frontmost_app` IS X (e.g. user is already in RStudio and says "paste to R"), the data is NOT in the frontmost app — check `other_open_documents` for spreadsheet apps (Numbers, Excel) that have data open
+   - If user says "paste this to X" and `frontmost_app` IS X (e.g. user is in RStudio and says "paste to R"), the data is NOT in the frontmost app — check `other_open_documents` for spreadsheet apps (Numbers, Excel)
    - If user says "paste this to X" and `frontmost_app` is NOT X, the data is in `frontmost_app`
-2. Build ONE `applescript` that: activates the DATA SOURCE app → selects all → copies → saves via `do shell script "pbpaste > /path/to/file"`
-3. Then ONE `open_file` action to open the result in the TARGET app
-4. NEVER open the target app and try to paste into it — that's fragile and unreliable
-5. NEVER copy from the target app — the data comes from ANOTHER app
+2. For Numbers: ALWAYS use `export theDoc to file ... as CSV` — NEVER use Cmd+A/Cmd+C keyboard shortcuts (they silently fail)
+3. For Excel: ALWAYS use `save active workbook in ... as CSV file format` — NEVER keyboard shortcuts
+4. Only use clipboard (Cmd+A → Cmd+C → pbpaste) for browser content where no export API exists
+5. Then ONE `open_file` action to open the result in the TARGET app
+6. NEVER open the target app and try to paste into it
+7. NEVER copy from the target app — the data comes from ANOTHER app
 
 **"Create an Excel spreadsheet with budget data":**
 Use ONE `applescript` action that creates the entire workbook.
