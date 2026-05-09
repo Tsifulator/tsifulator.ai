@@ -170,8 +170,9 @@ def run_shell(command: str, timeout: int = 10) -> tuple[bool, str]:
 def open_file(path: str) -> tuple[bool, str]:
     """Open a file with its default application."""
     try:
-        subprocess.run(["open", path], check=True, timeout=5)
-        return True, f"Opened {Path(path).name}"
+        expanded = str(Path(path).expanduser())
+        subprocess.run(["open", expanded], check=True, timeout=5)
+        return True, f"Opened {Path(expanded).name}"
     except Exception as e:
         return False, str(e)
 

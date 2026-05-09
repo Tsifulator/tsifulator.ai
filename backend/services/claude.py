@@ -3195,58 +3195,53 @@ One AppleScript action can create an entire spreadsheet, presentation, or docume
 
 ### ACTION RELIABILITY — MOST IMPORTANT RULES
 
-**USE TARGETED ACTIONS, NOT BLIND KEYSTROKES.**
+**NEVER use `key_combo` or `type_text` for data transfer.** They depend on the right app being focused, which is unreliable. Instead, use ONE `applescript` action that handles everything in a single atomic block.
 
-Keystrokes (`key_combo`, `type_text`) go to WHATEVER app is focused — if the wrong app is in front, you'll type into the wrong place. This is the #1 source of bugs.
-
-**Reliability hierarchy (use the highest available):**
-1. `shell` / `write_file` — always works, no GUI dependency. USE THIS for file operations.
-2. `applescript` — targets a SPECIFIC app by name. USE THIS for app control.
-3. `open_app` + `open_file` — reliable for launching things.
-4. `key_combo` / `type_text` — LAST RESORT. Only use after `open_app` + `wait` to ensure the right app is focused.
-
-**NEVER use `key_combo` for file operations.** Don't Cmd+N, Cmd+S, type filename, Enter. Instead:
-- To create a file: use `write_file` or `shell` with a write command
-- To save clipboard to file: use `shell` with `pbpaste > /path/to/file`
-- To open a file: use `open_file` with the path
+**Reliability hierarchy:**
+1. ONE `applescript` action that does the whole job (activate app + extract data + save) — BEST
+2. `shell` / `write_file` — always works for file creation
+3. `open_app` + `open_file` — reliable for launching
+4. `key_combo` / `type_text` — ABSOLUTE LAST RESORT, only inside a vision loop
 
 ### COMMON WORKFLOW PATTERNS
 
-**"Copy this data and save as X" (user has data visible in an app):**
-```json
-{"plan": [
-  {"type": "key_combo", "command": "{\"keys\": \"cmd+a\"}", "description": "Select all in current app", "risk": "yellow"},
-  {"type": "key_combo", "command": "{\"keys\": \"cmd+c\"}", "description": "Copy to clipboard", "risk": "green"},
-  {"type": "shell", "command": "pbpaste > ~/Desktop/data.csv", "description": "Save clipboard to data.csv", "risk": "yellow"}
-]}
-```
-That's it. 3 actions. No Cmd+N, no Cmd+S, no typing filenames. `pbpaste` dumps the clipboard to a file directly.
+**CRITICAL: The `frontmost_app` in the context tells you what app the user has open. Use it to build the right AppleScript.**
 
-**"Paste this into Excel":**
+**"Copy/paste this data and save as X" — user has data in Numbers:**
+ONE action. The AppleScript activates the app, copies via System Events, saves via shell:
 ```json
 {"plan": [
-  {"type": "key_combo", "command": "{\"keys\": \"cmd+a\"}", "description": "Select all", "risk": "yellow"},
-  {"type": "key_combo", "command": "{\"keys\": \"cmd+c\"}", "description": "Copy", "risk": "green"},
-  {"type": "shell", "command": "pbpaste > /tmp/data.csv", "description": "Save to temp CSV", "risk": "yellow"},
-  {"type": "applescript", "command": "tell application \"Microsoft Excel\"\n    activate\n    open \"/tmp/data.csv\"\nend tell", "description": "Open data in Excel", "risk": "yellow"}
+  {"type": "applescript", "command": "tell application \"Numbers\" to activate\ndelay 0.5\ntell application \"System Events\" to tell process \"Numbers\"\n    keystroke \"a\" using command down\n    delay 0.3\n    keystroke \"c\" using command down\nend tell\ndelay 0.5\ndo shell script \"pbpaste > \" & quoted form of (POSIX path of (path to home folder)) & \"Desktop/data.csv\"", "description": "Copy all data from Numbers and save as data.csv", "risk": "yellow"},
+  {"type": "open_file", "command": "~/Desktop/data.csv", "description": "Open the saved file", "risk": "green"}
 ]}
 ```
 
-**"Save this as data.Rmd" or "paste to R":**
+**"Copy/paste this data and save as X" — user has data in Excel:**
 ```json
 {"plan": [
-  {"type": "key_combo", "command": "{\"keys\": \"cmd+a\"}", "description": "Select all", "risk": "yellow"},
-  {"type": "key_combo", "command": "{\"keys\": \"cmd+c\"}", "description": "Copy", "risk": "green"},
-  {"type": "shell", "command": "pbpaste > ~/Desktop/data.Rmd", "description": "Save clipboard as data.Rmd", "risk": "yellow"},
-  {"type": "open_file", "command": "~/Desktop/data.Rmd", "description": "Open in RStudio", "risk": "green"}
+  {"type": "applescript", "command": "tell application \"Microsoft Excel\" to activate\ndelay 0.5\ntell application \"System Events\" to tell process \"Microsoft Excel\"\n    keystroke \"a\" using command down\n    delay 0.3\n    keystroke \"c\" using command down\nend tell\ndelay 0.5\ndo shell script \"pbpaste > \" & quoted form of (POSIX path of (path to home folder)) & \"Desktop/data.csv\"", "description": "Copy all data from Excel and save as data.csv", "risk": "yellow"},
+  {"type": "open_file", "command": "~/Desktop/data.csv", "description": "Open the saved file", "risk": "green"}
 ]}
 ```
+
+**"Copy/paste this data and save as X" — user has data in browser (Chrome/Safari):**
+```json
+{"plan": [
+  {"type": "applescript", "command": "tell application \"Google Chrome\" to activate\ndelay 0.5\ntell application \"System Events\" to tell process \"Google Chrome\"\n    keystroke \"a\" using command down\n    delay 0.3\n    keystroke \"c\" using command down\nend tell\ndelay 0.5\ndo shell script \"pbpaste > \" & quoted form of (POSIX path of (path to home folder)) & \"Desktop/data.csv\"", "description": "Copy page content from Chrome and save as data.csv", "risk": "yellow"},
+  {"type": "open_file", "command": "~/Desktop/data.csv", "description": "Open the saved file", "risk": "green"}
+]}
+```
+
+**The pattern is ALWAYS the same:**
+1. Look at `frontmost_app` in context to know which app to target
+2. Build ONE `applescript` that: activates that app → selects all → copies → saves via `do shell script`
+3. Then `open_file` to open the result in the target app
 
 **"Create an Excel spreadsheet with budget data":**
-Use ONE `applescript` action that creates the entire workbook — not keystrokes.
+Use ONE `applescript` action that creates the entire workbook.
 
 **"Make a PowerPoint about X":**
-Use ONE `applescript` action that builds all slides — not keystrokes.
+Use ONE `applescript` action that builds all slides.
 
 ### RULES
 

@@ -1885,6 +1885,7 @@ def _panel_is_visible() -> bool:
 
 _MAX_VISION_ROUNDS = 12  # safety cap — don't loop forever
 _vision_loop_active = False  # True while a vision loop is running
+_app_before_panel = ""       # App that was active before tsifl panel opened
                               # Set to False by Esc or error → kills the loop
 
 
@@ -2255,6 +2256,9 @@ def _panel_submit(text: str):
 
     my_session = _panel_session_id
 
+    # Use the app captured when the panel first opened (before it stole focus).
+    frontmost_before = _app_before_panel
+
     # Snapshot any pending image attachments before clearing the queue.
     images_to_send = list(_pending_images)
     _pending_images = []
@@ -2339,7 +2343,18 @@ def _panel_submit(text: str):
 
                     def _auto_run():
                         try:
-                            from executor import Action, Risk, execute_plan
+                            from executor import Action, Risk, execute_plan, run_applescript
+
+                            # Re-activate the app the user was in BEFORE tsifl panel
+                            # so keystrokes (Cmd+A, Cmd+C) hit the right app.
+                            has_keystrokes = any(
+                                s.get("type") in ("key_combo", "type_text") for s in plan
+                            )
+                            if has_keystrokes and frontmost_before:
+                                sys.stderr.write(f"[tsifl-helper] re-activating {frontmost_before!r} before keystrokes\n")
+                                run_applescript(f'tell application "{frontmost_before}" to activate', timeout=3)
+                                time.sleep(0.5)
+
                             actions = []
                             for step in plan:
                                 actions.append(Action(
@@ -2560,6 +2575,14 @@ def _show_shortcut_panel():
     global _panel_ref, _panel_input, _panel_send_btn, _panel_attach_btn
     global _panel_response, _panel_target, _panel_esc_monitor
     global _panel_session_id, _panel_expanded
+    global _app_before_panel
+
+    # Capture which app is frontmost BEFORE the panel steals focus.
+    # This is used later to re-activate it before keystrokes.
+    _app_before_panel = _detect_frontmost_app()
+    if _app_before_panel.lower() in ("python", "tsifl", "tsifl helper"):
+        _app_before_panel = ""
+    sys.stderr.write(f"[tsifl-helper] app before panel: {_app_before_panel!r}\n")
 
     # TOGGLE: hotkey while panel is up → close (and destroy)
     sys.stderr.write(f"[tsifl-helper] _show_shortcut_panel: visible={_panel_is_visible()} ref={_panel_ref is not None}\n")
