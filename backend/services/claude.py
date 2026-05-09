@@ -2933,6 +2933,11 @@ def _build_system_prompt(app: str, message: str = "", context: dict = None) -> s
                 ctx_lines.append(f"browser_title: {mac_ctx['browser_title']}")
             if mac_ctx.get("finder_selection"):
                 ctx_lines.append(f"finder_selection: {mac_ctx['finder_selection']}")
+            if mac_ctx.get("other_open_documents"):
+                docs = mac_ctx["other_open_documents"]
+                ctx_lines.append("other_open_documents:")
+                for app_name, doc_name in docs.items():
+                    ctx_lines.append(f"  {app_name}: {doc_name}")
             if mac_ctx.get("home"):
                 ctx_lines.append(f"home_dir: {mac_ctx['home']}")
             if mac_ctx.get("time"):
@@ -3271,10 +3276,13 @@ ONE action. The AppleScript activates the app, copies via System Events, saves v
 Replace "Numbers" with whatever `frontmost_app` shows. The key: NEVER open RStudio and paste via keystrokes — save the file first with `pbpaste`, THEN open it.
 
 **The pattern is ALWAYS the same:**
-1. Look at `frontmost_app` in CURRENT MAC STATE to know which app to target
-2. Build ONE `applescript` that: activates that app → selects all → copies → saves via `do shell script "pbpaste > /path/to/file"`
-3. Then ONE `open_file` action to open the result in the target app
+1. Figure out WHERE the data is:
+   - If user says "paste this to X" and `frontmost_app` IS X (e.g. user is already in RStudio and says "paste to R"), the data is NOT in the frontmost app — check `other_open_documents` for spreadsheet apps (Numbers, Excel) that have data open
+   - If user says "paste this to X" and `frontmost_app` is NOT X, the data is in `frontmost_app`
+2. Build ONE `applescript` that: activates the DATA SOURCE app → selects all → copies → saves via `do shell script "pbpaste > /path/to/file"`
+3. Then ONE `open_file` action to open the result in the TARGET app
 4. NEVER open the target app and try to paste into it — that's fragile and unreliable
+5. NEVER copy from the target app — the data comes from ANOTHER app
 
 **"Create an Excel spreadsheet with budget data":**
 Use ONE `applescript` action that creates the entire workbook.

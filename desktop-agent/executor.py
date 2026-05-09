@@ -268,6 +268,22 @@ def get_system_context() -> dict:
         if ok:
             ctx["active_document"] = doc
 
+    # Also check for data apps running in background — crucial for
+    # "paste this data to X" where the data is in a different app.
+    running = ctx.get("running_apps", [])
+    data_apps = ["Numbers", "Microsoft Excel", "Pages", "Preview"]
+    background_docs = {}
+    for dapp in data_apps:
+        if dapp in running and dapp != front:
+            ok, doc = run_applescript(
+                f'tell application "{dapp}" to get name of front document',
+                timeout=3,
+            )
+            if ok and doc:
+                background_docs[dapp] = doc
+    if background_docs:
+        ctx["other_open_documents"] = background_docs
+
     # Finder: get selected files
     if front == "Finder":
         ok, sel = run_applescript(

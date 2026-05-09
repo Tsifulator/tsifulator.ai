@@ -2293,7 +2293,12 @@ def _panel_submit(text: str):
         """Runs on a daemon thread — must NOT touch UI directly. UI updates
         get dispatched back to the main thread via PyObjCTools.AppHelper.callAfter
         which is the only reliable cross-thread main-runloop dispatch in PyObjC."""
-        frontmost = _detect_frontmost_app()
+        # Use the app captured when the panel OPENED (before it stole focus),
+        # NOT what's frontmost now. After the panel hides, focus falls to
+        # whatever window is behind it (often RStudio or the tsifl panel),
+        # which is NOT the app the user was looking at.
+        frontmost = frontmost_before or _detect_frontmost_app()
+        sys.stderr.write(f"[tsifl-helper] sending to backend with frontmost={frontmost!r} (before_panel={frontmost_before!r})\n")
         try:
             result = _send_to_backend(text, frontmost, images=images_to_send or None)
         except Exception as e:
