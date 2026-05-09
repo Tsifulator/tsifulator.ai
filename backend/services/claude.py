@@ -3602,9 +3602,10 @@ TRANSACTIONS PROJECT SPECIFICS:
     )
     tool_choice = {"type": "any"} if force_tools else {"type": "auto"}
 
-    # Desktop agent: always use DESKTOP_TOOLS, never force tool_choice=any
+    # Desktop agent: ALWAYS force tool use — Claude must return actions, not just text
     if is_desktop:
-        print(f"[routing] DESKTOP AGENT → DESKTOP_TOOLS, tool_choice=auto. msg={message[:60]!r}", flush=True)
+        tool_choice = {"type": "any"}
+        print(f"[routing] DESKTOP AGENT → DESKTOP_TOOLS, tool_choice=any (forced). msg={message[:60]!r}", flush=True)
 
     try:
         # Use streaming to collect the full response (SDK requires streaming for large max_tokens)

@@ -2348,7 +2348,10 @@ def _panel_submit(text: str):
                                     command=step.get("command", ""),
                                     risk=Risk(step.get("risk", "green")),
                                 ))
+                            sys.stderr.write(f"[tsifl-helper] executing {len(actions)} actions: {[a.type for a in actions]}\n")
                             results = execute_plan(actions)
+                            for a in results:
+                                sys.stderr.write(f"[tsifl-helper]   {a.type}: {'✅' if a.success else '❌'} {a.result or a.error or ''}\n")
 
                             # Track search results for multi-turn ("open the first one")
                             global _last_search_results, _last_email_results
@@ -2431,6 +2434,8 @@ def _panel_submit(text: str):
                                 lines.append("Say \"open 1\" or \"open the first one\" to open a result")
                             summary = "\n".join(lines)
                         except Exception as e:
+                            sys.stderr.write(f"[tsifl-helper] _auto_run CRASHED: {e}\n")
+                            import traceback; traceback.print_exc(file=sys.stderr)
                             summary = f"Execution failed: {e}"
 
                         def _show():
