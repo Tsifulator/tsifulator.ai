@@ -2915,6 +2915,30 @@ def _build_system_prompt(app: str, message: str = "", context: dict = None) -> s
     # Claude returns structured action plans that the Mac agent executes.
     if app == "shortcut":
         app_sections += DESKTOP_AGENT_PROMPT
+
+        # ── CRITICAL: Inject Mac system context so Claude can see it ──
+        # Without this, the prompt says "look at frontmost_app" but Claude
+        # never sees the value, so it screenshots first to figure out what's open.
+        mac_ctx = (context or {}).get("mac", {})
+        frontmost = (context or {}).get("frontmost_app", "") or mac_ctx.get("frontmost_app", "")
+        if frontmost or mac_ctx:
+            ctx_lines = ["\n\n### CURRENT MAC STATE"]
+            if frontmost:
+                ctx_lines.append(f"frontmost_app: {frontmost}")
+            if mac_ctx.get("active_document"):
+                ctx_lines.append(f"active_document: {mac_ctx['active_document']}")
+            if mac_ctx.get("browser_url"):
+                ctx_lines.append(f"browser_url: {mac_ctx['browser_url']}")
+            if mac_ctx.get("browser_title"):
+                ctx_lines.append(f"browser_title: {mac_ctx['browser_title']}")
+            if mac_ctx.get("finder_selection"):
+                ctx_lines.append(f"finder_selection: {mac_ctx['finder_selection']}")
+            if mac_ctx.get("home"):
+                ctx_lines.append(f"home_dir: {mac_ctx['home']}")
+            if mac_ctx.get("time"):
+                ctx_lines.append(f"time: {mac_ctx['time']}")
+            app_sections += "\n".join(ctx_lines) + "\n"
+
         # Inject persistent user memory (preferences, facts) if available
         user_memory = (context or {}).get("user_memory", "")
         if user_memory:
@@ -3036,10 +3060,12 @@ Use this when the task involves navigating a GUI (browser, desktop app, etc.).
 4. You request another `screenshot` to see the result
 5. Repeat until the task is done
 
-**When to use vision mode vs APIs:**
+**When to use vision mode vs direct actions:**
 - Use `check_inbox`/`search_email` for Gmail (faster, more reliable)
-- Use vision mode for EVERYTHING ELSE: any website, any desktop app, any UI
-- Vision mode is the universal fallback — it works with literally anything
+- Use `applescript` for copy/paste/save/create tasks in known apps (MUCH faster and more reliable)
+- Use `open_url` for opening websites
+- Use vision mode (screenshot → click_at) ONLY for tasks that REQUIRE clicking specific GUI elements you can't reach via AppleScript (e.g. clicking a specific YouTube video, navigating a web form)
+- **NEVER use vision mode for copy/paste/save operations** — AppleScript handles those instantly
 
 **Screen action types:**
 
@@ -3197,11 +3223,14 @@ One AppleScript action can create an entire spreadsheet, presentation, or docume
 
 **NEVER use `key_combo` or `type_text` for data transfer.** They depend on the right app being focused, which is unreliable. Instead, use ONE `applescript` action that handles everything in a single atomic block.
 
+**NEVER start with `screenshot` when you already know the frontmost_app.** If "CURRENT MAC STATE" below tells you which app is open (e.g. "frontmost_app: Numbers"), you ALREADY KNOW what the user is looking at. Go straight to an `applescript` action that copies from that app. Screenshots are ONLY for when you need to click on specific UI elements you can't otherwise reach.
+
 **Reliability hierarchy:**
 1. ONE `applescript` action that does the whole job (activate app + extract data + save) — BEST
 2. `shell` / `write_file` — always works for file creation
 3. `open_app` + `open_file` — reliable for launching
 4. `key_combo` / `type_text` — ABSOLUTE LAST RESORT, only inside a vision loop
+5. `screenshot` — ONLY when you literally don't know what's on screen and need to click something
 
 ### COMMON WORKFLOW PATTERNS
 
