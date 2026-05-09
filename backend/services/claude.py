@@ -3261,10 +3261,20 @@ ONE action. The AppleScript activates the app, copies via System Events, saves v
 ]}
 ```
 
+**"Paste this to R / save as .Rmd / .R file" — user has data in any app:**
+```json
+{"plan": [
+  {"type": "applescript", "command": "tell application \"Numbers\" to activate\ndelay 0.5\ntell application \"System Events\" to tell process \"Numbers\"\n    keystroke \"a\" using command down\n    delay 0.3\n    keystroke \"c\" using command down\nend tell\ndelay 0.5\ndo shell script \"pbpaste > \" & quoted form of \"/Users/nicholastsiflikiotis/Desktop/data.Rmd\"", "description": "Copy all data from Numbers and save as data.Rmd", "risk": "yellow"},
+  {"type": "open_file", "command": "~/Desktop/data.Rmd", "description": "Open data.Rmd in RStudio", "risk": "green"}
+]}
+```
+Replace "Numbers" with whatever `frontmost_app` shows. The key: NEVER open RStudio and paste via keystrokes — save the file first with `pbpaste`, THEN open it.
+
 **The pattern is ALWAYS the same:**
-1. Look at `frontmost_app` in context to know which app to target
-2. Build ONE `applescript` that: activates that app → selects all → copies → saves via `do shell script`
-3. Then `open_file` to open the result in the target app
+1. Look at `frontmost_app` in CURRENT MAC STATE to know which app to target
+2. Build ONE `applescript` that: activates that app → selects all → copies → saves via `do shell script "pbpaste > /path/to/file"`
+3. Then ONE `open_file` action to open the result in the target app
+4. NEVER open the target app and try to paste into it — that's fragile and unreliable
 
 **"Create an Excel spreadsheet with budget data":**
 Use ONE `applescript` action that creates the entire workbook.
