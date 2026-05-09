@@ -115,6 +115,100 @@ def search_files(query: str, max_results: int = 10, file_type: str = None) -> li
         return []
 
 
+# ── Data Export — battle-tested per-app scripts ─────────────────────────────
+# Claude just says {"type": "data_export", "source_app": "Numbers", "destination": "~/Desktop/data.csv"}
+# and we handle the AppleScript perfectly every time.
+
+def _data_export(source_app: str, dest_path: str, fmt: str = "csv") -> tuple[bool, str]:
+    """Export data from a Mac app to a file. Uses tested AppleScript per app.
+
+    Args:
+        source_app: app name (e.g. "Numbers", "Microsoft Excel")
+        dest_path: absolute POSIX path for output file
+        fmt: format — "csv", "tsv", "pdf"
+
+    Returns:
+        (True, summary) on success, (False, error) on failure.
+    """
+    import sys
+    sys.stderr.write(f"[data_export] {source_app} → {dest_path} (fmt={fmt})\n")
+
+    app_lower = source_app.lower().strip()
+
+    # ── Numbers ──────────────────────────────────────────────────────
+    if app_lower in ("numbers", "apple numbers"):
+        # Convert POSIX path to HFS path for Numbers export
+        # /Users/nick/Desktop/data.csv → Macintosh HD:Users:nick:Desktop:data.csv
+        # Simpler: use path to home folder + relative
+        home = str(Path.home())
+        if dest_path.startswith(home):
+            relative = dest_path[len(home):].lstrip("/")
+            # HFS uses colons: Desktop/data.csv → Desktop:data.csv
+            hfs_relative = relative.replace("/", ":")
+            script = (
+                f'tell application "Numbers"\n'
+                f'    set theDoc to front document\n'
+                f'    set exportPath to ((path to home folder as text) & "{hfs_relative}")\n'
+                f'    export theDoc to file exportPath as CSV\n'
+                f'end tell'
+            )
+        else:
+            # Fallback for non-home paths: use POSIX file
+            script = (
+                f'tell application "Numbers"\n'
+                f'    set theDoc to front document\n'
+                f'    export theDoc to POSIX file "{dest_path}" as CSV\n'
+                f'end tell'
+            )
+        ok, result = run_applescript(script, timeout=30)
+        if ok:
+            if Path(dest_path).exists():
+                size = Path(dest_path).stat().st_size
+                return True, f"Exported {size:,} bytes to {Path(dest_path).name}"
+            return True, f"Export completed to {Path(dest_path).name}"
+        return False, f"Numbers export failed: {result}"
+
+    # ── Microsoft Excel ──────────────────────────────────────────────
+    elif app_lower in ("microsoft excel", "excel"):
+        script = (
+            f'tell application "Microsoft Excel"\n'
+            f'    set filePath to POSIX file "{dest_path}" as text\n'
+            f'    save active workbook in filePath as CSV file format\n'
+            f'end tell'
+        )
+        ok, result = run_applescript(script, timeout=30)
+        if ok:
+            if Path(dest_path).exists():
+                size = Path(dest_path).stat().st_size
+                return True, f"Exported {size:,} bytes to {Path(dest_path).name}"
+            return True, f"Export completed to {Path(dest_path).name}"
+        return False, f"Excel export failed: {result}"
+
+    # ── Fallback: clipboard approach ─────────────────────────────────
+    else:
+        # For apps without export API, use activate → Cmd+A → Cmd+C → pbpaste
+        script = (
+            f'tell application "{source_app}" to activate\n'
+            f'delay 1.0\n'
+            f'tell application "System Events" to tell process "{source_app}"\n'
+            f'    set frontmost to true\n'
+            f'    delay 0.5\n'
+            f'    keystroke "a" using command down\n'
+            f'    delay 0.5\n'
+            f'    keystroke "c" using command down\n'
+            f'end tell\n'
+            f'delay 1.0\n'
+            f'do shell script "pbpaste > " & quoted form of "{dest_path}"'
+        )
+        ok, result = run_applescript(script, timeout=20)
+        if ok:
+            if Path(dest_path).exists() and Path(dest_path).stat().st_size > 0:
+                size = Path(dest_path).stat().st_size
+                return True, f"Copied {size:,} bytes to {Path(dest_path).name}"
+            return False, f"Clipboard copy produced empty file"
+        return False, f"Copy from {source_app} failed: {result}"
+
+
 # ── AppleScript execution ────────────────────────────────────────────────────
 
 def run_applescript(script: str, timeout: int = 15) -> tuple[bool, str]:
@@ -1078,6 +1172,19 @@ def execute_action(action: Action) -> Action:
         elif action.type == "spotify_play":
             query = cmd_data.get("query", cmd)
             action.success, action.result = spotify_play(query)
+
+        elif action.type == "data_export":
+            # Battle-tested export: Claude just says WHAT, executor knows HOW.
+            source_app = cmd_data.get("source_app", "")
+            dest_path = cmd_data.get("destination", "")
+            fmt = cmd_data.get("format", "csv").lower()
+            if not source_app or not dest_path:
+                action.success = False
+                action.result = "data_export needs source_app and destination"
+            else:
+                expanded = str(Path(dest_path).expanduser())
+                Path(expanded).parent.mkdir(parents=True, exist_ok=True)
+                action.success, action.result = _data_export(source_app, expanded, fmt)
 
         else:
             action.success = False

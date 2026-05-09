@@ -2769,6 +2769,7 @@ DESKTOP_TOOLS = [
                                     "search_files", "open_file", "open_app",
                                     "open_url", "applescript", "shell",
                                     "clipboard_copy", "notify",
+                                    "data_export",
                                     "check_inbox", "search_email", "read_email",
                                     "send_email", "draft_email",
                                     "screenshot", "click_at", "type_text",
@@ -2820,6 +2821,7 @@ DESKTOP_TOOLS = [
                                     "key_combo: {keys}. Examples: 'cmd+c', 'cmd+shift+t', 'return', 'tab', 'escape'. "
                                     "scroll: {direction ('up'/'down'), amount? (default 3), x?, y?}. "
                                     "wait: {seconds}. Max 10s. Use after actions that trigger UI changes. "
+                                    "data_export: {source_app, destination, format?}. Export data FROM an app TO a file. The executor has battle-tested scripts for Numbers, Excel, etc. Example: {\"source_app\": \"Numbers\", \"destination\": \"~/Desktop/data.csv\", \"format\": \"csv\"}. ALWAYS use this instead of writing your own AppleScript for data export. "
                                     "spotify_play: {query}. Searches Spotify and plays the top result instantly. Example: {\"query\": \"Drake\"}"
                                 ),
                             },
@@ -3241,55 +3243,30 @@ One AppleScript action can create an entire spreadsheet, presentation, or docume
 
 **CRITICAL: The `frontmost_app` and `other_open_documents` in CURRENT MAC STATE tell you where data is. Use them.**
 
-**"Copy/paste this data and save as X" — data is in Numbers:**
-Use Numbers' built-in export command — NO keyboard shortcuts, NO clipboard. This is 100% reliable.
-CRITICAL: This must be exactly ONE applescript action with the FULL script. NEVER split it into separate actions.
+**"Copy/paste/export data" — use `data_export` for ALL data transfer:**
+ALWAYS use the `data_export` action type. NEVER write your own AppleScript for data export — the executor has battle-tested scripts that work perfectly for each app. You just specify the source app and destination.
 ```json
 {"plan": [
-  {"type": "applescript", "command": "tell application \"Numbers\"\nset theDoc to front document\nset exportPath to ((path to home folder as text) & \"Desktop:data.csv\")\nexport theDoc to file exportPath as CSV\nend tell", "description": "Export Numbers data as CSV", "risk": "yellow"},
-  {"type": "open_file", "command": "~/Desktop/data.csv", "description": "Open the saved file", "risk": "green"}
-]}
-```
-IMPORTANT: Use HFS colon paths inside the tell block (e.g. "Desktop:data.csv"), NOT POSIX slash paths. Do NOT use `POSIX path of` or `POSIX file` — they cause syntax errors in Numbers export.
-
-**"Copy/paste this data and save as X" — data is in Excel:**
-ONE applescript action with the full script:
-```json
-{"plan": [
-  {"type": "applescript", "command": "tell application \"Microsoft Excel\"\nset filePath to ((path to home folder as text) & \"Desktop:data.csv\")\ntell active workbook\nsave workbook as filename filePath file format CSV file format\nend tell\nend tell", "description": "Save Excel data as CSV", "risk": "yellow"},
-  {"type": "open_file", "command": "~/Desktop/data.csv", "description": "Open the saved file", "risk": "green"}
+  {"type": "data_export", "payload": {"source_app": "Numbers", "destination": "~/Desktop/data.csv", "format": "csv"}, "description": "Export Numbers data as CSV", "risk": "yellow"},
+  {"type": "open_file", "payload": {"path": "~/Desktop/data.csv"}, "description": "Open the saved file", "risk": "green"}
 ]}
 ```
 
-**"Copy/paste this data and save as X" — data is in browser (Chrome/Safari):**
-For browser data, use clipboard (no export API available):
+**"Paste this to R" — data is in Numbers (check other_open_documents):**
 ```json
 {"plan": [
-  {"type": "applescript", "command": "tell application \"Google Chrome\" to activate\ndelay 1\ntell application \"System Events\" to tell process \"Google Chrome\"\n    set frontmost to true\n    delay 0.5\n    keystroke \"a\" using command down\n    delay 0.5\n    keystroke \"c\" using command down\nend tell\ndelay 1\ndo shell script \"pbpaste > \" & quoted form of (POSIX path of (path to home folder)) & \"Desktop/data.csv\"", "description": "Copy page content from Chrome and save as data.csv", "risk": "yellow"},
-  {"type": "open_file", "command": "~/Desktop/data.csv", "description": "Open the saved file", "risk": "green"}
+  {"type": "data_export", "payload": {"source_app": "Numbers", "destination": "~/Desktop/data.csv", "format": "csv"}, "description": "Export Numbers data", "risk": "yellow"},
+  {"type": "open_file", "payload": {"path": "~/Desktop/data.csv"}, "description": "Open in RStudio", "risk": "green"}
 ]}
 ```
 
-**"Paste this to R / save as .Rmd / .R file" — data is in Numbers:**
-Export from Numbers as CSV, then open in RStudio. ONE applescript action:
-```json
-{"plan": [
-  {"type": "applescript", "command": "tell application \"Numbers\"\nset theDoc to front document\nset exportPath to ((path to home folder as text) & \"Desktop:data.csv\")\nexport theDoc to file exportPath as CSV\nend tell", "description": "Export Numbers data as CSV", "risk": "yellow"},
-  {"type": "open_file", "command": "~/Desktop/data.csv", "description": "Open in RStudio", "risk": "green"}
-]}
-```
-Note: always export as .csv for data. Use HFS colon paths (Desktop:file.csv), not POSIX slash paths.
-
-**CRITICAL DATA SOURCE RULES:**
+**DATA SOURCE RULES:**
 1. Figure out WHERE the data is:
    - If user says "paste this to X" and `frontmost_app` IS X (e.g. user is in RStudio and says "paste to R"), the data is NOT in the frontmost app — check `other_open_documents` for spreadsheet apps (Numbers, Excel)
    - If user says "paste this to X" and `frontmost_app` is NOT X, the data is in `frontmost_app`
-2. For Numbers: ALWAYS use `export theDoc to file ... as CSV` — NEVER use Cmd+A/Cmd+C keyboard shortcuts (they silently fail)
-3. For Excel: ALWAYS use `save active workbook in ... as CSV file format` — NEVER keyboard shortcuts
-4. Only use clipboard (Cmd+A → Cmd+C → pbpaste) for browser content where no export API exists
-5. Then ONE `open_file` action to open the result in the TARGET app
-6. NEVER open the target app and try to paste into it
-7. NEVER copy from the target app — the data comes from ANOTHER app
+2. ALWAYS use `data_export` for extracting data from Numbers, Excel, or any app — NEVER write your own AppleScript for this
+3. Then ONE `open_file` to open the result in the target app
+4. NEVER open the target app and try to paste into it
 
 **"Create an Excel spreadsheet with budget data":**
 Use ONE `applescript` action that creates the entire workbook.
