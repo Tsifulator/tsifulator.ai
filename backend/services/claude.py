@@ -3050,41 +3050,40 @@ Use this when the task involves navigating a GUI (browser, desktop app, etc.).
 
 **CRITICAL: Read the user's request carefully and pick the RIGHT action.**
 
-Pay close attention to WHICH app/platform the user wants. Examples:
-- "play Drake on Spotify" → `spotify_play` with `{"query": "Drake"}`
-- "play Drake on YouTube" → `open_url` with `{"url": "https://www.youtube.com/results?search_query=Drake"}`
-- "play Drake" (no platform) → `spotify_play` (default to Spotify for music)
-- "watch X on YouTube" → `open_url` with YouTube search URL
-- "search for X" → `search_web` with the query
-- "open Gmail" → `open_url` with `{"url": "https://mail.google.com"}`
+Pay close attention to WHICH app/platform the user wants:
+- "play Drake on Spotify" / "play Drake" (no platform) → `spotify_play` with `{"query": "Drake"}`
+- "play Drake on YouTube" → open YouTube search + click first video (see example below)
+- "search for X" → `search_web`
+- "open Gmail" → `open_url` with Gmail URL
 
-**Routing priority — pick the fastest correct method:**
-1. Dedicated actions (`spotify_play`, `check_inbox`, `open_url`, etc.) — instant, one action
-2. AppleScript / shell command — fast, single action
-3. Vision loop (screenshot → click_at) — LAST RESORT, only when nothing else works
+**Do NOT default to Spotify for everything.** If the user says YouTube, use YouTube. Use `spotify_play` ONLY for Spotify or when no platform is specified for music.
 
-**Do NOT default to Spotify for everything.** If the user says YouTube, open YouTube. If they say a website, open the website. Use `spotify_play` ONLY when the user wants Spotify specifically or says "play [music]" with no platform specified.
+**CRITICAL: "play" means PLAY, not just open a search page.**
+If the user says "play X on YouTube", you must open the search AND click a video. Just opening search results is NOT playing. Use the vision loop to click through.
+
+**Routing priority:**
+1. Dedicated actions (`spotify_play`, `check_inbox`, etc.) — instant, one action
+2. `open_url` + vision loop — for web tasks that need clicking (YouTube, booking, etc.)
+3. AppleScript / shell — for Mac app control
+4. Pure vision loop (screenshot → click_at) — for anything else
 
 **Rules:**
-- Use `open_url` for ANY web destination (YouTube, Google, Amazon, etc.)
-- Use `spotify_play` ONLY for Spotify playback
-- Use `search_web` when you need to find something and don't know the exact URL
+- NEVER just open an app/page and stop if the user asked you to DO something
 - Gmail → use `check_inbox`, `search_email`, `send_email` etc.
-- NEVER just open an app and stop if the user asked you to DO something in it
+- Use `search_web` when you don't know the exact URL
 
-**Vision loop rules (when you must use screenshot → click_at):**
-1. End action list with `screenshot` if you need to continue
-2. Use `wait` (3-4s) after `open_app`, `wait` (1s) after clicks — keep it fast
+**Vision loop rules:**
+1. End action list with `screenshot` if you need to see what happened and continue
+2. Use `wait` (3-4s) after navigation, `wait` (1s) after clicks — keep it fast
 3. CLICK ACCURACY: identify the EXACT pixel center of the target
 4. Screenshots match screen points — coordinates map directly (no scaling)
 5. To STOP the loop, return a plan WITHOUT a screenshot
 6. Screen actions are YELLOW risk — they auto-execute
-7. Do NOT click playlists/recommendations — always SEARCH for specific content
-8. Do NOT declare success without VERIFYING the result
+7. Do NOT declare success without VERIFYING the result
 
-**Example: "play Drake on YouTube"**
-One action: `open_url` with `{"url": "https://www.youtube.com/results?search_query=Drake"}`
-Done. No vision loop needed.
+**Example: "play relaxing music on YouTube"**
+Round 1: `open_url` YouTube search → `wait` 4s → `screenshot`
+Round 2: see search results → `click_at` first video thumbnail → done (no screenshot = stop)
 
 **Example: "Book a table on OpenTable for Friday 7pm"**
 Round 1: `open_url` OpenTable → `wait` 4s → `screenshot`

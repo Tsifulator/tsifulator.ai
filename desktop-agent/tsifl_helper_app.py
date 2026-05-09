@@ -2264,22 +2264,37 @@ def _panel_submit(text: str):
         except Exception:
             pass
 
-    # ── Fast background mode: hide panel immediately, work in background ──
-    # Panel disappears the moment you hit Enter. Results come as notifications.
-    # User can always ⌘⌥T to reopen if they want the panel back.
-    if _panel_ref is not None:
+    # Lock + clear the input field. Placeholder shows what was just sent.
+    if _panel_input is not None:
         try:
-            _panel_ref.orderOut_(None)
+            _panel_input.setStringValue_("")
+            _panel_input.setEditable_(False)
+            attach_note = f" (+{len(images_to_send)} file)" if images_to_send else ""
+            _panel_input.setPlaceholderString_(
+                f"→ {text[:80]}{attach_note}"
+                + ("…" if len(text) > 80 else "")
+            )
         except Exception:
             pass
-    try:
-        rumps.notification(
-            title="tsifl",
-            subtitle="On it…",
-            message=text[:100],
-        )
-    except Exception:
-        pass
+
+    # Show thinking animation while backend processes
+    _panel_show_response(_THINKING_LINES[0])
+    line_idx = [1]
+    def _rotate(timer):
+        if not _panel_busy or _panel_session_id != my_session:
+            timer.stop()
+            return
+        if _panel_response is not None and not _panel_response.isHidden():
+            thinking_text = _THINKING_LINES[line_idx[0] % len(_THINKING_LINES)]
+            tv = _response_text_view
+            if tv is not None:
+                tv.setString_(thinking_text)
+            else:
+                _panel_response.setStringValue_(thinking_text)
+        line_idx[0] += 1
+    t = rumps.Timer(_rotate, 1.5)
+    t.start()
+    _panel_thinking_timer = t
 
     def _do_request():
         """Runs on a daemon thread — must NOT touch UI directly. UI updates
@@ -2319,9 +2334,19 @@ def _panel_submit(text: str):
                 if not has_red:
                     # ── AUTO-EXECUTE: green/yellow actions run immediately ─
                     sys.stderr.write(f"[tsifl-helper] no-red plan ({len(plan)} steps) → auto-executing\n")
+                    # Show brief feedback then hide panel — work runs in background
                     if _panel_session_id == my_session and _panel_is_visible():
-                        _panel_show_response("Running…")
+                        _panel_show_response(reply_text if reply_text and reply_text != "(no reply)" else "Running…")
                     _panel_busy = True
+                    # Auto-dismiss panel after 1.5s — actions run in background
+                    def _auto_dismiss_panel():
+                        time.sleep(1.5)
+                        try:
+                            from PyObjCTools.AppHelper import callAfter as _ca2
+                            _ca2(lambda: _panel_ref.orderOut_(None) if _panel_ref else None)
+                        except Exception:
+                            pass
+                    threading.Thread(target=_auto_dismiss_panel, daemon=True).start()
 
                     def _auto_run():
                         try:
@@ -2551,6 +2576,14 @@ def _show_shortcut_panel():
 
     # Always destroy any lingering state before rebuilding (defensive)
     _panel_dismiss()
+
+    # Kill any vision loop that's still running in the background.
+    # Without this, a loop started from a prior session keeps clicking
+    # even after the user opens a new panel.
+    global _vision_loop_active
+    if _vision_loop_active:
+        _vision_loop_active = False
+        sys.stderr.write("[tsifl-helper] VISION LOOP KILLED by new panel open\n")
 
     # Bump session ID — any in-flight request from a prior show will see
     # the change and route its result to a notification instead of the
