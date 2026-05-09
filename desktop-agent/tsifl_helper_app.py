@@ -503,7 +503,7 @@ def _extract_plan_from_reply(data: dict) -> list | None:
     DESKTOP_TYPES = {
         "search_files", "open_file", "open_app", "open_url",
         "applescript", "shell", "clipboard_copy", "clipboard_read",
-        "notify",
+        "write_file", "notify",
         # Gmail actions
         "check_inbox", "search_email", "read_email",
         "send_email", "draft_email",
@@ -518,7 +518,7 @@ def _extract_plan_from_reply(data: dict) -> list | None:
     RISK_MAP = {
         "search_files": "green", "open_file": "green", "open_app": "green",
         "open_url": "green", "shell": "green", "clipboard_read": "green",
-        "clipboard_copy": "green", "notify": "green",
+        "clipboard_copy": "green", "write_file": "yellow", "notify": "green",
         "applescript": "yellow",  # AppleScript can do anything
         # Gmail: reads are green, draft is yellow, send is red
         "check_inbox": "green", "search_email": "green", "read_email": "green",

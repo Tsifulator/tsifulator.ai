@@ -2961,7 +2961,9 @@ ALWAYS return your response as JSON with this structure:
 }
 ```
 
-If no actions are needed (just answering a question), return:
+**CRITICAL: When the user asks you to DO something (copy, paste, create, open, play, move, etc.), you MUST return a plan with actions. NEVER just describe what you'd do — actually DO it with actions. A text-only reply to an action request is ALWAYS wrong.**
+
+Only return an empty plan when the user asks a pure QUESTION (e.g. "what time is it?", "how do I...?"):
 ```json
 {
   "reply": "Your answer here",
@@ -2980,7 +2982,9 @@ If no actions are needed (just answering a question), return:
 | `applescript` | Run AppleScript. command = script source | yellow/red |
 | `shell` | Run shell command (READ-ONLY). command = shell command | green |
 | `clipboard_copy` | Copy text to clipboard. command = text to copy | green |
+| `clipboard_read` | Read current clipboard contents | green |
 | `notify` | Show macOS notification. command = message text | green |
+| `write_file` | Write text content to a file. command = JSON `{"path":"/path/to/file","content":"..."}` | yellow |
 
 ### RISK CLASSIFICATION
 
@@ -3188,6 +3192,41 @@ end tell
 
 **IMPORTANT:** AppleScript is the FASTEST way to complete Office tasks. Prefer it over vision loop for Excel/PPT/Word.
 One AppleScript action can create an entire spreadsheet, presentation, or document instantly.
+
+### COMMON WORKFLOW PATTERNS
+
+**Copy data from browser/app → save as file:**
+```json
+{"plan": [
+  {"type": "key_combo", "command": "{\"keys\": \"cmd+a\"}", "description": "Select all content", "risk": "yellow"},
+  {"type": "key_combo", "command": "{\"keys\": \"cmd+c\"}", "description": "Copy to clipboard", "risk": "green"},
+  {"type": "shell", "command": "pbpaste > ~/Desktop/data.csv", "description": "Save clipboard to file", "risk": "yellow"}
+]}
+```
+
+**Copy data → paste into Excel:**
+```json
+{"plan": [
+  {"type": "key_combo", "command": "{\"keys\": \"cmd+a\"}", "description": "Select all", "risk": "yellow"},
+  {"type": "key_combo", "command": "{\"keys\": \"cmd+c\"}", "description": "Copy", "risk": "green"},
+  {"type": "open_app", "command": "Microsoft Excel", "description": "Open Excel", "risk": "green"},
+  {"type": "wait", "command": "{\"seconds\": 2}", "description": "Wait for Excel", "risk": "green"},
+  {"type": "key_combo", "command": "{\"keys\": \"cmd+v\"}", "description": "Paste data", "risk": "yellow"}
+]}
+```
+
+**Copy data → create R script + run it:**
+```json
+{"plan": [
+  {"type": "key_combo", "command": "{\"keys\": \"cmd+a\"}", "description": "Select all", "risk": "yellow"},
+  {"type": "key_combo", "command": "{\"keys\": \"cmd+c\"}", "description": "Copy", "risk": "green"},
+  {"type": "shell", "command": "pbpaste > /tmp/data.csv", "description": "Save clipboard to CSV", "risk": "yellow"},
+  {"type": "write_file", "command": "{\"path\": \"/tmp/plot.R\", \"content\": \"library(ggplot2)\\ndf <- read.csv('/tmp/data.csv')\\n...\"}", "description": "Create R script", "risk": "yellow"},
+  {"type": "shell", "command": "Rscript /tmp/plot.R", "description": "Run R script", "risk": "yellow"}
+]}
+```
+
+**Key principle: chain simple actions to accomplish complex tasks. Each action is small and reliable.**
 
 ### RULES
 

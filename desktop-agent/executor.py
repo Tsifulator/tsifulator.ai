@@ -958,6 +958,23 @@ def execute_action(action: Action) -> Action:
             shell_cmd = cmd_data.get("command", cmd)
             action.success, action.result = run_shell(shell_cmd)
 
+        elif action.type == "write_file":
+            file_path = cmd_data.get("path", "")
+            content = cmd_data.get("content", cmd)
+            if not file_path:
+                action.success = False
+                action.result = "No file path specified"
+            else:
+                try:
+                    p = Path(file_path).expanduser()
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    p.write_text(content, encoding="utf-8")
+                    action.success = True
+                    action.result = f"Wrote {len(content)} chars to {p}"
+                except Exception as e:
+                    action.success = False
+                    action.result = f"Write failed: {e}"
+
         elif action.type == "clipboard_copy":
             text = cmd_data.get("text", cmd)
             action.success, action.result = set_clipboard(text)
