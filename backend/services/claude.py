@@ -3650,10 +3650,19 @@ TRANSACTIONS PROJECT SPECIFICS:
     )
     tool_choice = {"type": "any"} if force_tools else {"type": "auto"}
 
-    # Desktop agent: ALWAYS force tool use — Claude must return actions, not just text
+    # Desktop agent: ALWAYS force tool use — Claude must return actions, not just text.
+    # Also override skip_tools — desktop agent needs tools even for greetings
+    # (otherwise tool_choice=any with empty tools causes a 400 error).
     if is_desktop:
-        tool_choice = {"type": "any"}
-        print(f"[routing] DESKTOP AGENT → DESKTOP_TOOLS, tool_choice=any (forced). msg={message[:60]!r}", flush=True)
+        if is_conversational:
+            # Greetings/questions: allow text-only replies (tool_choice=auto)
+            tool_choice = {"type": "auto"}
+            skip_tools = False  # still provide tools, just don't force them
+            print(f"[routing] DESKTOP AGENT (conversational) → tool_choice=auto. msg={message[:60]!r}", flush=True)
+        else:
+            tool_choice = {"type": "any"}
+            skip_tools = False
+            print(f"[routing] DESKTOP AGENT → DESKTOP_TOOLS, tool_choice=any (forced). msg={message[:60]!r}", flush=True)
 
     try:
         # Use streaming to collect the full response (SDK requires streaming for large max_tokens)
