@@ -2264,37 +2264,26 @@ def _panel_submit(text: str):
         except Exception:
             pass
 
-    # Lock + clear the input field. Placeholder shows what was just sent.
-    if _panel_input is not None:
-        try:
-            _panel_input.setStringValue_("")
-            _panel_input.setEditable_(False)
-            attach_note = f" (+{len(images_to_send)} file)" if images_to_send else ""
-            _panel_input.setPlaceholderString_(
-                f"→ {text[:80]}{attach_note}"
-                + ("…" if len(text) > 80 else "")
-            )
-        except Exception:
-            pass
-
-    # Show thinking animation while backend processes
-    _panel_show_response(_THINKING_LINES[0])
-    line_idx = [1]
-    def _rotate(timer):
-        if not _panel_busy or _panel_session_id != my_session:
-            timer.stop()
-            return
-        if _panel_response is not None and not _panel_response.isHidden():
-            thinking_text = _THINKING_LINES[line_idx[0] % len(_THINKING_LINES)]
-            tv = _response_text_view
-            if tv is not None:
-                tv.setString_(thinking_text)
-            else:
-                _panel_response.setStringValue_(thinking_text)
-        line_idx[0] += 1
-    t = rumps.Timer(_rotate, 1.5)
-    t.start()
-    _panel_thinking_timer = t
+    # Background mode: hide panel immediately, work runs in background.
+    # Results come back as macOS notifications.
+    # Must use callAfter for reliable main-thread UI updates.
+    try:
+        from PyObjCTools.AppHelper import callAfter as _ca_hide
+        def _do_hide():
+            if _panel_ref is not None:
+                _panel_ref.orderOut_(None)
+            try:
+                rumps.notification(title="tsifl", subtitle="On it…", message=text[:100])
+            except Exception:
+                pass
+        _ca_hide(_do_hide)
+    except Exception:
+        # Fallback: try direct hide
+        if _panel_ref is not None:
+            try:
+                _panel_ref.orderOut_(None)
+            except Exception:
+                pass
 
     def _do_request():
         """Runs on a daemon thread — must NOT touch UI directly. UI updates

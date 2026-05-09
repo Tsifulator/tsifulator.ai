@@ -3093,13 +3093,64 @@ Round 3: see results → `click_at` restaurant → `wait` → `screenshot`
 
 ### APPLESCRIPT CAPABILITIES
 
-You can control any Mac app via AppleScript. Common patterns:
+You can control ANY Mac app via AppleScript. Use action type "applescript" with the script as the command.
+This is powerful — you can create documents, build presentations, write spreadsheets, all without vision loop.
 
-**Mail:**
+**Microsoft Excel:**
 ```applescript
-tell application "Mail"
-    set newMsg to make new outgoing message with properties {subject:"...", content:"..."}
-    tell newMsg to make new to recipient with properties {address:"..."}
+tell application "Microsoft Excel"
+    activate
+    -- Create new workbook
+    set wb to make new workbook
+    -- Write to cells
+    set value of cell "A1" of active sheet to "Revenue"
+    set value of cell "B1" of active sheet to 50000
+    -- Set formulas
+    set formula of cell "C1" of active sheet to "=B1*1.1"
+    -- Create new sheet
+    make new worksheet at end of active workbook with properties {name:"Summary"}
+    -- Format
+    set number format of range "B1:B10" of active sheet to "$#,##0.00"
+    set font size of font object of range "A1" of active sheet to 14
+    set bold of font object of range "A1" of active sheet to true
+    -- Save
+    save active workbook in "/Users/name/Desktop/report.xlsx"
+end tell
+```
+
+**Microsoft PowerPoint:**
+```applescript
+tell application "Microsoft PowerPoint"
+    activate
+    -- Create new presentation
+    set newPres to make new presentation
+    -- Add slides
+    set slide1 to make new slide at end of newPres with properties {layout:slide layout title}
+    -- Set title text
+    set content of text range of text frame of title placeholder of slide1 to "Quarterly Report"
+    -- Set body/subtitle text
+    set content of text range of text frame of body placeholder of slide1 to "Q1 2026 Summary"
+    -- Add a blank slide with custom text box
+    set slide2 to make new slide at end of newPres with properties {layout:slide layout blank}
+    -- Save
+    save newPres in "/Users/name/Desktop/deck.pptx"
+end tell
+```
+
+**Microsoft Word:**
+```applescript
+tell application "Microsoft Word"
+    activate
+    -- Create new document
+    set newDoc to make new document
+    -- Type content
+    insert text "Quarterly Report" at end of text object of newDoc
+    insert text return at end of text object of newDoc
+    insert text "Summary of findings..." at end of text object of newDoc
+    -- Format heading
+    set style of paragraph 1 of text object of newDoc to style "Heading 1"
+    -- Save
+    save as newDoc file name "/Users/name/Desktop/report.docx"
 end tell
 ```
 
@@ -3113,8 +3164,8 @@ end tell
 
 **Safari/Chrome:**
 ```applescript
-tell application "Safari"
-    set URL of front document to "https://..."
+tell application "Google Chrome"
+    set URL of active tab of front window to "https://..."
 end tell
 ```
 
@@ -3122,7 +3173,7 @@ end tell
 ```applescript
 tell application "Calendar"
     tell calendar "Work"
-        make new event with properties {summary:"...", start date:...}
+        make new event with properties {summary:"Meeting", start date:(current date), end date:((current date) + 1 * hours)}
     end tell
 end tell
 ```
@@ -3134,6 +3185,9 @@ tell application "System Events"
     set volume output volume 50
 end tell
 ```
+
+**IMPORTANT:** AppleScript is the FASTEST way to complete Office tasks. Prefer it over vision loop for Excel/PPT/Word.
+One AppleScript action can create an entire spreadsheet, presentation, or document instantly.
 
 ### RULES
 
