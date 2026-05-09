@@ -483,6 +483,9 @@ def _describe_action(atype: str, payload: dict) -> str:
         return f"Scroll {payload.get('direction', 'down')}"
     elif atype == "wait":
         return f"Wait {payload.get('seconds', 1)}s"
+    elif atype == "spotify_play":
+        q = payload.get("query", "")
+        return f"Play '{q}' on Spotify"
     return atype
 
 
@@ -507,6 +510,8 @@ def _extract_plan_from_reply(data: dict) -> list | None:
         # Screen automation (vision loop)
         "screenshot", "click_at", "type_text", "key_combo",
         "scroll", "wait",
+        # App-specific fast actions
+        "spotify_play",
     }
 
     # Risk mapping for known action types
@@ -521,6 +526,8 @@ def _extract_plan_from_reply(data: dict) -> list | None:
         # Screen: screenshot/scroll/wait are green, interaction is yellow
         "screenshot": "green", "scroll": "green", "wait": "green",
         "click_at": "yellow", "type_text": "yellow", "key_combo": "yellow",
+        # App-specific
+        "spotify_play": "green",
     }
 
     actions = data.get("actions") or []
@@ -1876,7 +1883,7 @@ def _panel_is_visible() -> bool:
         return False
 
 
-_MAX_VISION_ROUNDS = 8   # safety cap — don't loop forever
+_MAX_VISION_ROUNDS = 12  # safety cap — don't loop forever
 _vision_loop_active = False  # True while a vision loop is running
                               # Set to False by Esc or error → kills the loop
 
@@ -1887,13 +1894,13 @@ def _vision_loop_continue(original_task: str, screenshot_b64: str,
     """Send a screenshot back to Claude and execute the next round of actions.
 
     This is the core of screen automation: screenshot → Claude → actions → repeat.
-    Runs on a background thread. Called from _auto_run when a screenshot is captured.
+    Runs on a background thread (panel stays hidden the whole time).
 
     Safety:
     - Checks `_vision_loop_active` before each round — Esc kills it
     - Stops on any action failure (don't blindly continue after errors)
-    - Hard cap at _MAX_VISION_ROUNDS (8)
-    - Panel hides during vision so it doesn't cover the screen
+    - Hard cap at _MAX_VISION_ROUNDS
+    - Panel hidden for the duration — uses macOS notifications for status
     """
     global _vision_loop_active
 
@@ -1918,7 +1925,14 @@ def _vision_loop_continue(original_task: str, screenshot_b64: str,
             )
             return
 
-    # ── Hide panel so it doesn't appear in the screenshot ────────────
+    # ── Hide panel + remember which app was active ─────────────────
+    # We must re-activate the target app before clicking, because
+    # hiding the panel shifts macOS focus to the Python process.
+    frontmost_before = _detect_frontmost_app()
+    # Skip our own process names
+    if frontmost_before.lower() in ("python", "tsifl", "tsifl helper"):
+        frontmost_before = ""
+
     def _hide_panel_for_vision():
         if _panel_ref is not None:
             try:
@@ -1930,7 +1944,7 @@ def _vision_loop_continue(original_task: str, screenshot_b64: str,
         callAfter(_hide_panel_for_vision)
     except Exception:
         pass
-    time.sleep(0.3)  # let panel animate away before screenshot
+    time.sleep(0.15)  # quick hide — panel is already hidden after round 1
 
     # ── Build follow-up message ──────────────────────────────────────
     action_summary = []
@@ -1943,8 +1957,10 @@ def _vision_loop_continue(original_task: str, screenshot_b64: str,
     follow_up = (
         f"[VISION ROUND {round_num}] I executed the actions. Results:\n"
         f"{actions_text}\n\n"
-        f"Here is a screenshot of the current screen. "
+        f"Here is a screenshot of the current screen (coordinates map 1:1 to screen points for click_at). "
         f"Original task: \"{original_task}\"\n"
+        f"Look carefully at the screenshot. Identify the exact UI element you need to interact with. "
+        f"For buttons/icons, click the CENTER of the element — not the text label next to it. "
         f"Continue with the next steps. When done, return an empty plan."
     )
 
@@ -1954,17 +1970,7 @@ def _vision_loop_continue(original_task: str, screenshot_b64: str,
         "file_name": f"screen_round_{round_num}.jpg",
     }]
 
-    # Show a macOS notification instead of panel (panel is hidden)
-    try:
-        rumps.notification(
-            title="tsifl 👁️",
-            subtitle=f"Vision round {round_num}",
-            message=f"Analyzing screen…",
-        )
-    except Exception:
-        pass
-
-    sys.stderr.write(f"[tsifl-helper] vision loop round {round_num}: sending screenshot to Claude\n")
+    sys.stderr.write(f"[tsifl-helper] vision round {round_num}: sending screenshot to Claude\n")
 
     # ── Kill check before network call ───────────────────────────────
     if not _vision_loop_active:
@@ -1976,6 +1982,14 @@ def _vision_loop_continue(original_task: str, screenshot_b64: str,
     plan = result.get("_plan")
     reply_text = (result.get("reply") or "").strip()
 
+    # Log what Claude returned for diagnostics
+    _log_shortcut_trace(
+        f"vision round {round_num} response: reply={reply_text[:100]!r} "
+        f"plan={plan is not None} plan_len={len(plan) if plan else 0} "
+        f"actions_raw={len(result.get('actions', []))} "
+        f"model={result.get('model_used', '?')}"
+    )
+
     # ── Kill check after network call ────────────────────────────────
     if not _vision_loop_active:
         _vision_loop_done("⏹️ Vision loop stopped.", session_id)
@@ -1983,6 +1997,7 @@ def _vision_loop_continue(original_task: str, screenshot_b64: str,
 
     if not plan or not isinstance(plan, list) or len(plan) == 0:
         _vision_loop_active = False
+        _log_shortcut_trace(f"vision loop ended: no plan returned. reply={reply_text[:200]!r}")
         _vision_loop_done(reply_text or last_reply or "✅ Done.", session_id)
         return
 
@@ -2000,6 +2015,29 @@ def _vision_loop_continue(original_task: str, screenshot_b64: str,
     # Log what we're about to do
     step_names = [s.get("type", "?") for s in plan]
     sys.stderr.write(f"[tsifl-helper] vision round {round_num} executing: {step_names}\n")
+
+    # ── Re-activate the target app before clicking ───────────────
+    # Hiding the panel shifts macOS focus to Python. We need the
+    # target app frontmost so CGEvent clicks land on its windows.
+    has_clicks = any(a.type in ("click_at", "type_text", "key_combo") for a in actions)
+    if has_clicks:
+        target_app = frontmost_before
+        # Also check if any action opens an app — use that instead
+        for a in actions:
+            if a.type == "open_app":
+                try:
+                    cmd_data = json.loads(a.command) if a.command.startswith("{") else {}
+                    target_app = cmd_data.get("app", cmd_data.get("app_name", cmd_data.get("name", "")))
+                except Exception:
+                    pass
+        if target_app and target_app.lower() not in ("python", "tsifl", "tsifl helper"):
+            try:
+                from executor import run_applescript
+                run_applescript(f'tell application "{target_app}" to activate', timeout=3)
+                time.sleep(0.2)
+                sys.stderr.write(f"[tsifl-helper] activated {target_app!r} before clicking\n")
+            except Exception:
+                pass
 
     results = execute_plan(actions)
 
@@ -2036,37 +2074,38 @@ def _vision_loop_continue(original_task: str, screenshot_b64: str,
 
 
 def _vision_loop_done(summary: str, session_id: int):
-    """Finish the vision loop — show panel again with results."""
+    """Finish the vision loop — notify user and make panel available.
+
+    The panel does NOT force itself back on screen (true background mode).
+    Instead a macOS notification tells the user it's done — they can
+    summon the panel with ⌘⌥T if they want details.
+    """
     global _vision_loop_active
     _vision_loop_active = False
 
-    def _show():
+    def _finish():
         global _panel_busy, _last_response_text
         _panel_busy = False
         _last_response_text = summary
-        # Re-show the panel with the result
-        if _panel_ref is not None:
-            try:
-                _panel_ref.makeKeyAndOrderFront_(None)
-            except Exception:
-                pass
+        # Update panel content (but don't force it visible)
         if _panel_is_visible() and _panel_session_id == session_id:
             _panel_show_response(summary)
             if _panel_input is not None:
                 try:
                     _panel_input.setEditable_(True)
                     _panel_input.setPlaceholderString_("Ask tsifl anything…")
-                    _panel_input.becomeFirstResponder()
                 except Exception:
                     pass
-        else:
-            try:
-                rumps.notification(title="tsifl", subtitle="Done", message=summary[:200])
-            except Exception:
-                pass
+        # Always notify — user is doing other things
+        try:
+            # Truncate for notification
+            short = summary.split("\n")[0][:120] if summary else "Task complete"
+            rumps.notification(title="tsifl ✅", subtitle="Done", message=short)
+        except Exception:
+            pass
     try:
         from PyObjCTools.AppHelper import callAfter
-        callAfter(_show)
+        callAfter(_finish)
     except Exception:
         pass
 
@@ -2225,38 +2264,22 @@ def _panel_submit(text: str):
         except Exception:
             pass
 
-    # Lock + clear the input field. Placeholder shows what was just sent
-    # (truncated) so user sees their query in flight.
-    if _panel_input is not None:
+    # ── Fast background mode: hide panel immediately, work in background ──
+    # Panel disappears the moment you hit Enter. Results come as notifications.
+    # User can always ⌘⌥T to reopen if they want the panel back.
+    if _panel_ref is not None:
         try:
-            _panel_input.setStringValue_("")
-            _panel_input.setEditable_(False)
-            attach_note = f" (+{len(images_to_send)} file)" if images_to_send else ""
-            _panel_input.setPlaceholderString_(
-                f"→ {text[:80]}{attach_note}"
-                + ("…" if len(text) > 80 else "")
-            )
+            _panel_ref.orderOut_(None)
         except Exception:
             pass
-
-    # Show first thinking line immediately, rotate every 1.5s
-    _panel_show_response(_THINKING_LINES[0])
-    line_idx = [1]
-    def _rotate(timer):
-        if not _panel_busy or _panel_session_id != my_session:
-            timer.stop()
-            return
-        if _panel_response is not None and not _panel_response.isHidden():
-            thinking_text = _THINKING_LINES[line_idx[0] % len(_THINKING_LINES)]
-            tv = _response_text_view
-            if tv is not None:
-                tv.setString_(thinking_text)
-            else:
-                _panel_response.setStringValue_(thinking_text)
-        line_idx[0] += 1
-    t = rumps.Timer(_rotate, 1.5)
-    t.start()
-    _panel_thinking_timer = t
+    try:
+        rumps.notification(
+            title="tsifl",
+            subtitle="On it…",
+            message=text[:100],
+        )
+    except Exception:
+        pass
 
     def _do_request():
         """Runs on a daemon thread — must NOT touch UI directly. UI updates
@@ -2342,10 +2365,26 @@ def _panel_submit(text: str):
                                 wants_continue = result["_raw_reply"].get("continue", wants_continue)
 
                             if screenshot_b64 and (wants_continue or any(a.type == "screenshot" for a in results)):
-                                # Vision loop: send screenshot back to Claude
+                                # Vision loop: hide panel immediately → runs in background
                                 global _vision_loop_active
                                 _vision_loop_active = True
-                                sys.stderr.write(f"[tsifl-helper] vision loop STARTING for: {text[:60]!r}\n")
+                                sys.stderr.write(f"[tsifl-helper] vision loop STARTING (background) for: {text[:60]!r}\n")
+                                try:
+                                    from PyObjCTools.AppHelper import callAfter as _ca
+                                    def _hide_now():
+                                        if _panel_ref is not None:
+                                            _panel_ref.orderOut_(None)
+                                    _ca(_hide_now)
+                                except Exception:
+                                    pass
+                                try:
+                                    rumps.notification(
+                                        title="tsifl 👁️",
+                                        subtitle="Working in background…",
+                                        message=f"Task: {text[:80]}",
+                                    )
+                                except Exception:
+                                    pass
                                 _vision_loop_continue(
                                     text, screenshot_b64, reply_text,
                                     my_session, results
@@ -2422,24 +2461,27 @@ def _panel_submit(text: str):
                 global _last_response_text
                 _last_response_text = display
 
-                if _panel_session_id == my_session and _panel_is_visible():
-                    sys.stderr.write(f"[tsifl-helper] showing plan confirmation ({len(plan)} steps)\n")
-                    _panel_show_response(display)
-                    # Store plan for execution on confirm
-                    global _pending_plan
-                    _pending_plan = plan
-                    if _panel_input is not None:
-                        try:
-                            _panel_input.setEditable_(True)
-                            _panel_input.setStringValue_("")
-                            _panel_input.setPlaceholderString_("Enter = execute  •  type to ask something else")
-                            _panel_input.becomeFirstResponder()
-                        except Exception:
-                            pass
-                else:
-                    sys.stderr.write(f"[tsifl-helper] panel gone, sending notification instead\n")
+                # RED plan needs confirmation — re-show panel if hidden
+                sys.stderr.write(f"[tsifl-helper] showing plan confirmation ({len(plan)} steps)\n")
+                if _panel_ref is not None and not _panel_is_visible():
                     try:
-                        rumps.notification(title="tsifl", subtitle=text[:60], message=display[:200])
+                        _panel_ref.makeKeyAndOrderFront_(None)
+                    except Exception:
+                        pass
+                    try:
+                        rumps.notification(title="tsifl ⚠️", subtitle="Needs confirmation", message=text[:80])
+                    except Exception:
+                        pass
+                _panel_show_response(display)
+                # Store plan for execution on confirm
+                global _pending_plan
+                _pending_plan = plan
+                if _panel_input is not None:
+                    try:
+                        _panel_input.setEditable_(True)
+                        _panel_input.setStringValue_("")
+                        _panel_input.setPlaceholderString_("Enter = execute  •  type to ask something else")
+                        _panel_input.becomeFirstResponder()
                     except Exception:
                         pass
                 return

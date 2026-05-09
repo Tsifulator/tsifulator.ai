@@ -2773,6 +2773,7 @@ DESKTOP_TOOLS = [
                                     "send_email", "draft_email",
                                     "screenshot", "click_at", "type_text",
                                     "key_combo", "scroll", "wait",
+                                    "spotify_play",
                                 ],
                                 "description": (
                                     "search_files: Search Spotlight. "
@@ -2793,7 +2794,8 @@ DESKTOP_TOOLS = [
                                     "type_text: Type text using the keyboard. "
                                     "key_combo: Press a keyboard shortcut (e.g. cmd+c, return). "
                                     "scroll: Scroll up or down. "
-                                    "wait: Wait for UI to settle."
+                                    "wait: Wait for UI to settle. "
+                                    "spotify_play: {query} — Play on Spotify. ONLY use when user asks for Spotify specifically or says 'play [music]' with no platform."
                                 ),
                             },
                             "payload": {
@@ -2813,11 +2815,12 @@ DESKTOP_TOOLS = [
                                     "send_email: {to, subject, body, reply_to_id?}. reply_to_id = message id to thread the reply. "
                                     "draft_email: {to, subject, body}. "
                                     "screenshot: {region? {x, y, width, height}}. Omit region for full screen. "
-                                    "click_at: {x, y, click_type? ('left'/'right'/'double')}. Screen pixel coordinates. "
+                                    "click_at: {x, y, click_type? ('left'/'right'/'double')}. Coordinates from screenshot (maps 1:1 to screen points). "
                                     "type_text: {text}. Types via keyboard — works in any focused app. "
                                     "key_combo: {keys}. Examples: 'cmd+c', 'cmd+shift+t', 'return', 'tab', 'escape'. "
                                     "scroll: {direction ('up'/'down'), amount? (default 3), x?, y?}. "
-                                    "wait: {seconds}. Max 10s. Use after actions that trigger UI changes."
+                                    "wait: {seconds}. Max 10s. Use after actions that trigger UI changes. "
+                                    "spotify_play: {query}. Searches Spotify and plays the top result instantly. Example: {\"query\": \"Drake\"}"
                                 ),
                             },
                         },
@@ -3039,38 +3042,52 @@ Use this when the task involves navigating a GUI (browser, desktop app, etc.).
 | Type | Payload | Risk |
 |------|---------|------|
 | `screenshot` | `{region?}` — full screen or sub-region | green |
-| `click_at` | `{x, y, click_type?}` — pixel coords from screenshot | yellow |
+| `click_at` | `{x, y, click_type?}` — screen point coords (same as screenshot pixels) | yellow |
 | `type_text` | `{text}` — types in focused field | yellow |
 | `key_combo` | `{keys}` — e.g. "cmd+c", "return", "tab" | yellow |
 | `scroll` | `{direction, amount?, x?, y?}` | green |
 | `wait` | `{seconds}` — let UI settle (max 10s) | green |
 
-**CRITICAL: When to use the vision loop:**
-- If the task ONLY requires opening an app/file/URL → just `open_app`/`open_url` (no vision needed)
-- If the task requires ANY interaction INSIDE an app (clicking, searching, playing, navigating) →
-  you MUST chain: `open_app` → `wait` (2s) → `screenshot` so the vision loop engages
+**CRITICAL: Read the user's request carefully and pick the RIGHT action.**
+
+Pay close attention to WHICH app/platform the user wants. Examples:
+- "play Drake on Spotify" → `spotify_play` with `{"query": "Drake"}`
+- "play Drake on YouTube" → `open_url` with `{"url": "https://www.youtube.com/results?search_query=Drake"}`
+- "play Drake" (no platform) → `spotify_play` (default to Spotify for music)
+- "watch X on YouTube" → `open_url` with YouTube search URL
+- "search for X" → `search_web` with the query
+- "open Gmail" → `open_url` with `{"url": "https://mail.google.com"}`
+
+**Routing priority — pick the fastest correct method:**
+1. Dedicated actions (`spotify_play`, `check_inbox`, `open_url`, etc.) — instant, one action
+2. AppleScript / shell command — fast, single action
+3. Vision loop (screenshot → click_at) — LAST RESORT, only when nothing else works
+
+**Do NOT default to Spotify for everything.** If the user says YouTube, open YouTube. If they say a website, open the website. Use `spotify_play` ONLY when the user wants Spotify specifically or says "play [music]" with no platform specified.
+
+**Rules:**
+- Use `open_url` for ANY web destination (YouTube, Google, Amazon, etc.)
+- Use `spotify_play` ONLY for Spotify playback
+- Use `search_web` when you need to find something and don't know the exact URL
+- Gmail → use `check_inbox`, `search_email`, `send_email` etc.
 - NEVER just open an app and stop if the user asked you to DO something in it
-- Example: "play Drake on Spotify" needs vision. "open Spotify" does not.
 
-**Critical rules for vision mode:**
-1. ALWAYS end your action list with `screenshot` if you need to see what happened and continue
-2. Use `wait` (1-2s) BEFORE screenshot after opening apps or clicking buttons — UI needs time to load
-3. Click coordinates must be precise — aim for the CENTER of buttons/links
-4. For text input: click the field first, wait briefly, then `type_text`
-5. The agent will automatically continue the loop if your actions include a `screenshot`
-6. To STOP the loop, return a plan WITHOUT a screenshot (or an empty plan)
-7. Screen actions are YELLOW risk (they interact with the UI) — they auto-execute
-8. Keep the user informed — your `reply` should say what you're doing each round
+**Vision loop rules (when you must use screenshot → click_at):**
+1. End action list with `screenshot` if you need to continue
+2. Use `wait` (3-4s) after `open_app`, `wait` (1s) after clicks — keep it fast
+3. CLICK ACCURACY: identify the EXACT pixel center of the target
+4. Screenshots match screen points — coordinates map directly (no scaling)
+5. To STOP the loop, return a plan WITHOUT a screenshot
+6. Screen actions are YELLOW risk — they auto-execute
+7. Do NOT click playlists/recommendations — always SEARCH for specific content
+8. Do NOT declare success without VERIFYING the result
 
-**Example: "Play Drake on Spotify"**
-Round 1 (your first response): `open_app` Spotify → `wait` 2s → `screenshot`
-Round 2 (you see Spotify home): `click_at` search icon → `wait` 1s → `screenshot`
-Round 3 (you see search bar): `type_text` "Drake" → `key_combo` "return" → `wait` 2s → `screenshot`
-Round 4 (you see search results): `click_at` top result → `wait` 1s → `screenshot`
-Round 5 (you see Drake's page): `click_at` Play button → done (no screenshot = loop ends)
+**Example: "play Drake on YouTube"**
+One action: `open_url` with `{"url": "https://www.youtube.com/results?search_query=Drake"}`
+Done. No vision loop needed.
 
 **Example: "Book a table on OpenTable for Friday 7pm"**
-Round 1: `open_url` OpenTable → `wait` 2s → `screenshot`
+Round 1: `open_url` OpenTable → `wait` 4s → `screenshot`
 Round 2: see homepage → `click_at` search → `type_text` "Italian" → `key_combo` "return" → `wait` 2s → `screenshot`
 Round 3: see results → `click_at` restaurant → `wait` → `screenshot`
 ...continue until done. Final round has no `screenshot`.

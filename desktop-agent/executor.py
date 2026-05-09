@@ -177,8 +177,27 @@ def open_file(path: str) -> tuple[bool, str]:
 
 
 def open_app(app_name: str) -> tuple[bool, str]:
-    """Launch or activate a macOS application."""
-    return run_applescript(f'tell application "{app_name}" to activate')
+    """Launch or activate a macOS application.
+
+    Uses `open -a` which returns immediately (non-blocking) — avoids
+    the 15s AppleScript timeout on cold launches.  The vision loop's
+    `wait` action gives the app time to fully appear before screenshotting.
+    """
+    try:
+        subprocess.run(["open", "-a", app_name], check=True, timeout=10)
+        # Give the app a moment to register, then try to bring it front
+        time.sleep(0.5)
+        # Quick activate — if the app is already running this is instant;
+        # if it's still loading we don't care if this times out (5s cap)
+        run_applescript(
+            f'tell application "{app_name}" to activate', timeout=5
+        )
+        return True, f"Opened {app_name}"
+    except subprocess.CalledProcessError:
+        return False, f"Could not find app: {app_name}"
+    except Exception as e:
+        # Even if activate timed out, open -a likely succeeded
+        return True, f"Opened {app_name} (still loading)"
 
 
 def open_url(url: str) -> tuple[bool, str]:
@@ -284,16 +303,46 @@ def get_system_context() -> dict:
 # These let Claude see the screen and interact with ANY app — no per-app API
 # needed. The flow: screenshot → Claude analyzes → click/type/scroll → repeat.
 
-def capture_screenshot(region: dict = None) -> tuple[bool, str]:
-    """Capture the screen (or a region) and return base64-encoded JPEG.
+def _get_screen_point_size() -> tuple[int, int]:
+    """Get the main display size in screen POINTS (not retina pixels).
 
-    Screenshots are compressed to JPEG and resized (max 1568px longest
-    edge, per Anthropic's vision docs) to keep them under ~700KB —
-    fast to upload and well within Claude's image size limits.
+    On a retina Mac the physical pixels are 2× the point dimensions.
+    CGEvent clicks use points, so we need this for coordinate mapping.
+    """
+    try:
+        import Quartz
+        main = Quartz.CGMainDisplayID()
+        w = int(Quartz.CGDisplayPixelsWide(main))   # point width
+        h = int(Quartz.CGDisplayPixelsHigh(main))    # point height
+        return w, h
+    except Exception:
+        # Fallback — query via system_profiler
+        try:
+            out = subprocess.run(
+                ["system_profiler", "SPDisplaysDataType"],
+                capture_output=True, text=True, timeout=5,
+            ).stdout
+            import re
+            m = re.search(r"Resolution:\s*(\d+)\s*x\s*(\d+)", out)
+            if m:
+                return int(m.group(1)), int(m.group(2))
+        except Exception:
+            pass
+        return 1470, 956  # sensible MacBook default
+
+
+def capture_screenshot(region: dict = None) -> tuple[bool, str]:
+    """Capture the screen and return base64-encoded JPEG.
+
+    CRITICAL — Retina coordinate mapping:
+      screencapture produces 2× retina pixels (e.g. 2940×1912), but
+      CGEvent clicks use screen POINTS (e.g. 1470×956).  We resize the
+      screenshot to the screen's point dimensions so that when Claude
+      says "click at (x, y)" those coordinates map 1:1 to screen points.
 
     Args:
-        region: optional {x, y, width, height} to capture a sub-region.
-                If None, captures the entire main display.
+        region: optional {x, y, width, height} to capture a sub-region
+                (in screen points).  If None, captures the full display.
 
     Returns:
         (True, base64_jpeg_string) on success.
@@ -311,11 +360,12 @@ def capture_screenshot(region: dict = None) -> tuple[bool, str]:
         cmd.append(raw_path)
         subprocess.run(cmd, timeout=5, check=True)
 
-        # Compress: resize to max 1568px and encode as JPEG
+        # Resize to screen POINT dimensions so coordinates map 1:1 to clicks
         try:
             from PIL import Image as _PILImage
             import io as _io
             img = _PILImage.open(raw_path)
+
             # Convert RGBA→RGB (JPEG can't do alpha)
             if img.mode in ("RGBA", "LA"):
                 bg = _PILImage.new("RGB", img.size, (255, 255, 255))
@@ -323,10 +373,19 @@ def capture_screenshot(region: dict = None) -> tuple[bool, str]:
                 img = bg
             elif img.mode != "RGB":
                 img = img.convert("RGB")
-            # Cap longest edge at 1568px
-            MAX_DIM = 1568
-            if max(img.size) > MAX_DIM:
-                img.thumbnail((MAX_DIM, MAX_DIM), _PILImage.LANCZOS)
+
+            # Resize to screen point dimensions (not arbitrary max)
+            screen_w, screen_h = _get_screen_point_size()
+            raw_w, raw_h = img.size
+            logger.info(
+                f"Screenshot: raw {raw_w}×{raw_h}, "
+                f"screen points {screen_w}×{screen_h}, "
+                f"scale {raw_w / screen_w:.1f}×"
+            )
+
+            if raw_w != screen_w or raw_h != screen_h:
+                img = img.resize((screen_w, screen_h), _PILImage.LANCZOS)
+
             # Encode as JPEG — shrink until under 700KB
             for quality in (80, 65, 50, 40):
                 buf = _io.BytesIO()
@@ -544,6 +603,102 @@ def wait_seconds(seconds: float) -> tuple[bool, str]:
     seconds = min(seconds, 10)  # cap at 10s
     time.sleep(seconds)
     return True, f"Waited {seconds}s"
+
+
+# ── Spotify (instant play via AppleScript — no vision loop needed) ────────
+
+def spotify_play(query: str) -> tuple[bool, str]:
+    """Play on Spotify — pure AppleScript keystrokes, no CGEvent focus issues.
+
+    Flow (single AppleScript block keeps Spotify focused throughout):
+    1. Activate Spotify + set frontmost
+    2. Cmd+K → opens search overlay
+    3. Cmd+A → select existing text, then type query
+    4. Wait for suggestions → Down arrow → Enter to play top result
+    5. Verify playback, fallback to Enter/Space if needed
+
+    Total time: ~8 seconds. No CGEvent = no focus-stealing.
+    """
+    escaped = query.replace("\\", "\\\\").replace('"', '\\"')
+
+    try:
+        # Ensure Spotify is running (non-blocking launch)
+        subprocess.run(["open", "-a", "Spotify"], check=True, timeout=10)
+        time.sleep(1)
+
+        # All-in-one AppleScript — Spotify keeps focus the entire time.
+        # Cmd+K opens search, type query, Down picks first suggestion, Enter plays.
+        ok, result = run_applescript(
+            'tell application "Spotify" to activate\n'
+            'delay 0.8\n'
+            'tell application "System Events" to tell process "Spotify"\n'
+            '    set frontmost to true\n'
+            '    delay 0.3\n'
+            '    keystroke "k" using command down\n'
+            '    delay 0.5\n'
+            '    keystroke "a" using command down\n'
+            '    delay 0.1\n'
+            f'    keystroke "{escaped}"\n'
+            '    delay 2\n'
+            '    key code 125\n'
+            '    delay 0.3\n'
+            '    key code 36\n'
+            'end tell',
+            timeout=15,
+        )
+        time.sleep(2)
+
+        # ── Verify playback ──────────────────────────────────────────
+        def _check_playing() -> tuple[bool, str]:
+            ok_s, info = run_applescript(
+                'tell application "Spotify"\n'
+                '    if player state is playing then\n'
+                '        return "▶️ " & name of current track & " — " & artist of current track\n'
+                '    else\n'
+                '        return "NOT_PLAYING"\n'
+                '    end if\n'
+                'end tell',
+                timeout=5,
+            )
+            return ok_s, info or "NOT_PLAYING"
+
+        ok_state, info = _check_playing()
+
+        # Fallback 1: press Enter again (may have landed on artist page)
+        if "NOT_PLAYING" in info:
+            logger.info("spotify_play: first attempt didn't play — pressing Enter again")
+            run_applescript(
+                'tell application "System Events" to tell process "Spotify"\n'
+                '    set frontmost to true\n'
+                '    delay 0.3\n'
+                '    key code 36\n'
+                'end tell',
+                timeout=5,
+            )
+            time.sleep(2)
+            ok_state, info = _check_playing()
+
+        # Fallback 2: Space bar (universal play/pause toggle)
+        if "NOT_PLAYING" in info:
+            logger.info("spotify_play: trying Space as last resort")
+            run_applescript(
+                'tell application "System Events" to tell process "Spotify"\n'
+                '    set frontmost to true\n'
+                '    delay 0.3\n'
+                '    key code 49\n'
+                'end tell',
+                timeout=5,
+            )
+            time.sleep(1.5)
+            ok_state, info = _check_playing()
+
+        if "NOT_PLAYING" in info:
+            info = f"Searched for {query} but playback didn't start"
+
+        return ok_state, info
+
+    except Exception as e:
+        return False, f"Spotify play failed: {e}"
 
 
 # ── Gmail operations (local Gmail API via OAuth token) ──────────────────────
@@ -885,6 +1040,10 @@ def execute_action(action: Action) -> Action:
                 subject=cmd_data.get("subject", ""),
                 body=cmd_data.get("body", ""),
             )
+
+        elif action.type == "spotify_play":
+            query = cmd_data.get("query", cmd)
+            action.success, action.result = spotify_play(query)
 
         else:
             action.success = False
