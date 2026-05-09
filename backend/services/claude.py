@@ -3087,55 +3087,34 @@ Use this when the task involves navigating a GUI (browser, desktop app, etc.).
 | `scroll` | `{direction, amount?, x?, y?}` | green |
 | `wait` | `{seconds}` — let UI settle (max 10s) | green |
 
-**CRITICAL: Read the user's request carefully and pick the RIGHT action.**
+**ROUTING — pick the RIGHT action type. This is the MOST IMPORTANT decision.**
 
-Pay close attention to WHICH app/platform the user wants:
-- "play Drake on Spotify" / "play Drake" (no platform) → `spotify_play` with `{"query": "Drake"}`
-- "play Drake on YouTube" → open YouTube search + click first video (see example below)
-- "search for X" → `search_web`
-- "open Gmail" → `open_url` with Gmail URL
+| User request | Action type | Example payload |
+|---|---|---|
+| "play X on YouTube" | `play_media` | `{"platform": "youtube", "query": "X"}` |
+| "play X on Spotify" / "play X" | `play_media` | `{"platform": "spotify", "query": "X"}` |
+| "search for X" / "look up X" | `web_search` | `{"query": "X"}` |
+| "paste/copy/export data" | `data_export` | `{"source_app": "Numbers", "destination": "~/Desktop/data.csv"}` |
+| "check my email" | `check_inbox` | `{"max_results": 10}` |
+| "open Gmail" | `open_url` | `{"url": "https://mail.google.com"}` |
+| "open X app" | `open_app` | `{"name": "X"}` |
 
-**Do NOT default to Spotify for everything.** If the user says YouTube, use YouTube. Use `spotify_play` ONLY for Spotify or when no platform is specified for music.
+**RULES:**
+1. ALWAYS use dedicated actions (`play_media`, `web_search`, `data_export`, `check_inbox`) when they fit — they are instant and 100% reliable
+2. NEVER use `open_url` + vision loop for media/search — `play_media` and `web_search` handle these in ONE action
+3. NEVER use `applescript` for data export — `data_export` handles it
+4. Vision loop (screenshot → click_at) is LAST RESORT — only for tasks that REQUIRE clicking specific UI elements with no dedicated action (e.g. booking, form filling)
+5. Gmail → use `check_inbox`, `search_email`, `send_email`
 
-**CRITICAL: "play" means PLAY, not just open a search page.**
-If the user says "play X on YouTube", you must open the search AND click a video. Just opening search results is NOT playing. Use the vision loop to click through.
+**Vision loop (LAST RESORT only — for booking, form filling, etc.):**
+- End with `screenshot` if you need to see what happened next
+- `wait` 3-4s after navigation, 1s after clicks
+- Max 5 rounds — if you haven't finished, stop and tell the user
+- To STOP: return plan WITHOUT `screenshot`
 
-**Routing priority — ALWAYS use the HIGHEST available option:**
-1. Dedicated actions — instant, one action, ALWAYS prefer these:
-   - `play_media` for ANY music/video request (YouTube, Spotify, Apple Music)
-   - `web_search` for ANY search request
-   - `data_export` for ANY data copy/paste/export between apps
-   - `spotify_play` for Spotify specifically
-   - `check_inbox`/`search_email` for Gmail
-2. `open_url` — for opening a specific known URL
-3. `applescript` — for Mac app control that has no dedicated action
-4. Vision loop (screenshot → click_at) — LAST RESORT, only when you literally need to click something specific on screen
-
-**CRITICAL: If a dedicated action exists, use it. NEVER use vision loop or AppleScript for tasks that have dedicated actions.** "Play X on YouTube" = `play_media`, NOT open_url + vision loop. "Search for X" = `web_search`, NOT open_url.
-
-**Rules:**
-- NEVER just open an app/page and stop if the user asked you to DO something
-- Gmail → use `check_inbox`, `search_email`, `send_email` etc.
-- Use `search_web` when you don't know the exact URL
-
-**Vision loop rules:**
-1. End action list with `screenshot` if you need to see what happened and continue
-2. Use `wait` (3-4s) after navigation, `wait` (1s) after clicks — keep it fast
-3. CLICK ACCURACY: identify the EXACT pixel center of the target
-4. Screenshots match screen points — coordinates map directly (no scaling)
-5. To STOP the loop, return a plan WITHOUT a screenshot
-6. Screen actions are YELLOW risk — they auto-execute
-7. Do NOT declare success without VERIFYING the result
-
-**Example: "play relaxing music on YouTube"**
-Round 1: `open_url` YouTube search → `wait` 4s → `screenshot`
-Round 2: see search results → `click_at` first video thumbnail → done (no screenshot = stop)
-
-**Example: "Book a table on OpenTable for Friday 7pm"**
+**Example: "Book a table on OpenTable for Friday 7pm"** (needs vision — no dedicated action)
 Round 1: `open_url` OpenTable → `wait` 4s → `screenshot`
 Round 2: see homepage → `click_at` search → `type_text` "Italian" → `key_combo` "return" → `wait` 2s → `screenshot`
-Round 3: see results → `click_at` restaurant → `wait` → `screenshot`
-...continue until done. Final round has no `screenshot`.
 
 ### APPLESCRIPT CAPABILITIES
 
