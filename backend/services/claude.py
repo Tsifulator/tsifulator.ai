@@ -3242,18 +3242,21 @@ One AppleScript action can create an entire spreadsheet, presentation, or docume
 **CRITICAL: The `frontmost_app` and `other_open_documents` in CURRENT MAC STATE tell you where data is. Use them.**
 
 **"Copy/paste this data and save as X" — data is in Numbers:**
-Use Numbers' built-in export command — NO keyboard shortcuts, NO clipboard. This is 100% reliable:
+Use Numbers' built-in export command — NO keyboard shortcuts, NO clipboard. This is 100% reliable.
+CRITICAL: This must be exactly ONE applescript action with the FULL script. NEVER split it into separate actions.
 ```json
 {"plan": [
-  {"type": "applescript", "command": "tell application \"Numbers\"\n    set theDoc to front document\n    set exportPath to ((path to home folder as text) & \"Desktop:data.csv\")\n    export theDoc to file exportPath as CSV\nend tell", "description": "Export Numbers data as CSV", "risk": "yellow"},
+  {"type": "applescript", "command": "tell application \"Numbers\"\nset theDoc to front document\nset exportPath to ((path to home folder as text) & \"Desktop:data.csv\")\nexport theDoc to file exportPath as CSV\nend tell", "description": "Export Numbers data as CSV", "risk": "yellow"},
   {"type": "open_file", "command": "~/Desktop/data.csv", "description": "Open the saved file", "risk": "green"}
 ]}
 ```
+IMPORTANT: Use HFS colon paths inside the tell block (e.g. "Desktop:data.csv"), NOT POSIX slash paths. Do NOT use `POSIX path of` or `POSIX file` — they cause syntax errors in Numbers export.
 
 **"Copy/paste this data and save as X" — data is in Excel:**
+ONE applescript action with the full script:
 ```json
 {"plan": [
-  {"type": "applescript", "command": "tell application \"Microsoft Excel\"\n    set filePath to (POSIX path of (path to home folder)) & \"Desktop/data.csv\"\n    save active workbook in filePath as CSV file format\nend tell", "description": "Save Excel data as CSV", "risk": "yellow"},
+  {"type": "applescript", "command": "tell application \"Microsoft Excel\"\nset filePath to ((path to home folder as text) & \"Desktop:data.csv\")\ntell active workbook\nsave workbook as filename filePath file format CSV file format\nend tell\nend tell", "description": "Save Excel data as CSV", "risk": "yellow"},
   {"type": "open_file", "command": "~/Desktop/data.csv", "description": "Open the saved file", "risk": "green"}
 ]}
 ```
@@ -3268,14 +3271,14 @@ For browser data, use clipboard (no export API available):
 ```
 
 **"Paste this to R / save as .Rmd / .R file" — data is in Numbers:**
-Export from Numbers as CSV, then open in RStudio:
+Export from Numbers as CSV, then open in RStudio. ONE applescript action:
 ```json
 {"plan": [
-  {"type": "applescript", "command": "tell application \"Numbers\"\n    set theDoc to front document\n    set exportPath to ((path to home folder as text) & \"Desktop:data.csv\")\n    export theDoc to file exportPath as CSV\nend tell", "description": "Export Numbers data as CSV", "risk": "yellow"},
+  {"type": "applescript", "command": "tell application \"Numbers\"\nset theDoc to front document\nset exportPath to ((path to home folder as text) & \"Desktop:data.csv\")\nexport theDoc to file exportPath as CSV\nend tell", "description": "Export Numbers data as CSV", "risk": "yellow"},
   {"type": "open_file", "command": "~/Desktop/data.csv", "description": "Open in RStudio", "risk": "green"}
 ]}
 ```
-Note: always export as .csv for data even if the user says .Rmd — data belongs in CSV, not R Markdown. If user specifically wants an .Rmd file, export as CSV first, then write an .Rmd that reads the CSV.
+Note: always export as .csv for data. Use HFS colon paths (Desktop:file.csv), not POSIX slash paths.
 
 **CRITICAL DATA SOURCE RULES:**
 1. Figure out WHERE the data is:
