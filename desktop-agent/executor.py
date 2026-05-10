@@ -929,29 +929,63 @@ def spotify_play(query: str) -> tuple[bool, str]:
         subprocess.run(["open", "-a", "Spotify"], check=True, timeout=10)
         time.sleep(0.5)
 
-        # ── Method 1: URL scheme + UI scripting ──────────────────────
-        # spotify:search:QUERY lands directly on the search results page.
-        # No fragile Cmd+K + type + wait chain.
+        # ── Method 1: URL scheme + accessibility-based Play button click ──
+        # spotify:search:QUERY lands on the search results page (sometimes
+        # auto-navigates to a top playlist). We then RECURSIVELY find the
+        # first button whose description/title contains "Play" and click it.
+        # This handles both search-results pages and playlist detail pages.
         subprocess.run(["open", f"spotify:search:{encoded}"], timeout=5)
-        time.sleep(2.5)  # let search results load
+        time.sleep(2.5)  # let page load
 
-        # Activate, then Tab a few times to focus the first track row,
-        # then Enter to play. Spotify's search page has a known structure:
-        # the "Songs" section's play button is reachable via Tab.
-        run_applescript(
-            'tell application "Spotify" to activate\n'
-            'delay 0.3\n'
-            'tell application "System Events" to tell process "Spotify"\n'
-            '    set frontmost to true\n'
-            '    delay 0.2\n'
-            # Press Tab to leave any input focus + reach first content
-            '    keystroke tab\n'
-            '    delay 0.15\n'
-            # Enter triggers play on the focused "Songs" tile
-            '    key code 36\n'
-            'end tell',
-            timeout=10,
-        )
+        # AppleScript handler that recursively walks the UI tree and clicks
+        # the first "Play" button found. Works for any Spotify page.
+        find_and_click_play = '''
+on findPlayButton(elem, depth)
+    if depth > 8 then return missing value
+    try
+        set elemRole to role of elem
+    on error
+        return missing value
+    end try
+    if elemRole is "AXButton" then
+        set descr to ""
+        try
+            set descr to description of elem
+        end try
+        try
+            set descr to descr & " " & (title of elem)
+        end try
+        try
+            set descr to descr & " " & (help of elem)
+        end try
+        if descr contains "Play" and descr does not contain "Pause" then
+            return elem
+        end if
+    end if
+    try
+        repeat with child in (UI elements of elem)
+            set r to my findPlayButton(child, depth + 1)
+            if r is not missing value then return r
+        end repeat
+    end try
+    return missing value
+end findPlayButton
+
+tell application "Spotify" to activate
+delay 0.3
+tell application "System Events" to tell process "Spotify"
+    set frontmost to true
+    delay 0.3
+    set btn to my findPlayButton(window 1, 0)
+    if btn is not missing value then
+        click btn
+        return "clicked"
+    else
+        return "no_play_button"
+    end if
+end tell
+'''
+        ok, result = run_applescript(find_and_click_play, timeout=15)
         time.sleep(1.5)
 
         # ── Verify: is something new playing that matches the query? ──
@@ -959,8 +993,10 @@ def spotify_play(query: str) -> tuple[bool, str]:
         if is_playing and (track != before_track or artist != before_artist):
             if _matches_query(track, artist):
                 return True, f"▶️ {track} — {artist}"
-            # Something else started — try clicking the first track explicitly
-            # via double-tab + enter (skip the "All" filter button)
+            # Playlist play starts a track that may not match query name exactly
+            # (e.g. "afro beats" plays "Move" from an Afro House playlist).
+            # Accept if it started something new.
+            return True, f"▶️ {track} — {artist}"
 
         # ── Method 2: Fallback — Cmd+K search overlay + longer delays ─
         run_applescript(
