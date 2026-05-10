@@ -2551,7 +2551,30 @@ def _panel_submit(text: str):
                                     for a in results
                                 )
 
-                                if not failures and not has_data_actions:
+                                # If images were attached, the task is likely multi-step
+                                # (e.g. "import this data into Excel" — round 1 opens the
+                                # app, round 2 writes the data). Force continuation for
+                                # ONE extra round so Claude can finish the workflow.
+                                images_in_play = bool(images_to_send) and round_num == 1
+
+                                # If the only action was opening/launching something AND
+                                # the original request implies more work (images, or
+                                # phrases like "import", "create", "build", "type in"),
+                                # continue so Claude can actually do the work.
+                                import re as _re_loop
+                                _LAUNCH_ONLY = {"open_app", "open_file", "open_url"}
+                                only_launched = (
+                                    len(results) > 0
+                                    and all(a.type in _LAUNCH_ONLY for a in results if a.type != "save_memory")
+                                )
+                                task_implies_more = bool(_re_loop.search(
+                                    r"\b(import|build|create|type|fill|write|paste|enter|add|"
+                                    r"populate|copy.*to|put.*in|format)\b",
+                                    text or "", _re_loop.IGNORECASE
+                                ))
+                                launch_needs_followup = only_launched and (images_in_play or task_implies_more)
+
+                                if not failures and not has_data_actions and not images_in_play and not launch_needs_followup:
                                     # All succeeded and no data to feed back — done
                                     sys.stderr.write(f"[tsifl-agent] ✅ all actions succeeded on round {round_num}\n")
                                     break
