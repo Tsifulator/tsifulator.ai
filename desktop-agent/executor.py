@@ -881,94 +881,117 @@ def wait_seconds(seconds: float) -> tuple[bool, str]:
 # ── Spotify (instant play via AppleScript — no vision loop needed) ────────
 
 def spotify_play(query: str) -> tuple[bool, str]:
-    """Play on Spotify — pure AppleScript keystrokes, no CGEvent focus issues.
+    """Play on Spotify — uses URL scheme to land on search page, then plays first track.
 
-    Flow (single AppleScript block keeps Spotify focused throughout):
-    1. Activate Spotify + set frontmost
-    2. Cmd+K → opens search overlay
-    3. Cmd+A → select existing text, then type query
-    4. Wait for suggestions → Down arrow → Enter to play top result
-    5. Verify playback, fallback to Enter/Space if needed
-
-    Total time: ~8 seconds. No CGEvent = no focus-stealing.
+    Flow:
+    1. Open `spotify:search:QUERY` URL — Spotify navigates directly to search results
+    2. Activate + wait for results to load
+    3. Tab through to first track row, press Enter to play
+    4. Verify the playing track matches the query (sanity check)
+    5. Fallback to keystroke search if URL scheme didn't work
     """
+    import urllib.parse as _up
+    encoded = _up.quote(query)
     escaped = query.replace("\\", "\\\\").replace('"', '\\"')
+    query_words = set(w.lower() for w in query.split() if len(w) > 2)
+
+    def _get_playing() -> tuple[bool, str, str]:
+        """Returns (is_playing, track_name, artist)."""
+        ok_s, info = run_applescript(
+            'tell application "Spotify"\n'
+            '    if player state is playing then\n'
+            '        return (name of current track) & "||" & (artist of current track)\n'
+            '    else\n'
+            '        return "NOT_PLAYING"\n'
+            '    end if\n'
+            'end tell',
+            timeout=5,
+        )
+        if not ok_s or not info or "NOT_PLAYING" in info:
+            return False, "", ""
+        parts = info.split("||", 1)
+        track = parts[0] if parts else ""
+        artist = parts[1] if len(parts) > 1 else ""
+        return True, track, artist
+
+    def _matches_query(track: str, artist: str) -> bool:
+        """Loose match — any query word in track or artist name."""
+        if not query_words:
+            return True
+        combined = f"{track} {artist}".lower()
+        return any(w in combined for w in query_words)
 
     try:
-        # Ensure Spotify is running (non-blocking launch)
-        subprocess.run(["open", "-a", "Spotify"], check=True, timeout=10)
-        time.sleep(1)
+        # Snapshot what's playing BEFORE we do anything
+        was_playing, before_track, before_artist = _get_playing()
 
-        # All-in-one AppleScript — Spotify keeps focus the entire time.
-        # Cmd+K opens search, type query, Down picks first suggestion, Enter plays.
-        ok, result = run_applescript(
+        # Ensure Spotify is running
+        subprocess.run(["open", "-a", "Spotify"], check=True, timeout=10)
+        time.sleep(0.5)
+
+        # ── Method 1: URL scheme + UI scripting ──────────────────────
+        # spotify:search:QUERY lands directly on the search results page.
+        # No fragile Cmd+K + type + wait chain.
+        subprocess.run(["open", f"spotify:search:{encoded}"], timeout=5)
+        time.sleep(2.5)  # let search results load
+
+        # Activate, then Tab a few times to focus the first track row,
+        # then Enter to play. Spotify's search page has a known structure:
+        # the "Songs" section's play button is reachable via Tab.
+        run_applescript(
             'tell application "Spotify" to activate\n'
-            'delay 0.8\n'
+            'delay 0.3\n'
             'tell application "System Events" to tell process "Spotify"\n'
             '    set frontmost to true\n'
-            '    delay 0.3\n'
+            '    delay 0.2\n'
+            # Press Tab to leave any input focus + reach first content
+            '    keystroke tab\n'
+            '    delay 0.15\n'
+            # Enter triggers play on the focused "Songs" tile
+            '    key code 36\n'
+            'end tell',
+            timeout=10,
+        )
+        time.sleep(1.5)
+
+        # ── Verify: is something new playing that matches the query? ──
+        is_playing, track, artist = _get_playing()
+        if is_playing and (track != before_track or artist != before_artist):
+            if _matches_query(track, artist):
+                return True, f"▶️ {track} — {artist}"
+            # Something else started — try clicking the first track explicitly
+            # via double-tab + enter (skip the "All" filter button)
+
+        # ── Method 2: Fallback — Cmd+K search overlay + longer delays ─
+        run_applescript(
+            'tell application "Spotify" to activate\n'
+            'delay 0.3\n'
+            'tell application "System Events" to tell process "Spotify"\n'
+            '    set frontmost to true\n'
+            '    delay 0.2\n'
             '    keystroke "k" using command down\n'
-            '    delay 0.5\n'
+            '    delay 0.6\n'
             '    keystroke "a" using command down\n'
             '    delay 0.1\n'
             f'    keystroke "{escaped}"\n'
-            '    delay 2\n'
+            '    delay 2.5\n'
+            # Down arrow to skip "Search" suggestion, land on first track
             '    key code 125\n'
-            '    delay 0.3\n'
+            '    delay 0.2\n'
             '    key code 36\n'
             'end tell',
             timeout=15,
         )
         time.sleep(2)
 
-        # ── Verify playback ──────────────────────────────────────────
-        def _check_playing() -> tuple[bool, str]:
-            ok_s, info = run_applescript(
-                'tell application "Spotify"\n'
-                '    if player state is playing then\n'
-                '        return "▶️ " & name of current track & " — " & artist of current track\n'
-                '    else\n'
-                '        return "NOT_PLAYING"\n'
-                '    end if\n'
-                'end tell',
-                timeout=5,
-            )
-            return ok_s, info or "NOT_PLAYING"
+        is_playing, track, artist = _get_playing()
+        if is_playing and (track != before_track or artist != before_artist):
+            return True, f"▶️ {track} — {artist}"
 
-        ok_state, info = _check_playing()
-
-        # Fallback 1: press Enter again (may have landed on artist page)
-        if "NOT_PLAYING" in info:
-            logger.info("spotify_play: first attempt didn't play — pressing Enter again")
-            run_applescript(
-                'tell application "System Events" to tell process "Spotify"\n'
-                '    set frontmost to true\n'
-                '    delay 0.3\n'
-                '    key code 36\n'
-                'end tell',
-                timeout=5,
-            )
-            time.sleep(2)
-            ok_state, info = _check_playing()
-
-        # Fallback 2: Space bar (universal play/pause toggle)
-        if "NOT_PLAYING" in info:
-            logger.info("spotify_play: trying Space as last resort")
-            run_applescript(
-                'tell application "System Events" to tell process "Spotify"\n'
-                '    set frontmost to true\n'
-                '    delay 0.3\n'
-                '    key code 49\n'
-                'end tell',
-                timeout=5,
-            )
-            time.sleep(1.5)
-            ok_state, info = _check_playing()
-
-        if "NOT_PLAYING" in info:
-            info = f"Searched for {query} but playback didn't start"
-
-        return ok_state, info
+        # ── Last resort: report what's playing (even if it's old) ──
+        if is_playing:
+            return True, f"⚠️ Couldn't find '{query}', still playing: {track} — {artist}"
+        return False, f"Searched for '{query}' but playback didn't start"
 
     except Exception as e:
         return False, f"Spotify play failed: {e}"

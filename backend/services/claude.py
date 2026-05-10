@@ -3601,19 +3601,25 @@ TRANSACTIONS PROJECT SPECIFICS:
     elif is_desktop:
         # Desktop agent: simple commands → Haiku (fast), complex → Sonnet
         # DESKTOP_TOOLS is simple enough for Haiku to handle reliably.
+        # Dedicated actions (play_media, web_search, spotify_play) are
+        # deterministic → Haiku is plenty.
         _desktop_simple = re.compile(
             r"^(open|launch|find|show|close|quit|pause|mute|"
             r"unmute|volume|brightness|clipboard|copy|what time|"
-            r"what day|what date|lock|sleep|restart|shut)\b",
+            r"what day|what date|lock|sleep|restart|shut|"
+            r"play|search\s+(?:for|youtube|google)|spotify|"
+            r"check\s+(?:my\s+)?inbox|read\s+email|"
+            r"set\s+\S+\s+as\s+/|remember|memories|shortcuts)\b",
             re.IGNORECASE
         )
-        # Tasks that need vision (interaction inside an app) always go to Sonnet
+        # Tasks that need vision (interaction inside an app) → Sonnet
         _needs_vision = re.compile(
-            r"(play|search.*on|go to|navigate|click|type|book|order|"
-            r"reply.*email|send.*email|check.*inbox|create.*event|"
-            r"sign.*in|log.*in|fill.*form|download|upload|"
+            r"(go to|navigate|click|type|book|order|"
+            r"reply.*email|send.*email|create.*event|"
+            r"sign.*in|log.*in|fill.*form|upload|"
             r"paste|copy.*to|save.*as|create.*spreadsheet|create.*presentation|"
-            r"make.*powerpoint|make.*excel|put.*in.*excel|put.*in.*r\b)",
+            r"make.*powerpoint|make.*excel|put.*in.*excel|put.*in.*r\b|"
+            r"build.*spreadsheet|build.*deck|build.*workbook)",
             re.IGNORECASE
         )
         if _needs_vision.search(message.strip()):
