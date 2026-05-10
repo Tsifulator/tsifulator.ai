@@ -23,3 +23,8 @@ dist/
 # R
 .Rhistory
 .RData
+
+# Google OAuth credentials — never commit
+gmail-client/credentials.json
+client_secret*.json
+*credentials*.json

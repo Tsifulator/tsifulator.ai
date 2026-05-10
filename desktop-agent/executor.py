@@ -177,6 +177,106 @@ def _web_search(query: str, engine: str = "google") -> tuple[bool, str]:
         return False, str(e)
 
 
+def _fetch_url(url: str, max_chars: int = 8000) -> tuple[bool, str]:
+    """Fetch a URL and return the text content. Strips HTML.
+
+    Used so Claude can look things up (Macabacus shortcuts, docs, etc.)
+    without opening a browser tab. Uses httpx with SSL verify disabled
+    to handle networks with SSL inspection (corp/edu).
+    """
+    try:
+        import httpx as _hx
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) "
+                          "Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,*/*",
+        }
+        # verify=False handles ZScaler / corp SSL inspection
+        with _hx.Client(verify=False, follow_redirects=True, timeout=15) as c:
+            resp = c.get(url, headers=headers)
+            raw = resp.text
+
+        # Strip HTML tags + scripts/styles
+        import re as _re
+        text = _re.sub(r"<script\b[^>]*>.*?</script>", " ", raw,
+                       flags=_re.DOTALL | _re.IGNORECASE)
+        text = _re.sub(r"<style\b[^>]*>.*?</style>", " ", text,
+                       flags=_re.DOTALL | _re.IGNORECASE)
+        text = _re.sub(r"<[^>]+>", " ", text)
+        # Decode common HTML entities
+        text = (text.replace("&nbsp;", " ").replace("&amp;", "&")
+                    .replace("&lt;", "<").replace("&gt;", ">")
+                    .replace("&quot;", '"').replace("&#39;", "'"))
+        text = _re.sub(r"\s+", " ", text).strip()
+        return True, text[:max_chars]
+    except Exception as e:
+        return False, f"fetch failed: {e}"
+
+
+def _web_lookup(query: str, max_chars: int = 6000) -> tuple[bool, str]:
+    """Search the web AND fetch the top results' content.
+
+    Claude gets actual answers, not just a URL. Used for "how do I X
+    in Macabacus" type questions. Uses DuckDuckGo's HTML endpoint.
+    """
+    try:
+        import httpx as _hx
+        encoded = _urlparse.quote_plus(query)
+        search_url = f"https://html.duckduckgo.com/html/?q={encoded}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) "
+                          "Chrome/120.0.0.0 Safari/537.36",
+        }
+        with _hx.Client(verify=False, follow_redirects=True, timeout=15) as c:
+            resp = c.get(search_url, headers=headers)
+            raw = resp.text
+
+        import re as _re
+        import urllib.parse as _up
+        # DDG result URLs are in href="/l/?uddg=URL_ENCODED&..."
+        urls = _re.findall(r'href="/l/\?uddg=([^"&]+)', raw)
+        if not urls:
+            # Fallback: direct hrefs
+            urls = _re.findall(r'href="(https?://[^"&]+)"', raw[:60000])
+
+        seen = set()
+        result_urls = []
+        for u in urls:
+            u = _up.unquote(u)
+            host = u.split("/")[2] if "://" in u else ""
+            if "duckduckgo" in host or "google.com" in host or "bing.com" in host:
+                continue
+            if host in seen:
+                continue
+            seen.add(host)
+            result_urls.append(u)
+            if len(result_urls) >= 3:
+                break
+
+        if not result_urls:
+            # No URLs found, just clean and return search page
+            clean = _re.sub(r"<[^>]+>", " ", raw)
+            clean = _re.sub(r"\s+", " ", clean).strip()
+            return True, clean[:max_chars]
+
+        # Fetch top 2 results and concatenate
+        chunks = []
+        per_url_budget = max_chars // min(len(result_urls), 2)
+        for u in result_urls[:2]:
+            ok, content = _fetch_url(u, max_chars=per_url_budget)
+            if ok and content:
+                chunks.append(f"[Source: {u}]\n{content[:per_url_budget]}")
+        if not chunks:
+            clean = _re.sub(r"<[^>]+>", " ", raw)
+            clean = _re.sub(r"\s+", " ", clean).strip()
+            return True, clean[:max_chars]
+        return True, "\n\n---\n\n".join(chunks)
+    except Exception as e:
+        return False, f"web_lookup failed: {e}"
+
+
 # ── Data Export — battle-tested per-app scripts ─────────────────────────────
 # Claude just says {"type": "data_export", "source_app": "Numbers", "destination": "~/Desktop/data.csv"}
 # and we handle the AppleScript perfectly every time.
@@ -1259,6 +1359,18 @@ def execute_action(action: Action) -> Action:
             query = cmd_data.get("query", cmd)
             engine = cmd_data.get("engine", "google").lower()
             action.success, action.result = _web_search(query, engine)
+
+        elif action.type == "fetch_url":
+            # Fetch a URL and return the text content for Claude to read
+            url = cmd_data.get("url", cmd)
+            max_chars = cmd_data.get("max_chars", 8000)
+            action.success, action.result = _fetch_url(url, max_chars)
+
+        elif action.type == "web_lookup":
+            # Search the web AND read the top results — Claude gets actual answers
+            query = cmd_data.get("query", cmd)
+            max_chars = cmd_data.get("max_chars", 6000)
+            action.success, action.result = _web_lookup(query, max_chars)
 
         # ── Memory & shortcut actions ──────────────────────────────────
         elif action.type == "save_memory":

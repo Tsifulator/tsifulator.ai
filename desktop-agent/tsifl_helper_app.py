@@ -537,6 +537,12 @@ def _describe_action(atype: str, payload: dict) -> str:
         query = payload.get("query", "?")
         engine = payload.get("engine", "google")
         return f"Search {engine}: '{query}'"
+    elif atype == "fetch_url":
+        url = payload.get("url", "?")
+        return f"Fetch {url[:50]}"
+    elif atype == "web_lookup":
+        query = payload.get("query", "?")
+        return f"Look up: '{query[:60]}'"
     elif atype == "notify":
         return "Show notification"
     # Gmail actions
@@ -597,6 +603,7 @@ def _extract_plan_from_reply(data: dict) -> list | None:
         "search_files", "open_file", "open_app", "open_url",
         "applescript", "shell", "clipboard_copy", "clipboard_read",
         "write_file", "notify", "data_export", "play_media", "web_search",
+        "fetch_url", "web_lookup",
         # Gmail actions
         "check_inbox", "search_email", "read_email",
         "send_email", "draft_email",
@@ -616,6 +623,7 @@ def _extract_plan_from_reply(data: dict) -> list | None:
         "clipboard_copy": "green", "write_file": "yellow", "notify": "green",
         "applescript": "yellow", "data_export": "yellow",
         "play_media": "green", "web_search": "green",
+        "fetch_url": "green", "web_lookup": "green",
         # Gmail: reads are green, draft is yellow, send is red
         "check_inbox": "green", "search_email": "green", "read_email": "green",
         "send_email": "red", "draft_email": "yellow",
@@ -2536,7 +2544,8 @@ def _panel_submit(text: str):
                                 # Determine if Claude needs to see results to continue.
                                 # Actions that PRODUCE data Claude needs for the next step:
                                 _NEEDS_CONTINUATION = {"search_files", "clipboard_read", "shell",
-                                                       "check_inbox", "search_email", "read_email"}
+                                                       "check_inbox", "search_email", "read_email",
+                                                       "fetch_url", "web_lookup"}
                                 has_data_actions = any(
                                     a.type in _NEEDS_CONTINUATION and a.success and a.result
                                     for a in results

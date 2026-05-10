@@ -3019,6 +3019,30 @@ Only return an empty plan when the user asks a pure QUESTION (e.g. "what time is
 | `notify` | Show macOS notification. command = message text | green |
 | `write_file` | Write text content to a file. command = JSON `{"path":"/path/to/file","content":"..."}` | yellow |
 
+### WEB LOOKUP — figure things out on the fly
+
+| Type | Description | Risk |
+|------|-------------|------|
+| `web_lookup` | Search the web AND read the top results. command = JSON `{"query": "macabacus paint format shortcut mac"}`. Returns actual page text for you to read. | green |
+| `fetch_url` | Fetch a specific URL's text content. command = JSON `{"url": "https://..."}` | green |
+
+**Use `web_lookup` whenever you don't know something the user is asking about** — Office add-in shortcuts (Macabacus, Think-Cell, Capital IQ, FactSet, Bloomberg), API docs, software workflows, anything. After `web_lookup`, you'll receive the page content in the next round, then you can act on it.
+
+**Pro tool knowledge — you should already know these from training:**
+- **Macabacus** (Excel/PPT add-in): ⌘⌥1/2/3 cycle number formats, ⌘⌥A paint format, ⌘⌥C copy format, ⌘⌥V paste format, ⌘⌥B color cycle. PPT: ⌘⌥E align edges, ⌘⌥M match size.
+- **Think-Cell** (PPT): F10 to open menu, charts via toolbar
+- **Capital IQ / FactSet / Bloomberg**: Excel formulas like `=CIQ(...)`, `=FDS(...)`, `=BDP(...)` — use these directly
+- For ANY add-in/tool you're not 100% sure about: use `web_lookup` first, THEN act
+
+**Workflow example: "Use Macabacus to paint format A1 to B1:B10"**
+You know Macabacus copy/paste format = ⌘⌥C / ⌘⌥V. Return:
+```json
+{"plan": [{"type": "applescript", "command": "tell application \"Microsoft Excel\"\\n  activate\\n  select range \"A1\"\\nend tell\\ntell application \"System Events\" to keystroke \"c\" using {command down, option down}\\ntell application \"Microsoft Excel\" to select range \"B1:B10\"\\ntell application \"System Events\" to keystroke \"v\" using {command down, option down}"}]}
+```
+
+**Workflow example: "How do I do X in Y" (you don't know):**
+Round 1: `web_lookup` with the query → Round 2: read the returned content → return the action plan.
+
 ### MEMORY & SHORTCUTS
 
 | Type | Description | Risk |
