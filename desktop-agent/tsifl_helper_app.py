@@ -2402,6 +2402,138 @@ def _panel_submit(text: str):
     except Exception:
         pass
 
+    # ── v2 agent path: native tool calling with threaded conversation ───
+    # Opt-in via env var. Falls back to v1 if TSIFL_AGENT_V2 is unset/falsy.
+    _USE_AGENT_V2 = os.environ.get("TSIFL_AGENT_V2", "").lower() in ("1", "true", "yes", "on")
+
+    if _USE_AGENT_V2:
+        def _do_request_v2():
+            """v2 flow: run_agent_loop drives the whole conversation. The agent
+            decides what tools to call, sees results, decides next step, loops.
+            Same UI update pattern as v1 — main-thread dispatch via callAfter."""
+            from agent_v2_client import run_agent_loop
+
+            # Gather context
+            try:
+                mac_context = get_system_context()
+            except Exception:
+                mac_context = {"frontmost_app": frontmost_before or ""}
+
+            memory_context = ""
+            try:
+                from memory import get_memory_context
+                memory_context = get_memory_context()
+            except Exception:
+                pass
+
+            context = {
+                "frontmost_app": frontmost_before or _detect_frontmost_app(),
+                "mac": mac_context,
+                "user_memory": memory_context,
+            }
+
+            executed_log: list = []
+
+            def _on_step(info):
+                # Track executed actions for the final summary; also track
+                # search/email results for multi-turn UX.
+                nonlocal executed_log
+                executed_log.extend(info.get("executed", []))
+                global _last_search_results, _last_email_results
+                for a in info.get("executed", []):
+                    if a is None:
+                        continue
+                    if a.type == "search_files" and a.success and a.result:
+                        paths = [p.strip() for p in a.result.split("\n")
+                                 if p.strip() and p.strip().startswith("/")]
+                        if paths:
+                            _last_search_results = paths
+                    if a.type in ("check_inbox", "search_email") and a.success and a.result:
+                        import re as _re_m
+                        ids = _re_m.findall(r"\[id:([^\]]+)\]", a.result)
+                        if ids:
+                            _last_email_results = [{"id": mid} for mid in ids]
+
+            sys.stderr.write(f"[tsifl-helper] V2 agent loop starting: frontmost={context['frontmost_app']!r}\n")
+            try:
+                summary = run_agent_loop(
+                    user_message=text,
+                    context=context,
+                    images=images_to_send or None,
+                    max_steps=8,
+                    on_step=_on_step,
+                )
+            except Exception as e:
+                import traceback; traceback.print_exc(file=sys.stderr)
+                summary = {"error": str(e), "final_text": f"Agent crashed: {e}",
+                           "rounds": 0, "all_executed": []}
+
+            sys.stderr.write(f"[tsifl-helper] V2 done: rounds={summary.get('rounds')} err={summary.get('error')!r}\n")
+
+            # Build the displayed summary (same format as v1)
+            lines = []
+            final_text = summary.get("final_text", "").strip()
+            if final_text:
+                lines.append(final_text)
+                lines.append("")
+            for a in executed_log:
+                if a is None:
+                    continue
+                icon = "✅" if a.success else "❌"
+                lines.append(f"{icon} {a.description}")
+                if a.type == "search_files" and a.success and a.result:
+                    paths = [p.strip() for p in a.result.split("\n")
+                             if p.strip() and p.strip().startswith("/")]
+                    for idx, p in enumerate(paths[:10], 1):
+                        name = os.path.basename(p)
+                        folder = os.path.dirname(p).replace(str(Path.home()), "~")
+                        lines.append(f"   {idx}. {name}")
+                        lines.append(f"      {folder}")
+                elif a.type in ("check_inbox", "search_email", "read_email") and a.success and a.result:
+                    lines.append(a.result[:600])
+                elif a.type != "screenshot" and a.result and len(str(a.result)) < 300:
+                    lines.append(f"   → {a.result}")
+                if a.error:
+                    lines.append(f"   ⚠️ {a.error}")
+            if _last_search_results:
+                lines.append("")
+                lines.append("Say \"open 1\" or \"open the first one\" to open a result")
+            if summary.get("error"):
+                lines.append("")
+                lines.append(f"⚠️ {summary['error']}")
+            if summary.get("rounds", 0) > 1:
+                lines.append(f"\n🔄 {summary['rounds']} rounds")
+            displayed = "\n".join(lines).strip() or "(no output)"
+
+            # Push to panel on main thread
+            def _v2_show():
+                global _panel_busy, _last_response_text
+                _panel_busy = False
+                _last_response_text = displayed
+                if _panel_is_visible():
+                    _panel_show_response(displayed)
+                    if _panel_input is not None:
+                        try:
+                            _panel_input.setEditable_(True)
+                            _panel_input.setPlaceholderString_("Ask tsifl anything…")
+                            _panel_input.becomeFirstResponder()
+                        except Exception:
+                            pass
+                else:
+                    try:
+                        rumps.notification(title="tsifl", subtitle="Done", message=displayed[:200])
+                    except Exception:
+                        pass
+
+            try:
+                from PyObjCTools.AppHelper import callAfter as _ca_v2
+                _ca_v2(_v2_show)
+            except Exception:
+                pass
+
+        threading.Thread(target=_do_request_v2, daemon=True).start()
+        return
+
     def _do_request():
         """Runs on a daemon thread — must NOT touch UI directly. UI updates
         get dispatched back to the main thread via PyObjCTools.AppHelper.callAfter

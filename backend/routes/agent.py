@@ -1,0 +1,187 @@
+"""
+/agent/ — desktop agent v2 endpoint.
+
+Native Anthropic tool calling + threaded conversation history.
+
+Two endpoints:
+  POST /agent/turn      → start or continue a conversation; returns tool_uses to run
+  POST /agent/result    → post tool_result blocks back; returns next tool_uses
+
+Conversations are kept in-memory keyed by conversation_id. Idle ones are
+garbage-collected after 30 minutes.
+"""
+
+import time
+import uuid
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
+from services.agent_v2 import (
+    AGENT_TOOLS,
+    MODEL_STANDARD,
+    MODEL_FAST,
+    call_agent,
+    append_tool_results,
+)
+
+router = APIRouter()
+
+# In-memory conversation store: {conversation_id: {"messages": [...], "last_active": ts, "context": {...}}}
+_conversations: dict[str, dict] = {}
+_CONV_TTL_SECONDS = 30 * 60  # 30 min
+
+
+def _gc_old_conversations():
+    """Drop conversations idle for more than _CONV_TTL_SECONDS."""
+    now = time.time()
+    stale = [
+        cid for cid, c in _conversations.items()
+        if now - c.get("last_active", 0) > _CONV_TTL_SECONDS
+    ]
+    for cid in stale:
+        _conversations.pop(cid, None)
+
+
+class ImageAttachment(BaseModel):
+    data: str
+    media_type: str
+    file_name: str = ""
+
+
+class TurnRequest(BaseModel):
+    """Either start a new conversation (no conversation_id) or continue one."""
+    user_id: str = "anon"
+    conversation_id: Optional[str] = None
+    message: str
+    context: dict = Field(default_factory=dict)
+    images: list[ImageAttachment] = Field(default_factory=list)
+    model: str = MODEL_STANDARD
+
+
+class ToolResult(BaseModel):
+    tool_use_id: str
+    content: str
+    is_error: bool = False
+
+
+class ResultRequest(BaseModel):
+    conversation_id: str
+    results: list[ToolResult]
+    context: dict = Field(default_factory=dict)  # refreshed context for next turn
+    model: str = MODEL_STANDARD
+
+
+class TurnResponse(BaseModel):
+    conversation_id: str
+    tool_uses: list[dict]
+    text: str
+    thinking: str = ""
+    stop_reason: str
+    usage: dict
+    done: bool  # true when stop_reason != "tool_use" — no more tools to run
+
+
+def _make_turn_response(cid: str, result: dict) -> TurnResponse:
+    return TurnResponse(
+        conversation_id=cid,
+        tool_uses=result["tool_uses"],
+        text=result["text"],
+        thinking=result.get("thinking", ""),
+        stop_reason=result["stop_reason"],
+        usage=result["usage"],
+        done=result["stop_reason"] != "tool_use" and len(result["tool_uses"]) == 0,
+    )
+
+
+@router.post("/turn", response_model=TurnResponse)
+async def turn(req: TurnRequest):
+    """Start a new conversation or send a fresh user message to an existing one."""
+    _gc_old_conversations()
+
+    cid = req.conversation_id or str(uuid.uuid4())
+    conv = _conversations.get(cid, {"messages": [], "last_active": time.time()})
+
+    # If client passed a stale conversation_id we don't know about, treat as new
+    if cid not in _conversations and req.conversation_id:
+        # Start fresh under the supplied id
+        conv = {"messages": [], "last_active": time.time()}
+
+    images = [img.model_dump() for img in req.images] if req.images else None
+
+    result = call_agent(
+        user_message=req.message,
+        conversation=conv["messages"],
+        context=req.context,
+        images=images,
+        model=req.model,
+    )
+
+    # Persist updated conversation
+    _conversations[cid] = {
+        "messages": result["updated_conversation"],
+        "last_active": time.time(),
+        "context": req.context,
+    }
+
+    return _make_turn_response(cid, result)
+
+
+@router.post("/result", response_model=TurnResponse)
+async def result(req: ResultRequest):
+    """Post tool_result blocks for the previous turn's tool_uses.
+    Server appends them and calls Claude for the next step.
+    """
+    _gc_old_conversations()
+
+    conv = _conversations.get(req.conversation_id)
+    if not conv:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown conversation_id: {req.conversation_id}",
+        )
+
+    # Append tool_result blocks — these form the next user turn
+    results_list = [
+        {"tool_use_id": r.tool_use_id, "content": r.content, "is_error": r.is_error}
+        for r in req.results
+    ]
+    updated_messages = append_tool_results(conv["messages"], results_list)
+
+    # Call Claude with the appended tool_result already as the user turn.
+    # build_messages skips appending an empty user message, so passing
+    # user_message="" and images=None is correct.
+    result_dict = call_agent(
+        user_message="",
+        conversation=updated_messages,
+        context=req.context or conv.get("context"),
+        images=None,
+        model=req.model,
+    )
+
+    _conversations[req.conversation_id] = {
+        "messages": result_dict["updated_conversation"],
+        "last_active": time.time(),
+        "context": req.context or conv.get("context"),
+    }
+
+    return _make_turn_response(req.conversation_id, result_dict)
+
+
+@router.delete("/conversation/{conversation_id}")
+async def reset(conversation_id: str):
+    """Drop a conversation explicitly. Useful for testing."""
+    _conversations.pop(conversation_id, None)
+    return {"ok": True}
+
+
+@router.get("/health")
+async def agent_health():
+    """Liveness + active conversation count."""
+    _gc_old_conversations()
+    return {
+        "ok": True,
+        "active_conversations": len(_conversations),
+        "tools_loaded": len(AGENT_TOOLS),
+    }

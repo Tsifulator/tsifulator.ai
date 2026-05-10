@@ -190,6 +190,7 @@ def health_dashboard():
 # --- Routes ---
 from routes import chat, auth, gmail, files, notes
 from routes import transfer, calendar, computer_use, billing, generate
+from routes import agent  # v2 desktop agent (native tool calling)
 
 app.include_router(chat.router, prefix="/chat")
 app.include_router(auth.router, prefix="/auth")
@@ -201,6 +202,7 @@ app.include_router(calendar.router, prefix="/calendar")
 app.include_router(computer_use.router)
 app.include_router(billing.router, prefix="/billing")
 app.include_router(generate.router, prefix="/generate")
+app.include_router(agent.router, prefix="/agent")
 
 from routes import terminal as terminal_routes
 app.include_router(terminal_routes.router, prefix="/terminal")
