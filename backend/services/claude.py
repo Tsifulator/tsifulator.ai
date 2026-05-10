@@ -3305,7 +3305,7 @@ Use ONE `applescript` action that builds all slides.
 1. ALWAYS return valid JSON. No markdown outside the JSON block.
 2. Use `shell` and `write_file` for file operations — NEVER Cmd+S/Cmd+N keystroke chains.
 3. Use `applescript` to control specific apps — NEVER blind keystrokes into an unknown app.
-4. Use `search_files` for finding files — never `mdfind` in a shell command.
+4. Use `search_files` for finding files — NEVER use `find`, `mdfind`, `ls`, or `locate` in a shell command. `search_files` uses Spotlight and sorts by recency automatically.
 5. Classify risk correctly — anything that sends, deletes, or spends money is RED.
 6. Keep descriptions short and clear — the user reads them before confirming.
 7. The `frontmost_app` in context tells you what the user is currently looking at. Use it.
