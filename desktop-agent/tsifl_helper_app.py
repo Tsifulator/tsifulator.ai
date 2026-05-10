@@ -405,22 +405,49 @@ def _send_to_backend(message: str, frontmost_app: str, images: list | None = Non
         timeout = 120 if images else 60
         url = f"{backend.rstrip('/')}/chat/"
 
-        # Retry logic: DNS resolution can fail transiently on macOS
-        last_err = None
-        for attempt in range(3):
+        # DNS fallback: some home routers can't resolve Railway's long
+        # subdomain. If system DNS fails, resolve via Google DNS (8.8.8.8)
+        # and temporarily patch socket.getaddrinfo so httpx uses the IP.
+        r = None
+        try:
+            with _httpx.Client(timeout=timeout) as client:
+                r = client.post(url, json=body)
+        except Exception as dns_err:
+            err_str = str(dns_err).lower()
+            if "nodename" not in err_str and "errno 8" not in err_str:
+                raise  # not a DNS issue
+
+            sys.stderr.write("[tsifl-helper] system DNS failed, falling back to Google DNS\n")
+            from urllib.parse import urlparse as _urlparse_fn
+            hostname = _urlparse_fn(backend).hostname
+
+            # Resolve via dig @8.8.8.8
+            import subprocess as _sp
+            dig_out = _sp.run(
+                ["dig", "+short", hostname, "@8.8.8.8"],
+                capture_output=True, text=True, timeout=5,
+            )
+            ip = dig_out.stdout.strip().split("\n")[-1]
+            if not ip or not ip[0].isdigit():
+                raise dns_err  # Google DNS also failed
+
+            # Patch socket.getaddrinfo temporarily so httpx resolves correctly
+            import socket as _sock
+            _orig_getaddrinfo = _sock.getaddrinfo
+            def _patched_getaddrinfo(host, port, *args, **kwargs):
+                if host == hostname:
+                    sys.stderr.write(f"[tsifl-helper] DNS override: {hostname} → {ip}\n")
+                    return _orig_getaddrinfo(ip, port, *args, **kwargs)
+                return _orig_getaddrinfo(host, port, *args, **kwargs)
+
+            _sock.getaddrinfo = _patched_getaddrinfo
             try:
                 with _httpx.Client(timeout=timeout) as client:
                     r = client.post(url, json=body)
-                break
-            except Exception as dns_err:
-                last_err = dns_err
-                if attempt < 2:
-                    import time as _time_mod
-                    _time_mod.sleep(1)  # brief pause before retry
-                    continue
-                raise last_err
+            finally:
+                _sock.getaddrinfo = _orig_getaddrinfo
 
-        if r.status_code == 200:
+        if r is not None and r.status_code == 200:
             data = r.json()
             # Parse plan from Claude's JSON reply (desktop agent mode)
             plan = _extract_plan_from_reply(data)
