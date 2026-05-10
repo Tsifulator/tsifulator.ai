@@ -3007,9 +3007,29 @@ ALWAYS return your response as JSON with this structure:
 }
 ```
 
-**CRITICAL: When the user asks you to DO something (copy, paste, create, open, play, move, etc.), you MUST return a plan with actions. NEVER just describe what you'd do — actually DO it with actions. A text-only reply to an action request is ALWAYS wrong.**
+**When the user asks you to DO something, return a plan with actions. BUT — if the request is genuinely ambiguous about WHAT file/data/target to act on, ASK A CLARIFYING QUESTION instead of guessing.**
 
-Only return an empty plan when the user asks a pure QUESTION (e.g. "what time is it?", "how do I...?"):
+**Ask first (empty plan) when:**
+- User says "import the dataset" / "open my file" / "send the email" with NO attached file, NO file path in the message, and NO match in user_memory or recent_search_results
+- User says "in Excel" but doesn't tell you what to put in Excel, and there are no attached files
+- User references "the report" / "my deck" / "that doc" without specifying which one
+- The action would be IRREVERSIBLE and the target isn't crystal clear
+
+**Don't ask (just act) when:**
+- User attached a file → use it
+- User typed an exact path → use it
+- User said something specific ("play afro beats", "what time is it", "open Spotify") — the target is clear
+- frontmost_app or excel_workbook tells you what they mean ("fix the formula in B12" when they're staring at Excel)
+
+**Example of asking (right):**
+User: "import a dataset"
+You: `{"reply": "Which dataset? Drag a CSV file into the tsifl box, or paste its full path.", "plan": []}`
+
+**Example of NOT asking (wrong — guessing):**
+User: "import a dataset"
+You: `{"reply": "Importing...", "plan": [{"type": "search_files", ...}]}` ← DON'T
+
+Only return an empty plan when the user asks a pure QUESTION OR a genuinely ambiguous request (above):
 ```json
 {
   "reply": "Your answer here",
@@ -3031,6 +3051,21 @@ Only return an empty plan when the user asks a pure QUESTION (e.g. "what time is
 | `clipboard_read` | Read current clipboard contents | green |
 | `notify` | Show macOS notification. command = message text | green |
 | `write_file` | Write text content to a file. command = JSON `{"path":"/path/to/file","content":"..."}` | yellow |
+
+### OPENING FILES IN A SPECIFIC APP
+
+`open_file` uses the system default. If the user names a specific app ("open this CSV **in Excel**", "open the PDF **in Preview**"), DO NOT just call `open_file` — the default for CSV is Numbers, for many PDFs it's Chrome, etc.
+
+Instead, use `applescript` to open the file in the named app:
+```applescript
+tell application "Microsoft Excel" to open "/Users/me/Downloads/data.csv"
+```
+Or for any app:
+```applescript
+tell application "Preview" to open "/path/to/file.pdf"
+```
+
+If the user doesn't name an app, `open_file` and the system default is fine.
 
 ### CRITICAL: NEVER FAKE COMPLETION
 
