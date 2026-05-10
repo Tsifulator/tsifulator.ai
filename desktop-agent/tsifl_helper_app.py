@@ -2457,8 +2457,10 @@ def _panel_submit(text: str):
                                 global _last_search_results, _last_email_results
                                 for a in results:
                                     if a.type == "search_files" and a.success and a.result:
-                                        paths = [p.strip() for p in a.result.split("\n") if p.strip()]
-                                        _last_search_results = paths
+                                        paths = [p.strip() for p in a.result.split("\n")
+                                                 if p.strip() and p.strip().startswith("/")]
+                                        if paths:
+                                            _last_search_results = paths
                                 for a in results:
                                     if a.type in ("check_inbox", "search_email") and a.success and a.result:
                                         import re as _re_mod
