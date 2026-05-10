@@ -1621,6 +1621,34 @@ def execute_action(action: Action) -> Action:
             engine = cmd_data.get("engine", "google").lower()
             action.success, action.result = _web_search(query, engine)
 
+        elif action.type == "read_file":
+            # Read a text file (CSV, TSV, TXT, JSON, .py, .r, etc.) from disk
+            # so Claude can see the contents and act on them.
+            path = cmd_data.get("path", cmd)
+            max_chars = cmd_data.get("max_chars", 30000)
+            try:
+                from pathlib import Path as _P
+                p = _P(path).expanduser()
+                if not p.exists():
+                    action.success = False
+                    action.result = f"File not found: {p}"
+                elif p.stat().st_size > 5_000_000:
+                    action.success = False
+                    action.result = f"File too large ({p.stat().st_size:,} bytes); cap is 5MB"
+                else:
+                    try:
+                        content = p.read_text(encoding="utf-8", errors="replace")
+                    except Exception:
+                        # Binary or weird encoding — read as bytes and decode lossy
+                        content = p.read_bytes().decode("utf-8", errors="replace")
+                    action.success = True
+                    action.result = content[:max_chars]
+                    if len(content) > max_chars:
+                        action.result += f"\n... [truncated; file has {len(content):,} chars total]"
+            except Exception as e:
+                action.success = False
+                action.error = f"read_file failed: {e}"
+
         elif action.type == "fetch_url":
             # Fetch a URL and return the text content for Claude to read
             url = cmd_data.get("url", cmd)

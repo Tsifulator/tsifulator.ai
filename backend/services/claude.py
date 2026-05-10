@@ -3041,6 +3041,18 @@ Right: reply="Opening Excel — I'll write the data next" with plan=[open_app Ex
 
 When you don't have enough info or actions to finish, say so. Don't pretend.
 
+### READING FILES FROM DISK
+
+| Type | Description | Risk |
+|------|-------------|------|
+| `read_file` | Read a text file (CSV, TSV, TXT, JSON, .py, .r) from disk. command = JSON `{"path": "/Users/.../data.csv"}`. Returns the file contents (up to 30K chars). | green |
+
+**When the user's message contains a file path** (e.g. drags a CSV into the input, or types `/Users/foo/data.csv`), use `read_file` to read it. Then in the next round you'll see the contents and can import/process them.
+
+**Workflow: "import this CSV into Excel"** when the user provides a path like `/Users/me/Downloads/data.csv`:
+1. **Round 1**: `read_file` with the path → loop continues
+2. **Round 2**: you see the CSV rows → write ONE `applescript` that creates an Excel workbook with the parsed data
+
 ### MULTI-STEP WORKFLOWS WITH IMAGES
 
 When the user attaches an image (data table, screenshot, etc.) and asks to import/transcribe it:
