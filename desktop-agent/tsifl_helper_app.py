@@ -2360,94 +2360,154 @@ def _panel_submit(text: str):
                     threading.Thread(target=_auto_dismiss_panel, daemon=True).start()
 
                     def _auto_run():
+                        """Iterative agent loop — execute → observe → retry/continue.
+
+                        Works like Claude Code: execute actions, check results, and if
+                        something failed, send the error back to Claude for a different
+                        approach. Loops until success or MAX_AGENT_ROUNDS reached.
+                        """
+                        _MAX_AGENT_ROUNDS = 4  # Safety cap (initial + 3 retries)
+
                         try:
                             from executor import Action, Risk, execute_plan, run_applescript
 
-                            # Re-activate the app the user was in BEFORE tsifl panel
-                            # so keystrokes (Cmd+A, Cmd+C) hit the right app.
-                            has_keystrokes = any(
-                                s.get("type") in ("key_combo", "type_text") for s in plan
-                            )
-                            if has_keystrokes and frontmost_before:
-                                sys.stderr.write(f"[tsifl-helper] re-activating {frontmost_before!r} before keystrokes\n")
-                                run_applescript(f'tell application "{frontmost_before}" to activate', timeout=3)
-                                time.sleep(0.5)
+                            current_plan = plan
+                            current_reply = reply_text
+                            all_results = []  # accumulate across rounds for final summary
+                            frontmost = frontmost_before or ""
 
-                            actions = []
-                            for step in plan:
-                                actions.append(Action(
-                                    type=step.get("type", "shell"),
-                                    description=step.get("description", ""),
-                                    command=step.get("command", ""),
-                                    risk=Risk(step.get("risk", "green")),
-                                ))
-                            sys.stderr.write(f"[tsifl-helper] executing {len(actions)} actions: {[a.type for a in actions]}\n")
-                            # Don't stop on error — try all actions even if one fails
-                            results = execute_plan(actions, stop_on_error=False)
-                            for a in results:
-                                sys.stderr.write(f"[tsifl-helper]   {a.type}: {'✅' if a.success else '❌'} {a.result or a.error or ''}\n")
+                            for round_num in range(1, _MAX_AGENT_ROUNDS + 1):
+                                sys.stderr.write(f"[tsifl-agent] ── round {round_num}/{_MAX_AGENT_ROUNDS} ──\n")
 
-                            # Track search results for multi-turn ("open the first one")
-                            global _last_search_results, _last_email_results
-                            for a in results:
-                                if a.type == "search_files" and a.success and a.result:
-                                    paths = [p.strip() for p in a.result.split("\n") if p.strip()]
-                                    _last_search_results = paths
-
-                            # Track email results for multi-turn ("read 3", "reply to the first one")
-                            for a in results:
-                                if a.type in ("check_inbox", "search_email") and a.success and a.result:
-                                    import re as _re_mod
-                                    ids = _re_mod.findall(r"\[id:([^\]]+)\]", a.result)
-                                    if ids:
-                                        _last_email_results = [{"id": mid} for mid in ids]
-
-                            # ── Vision loop: if a screenshot was captured, feed it
-                            # back to Claude so it can see what happened and decide
-                            # the next step. This is the core of screen automation.
-                            screenshot_b64 = None
-                            for a in results:
-                                if a.type == "screenshot" and a.success and a.result:
-                                    screenshot_b64 = a.result
-
-                            # Check if Claude asked for continuation
-                            wants_continue = result.get("continue", False)
-                            if isinstance(result.get("_raw_reply"), dict):
-                                wants_continue = result["_raw_reply"].get("continue", wants_continue)
-
-                            if screenshot_b64 and (wants_continue or any(a.type == "screenshot" for a in results)):
-                                # Vision loop: hide panel immediately → runs in background
-                                global _vision_loop_active
-                                _vision_loop_active = True
-                                sys.stderr.write(f"[tsifl-helper] vision loop STARTING (background) for: {text[:60]!r}\n")
-                                try:
-                                    from PyObjCTools.AppHelper import callAfter as _ca
-                                    def _hide_now():
-                                        if _panel_ref is not None:
-                                            _panel_ref.orderOut_(None)
-                                    _ca(_hide_now)
-                                except Exception:
-                                    pass
-                                try:
-                                    rumps.notification(
-                                        title="tsifl 👁️",
-                                        subtitle="Working in background…",
-                                        message=f"Task: {text[:80]}",
-                                    )
-                                except Exception:
-                                    pass
-                                _vision_loop_continue(
-                                    text, screenshot_b64, reply_text,
-                                    my_session, results
+                                # Re-activate the app the user was in BEFORE tsifl panel
+                                # so keystrokes (Cmd+A, Cmd+C) hit the right app.
+                                has_keystrokes = any(
+                                    s.get("type") in ("key_combo", "type_text") for s in current_plan
                                 )
-                                return  # _vision_loop_continue handles the rest
+                                if has_keystrokes and frontmost:
+                                    sys.stderr.write(f"[tsifl-agent] re-activating {frontmost!r} before keystrokes\n")
+                                    run_applescript(f'tell application "{frontmost}" to activate', timeout=3)
+                                    time.sleep(0.5)
 
-                            # Build result summary
+                                # Build action objects from plan
+                                actions = []
+                                for step in current_plan:
+                                    actions.append(Action(
+                                        type=step.get("type", "shell"),
+                                        description=step.get("description", ""),
+                                        command=step.get("command", ""),
+                                        risk=Risk(step.get("risk", "green")),
+                                    ))
+                                sys.stderr.write(f"[tsifl-agent] executing {len(actions)} actions: {[a.type for a in actions]}\n")
+
+                                # Execute — stop on first error so we can retry fast
+                                results = execute_plan(actions, stop_on_error=True)
+                                all_results.extend(results)
+
+                                for a in results:
+                                    sys.stderr.write(f"[tsifl-agent]   {a.type}: {'✅' if a.success else '❌'} {(a.result or a.error or '')[:120]}\n")
+
+                                # ── Track search/email results for multi-turn ────────
+                                global _last_search_results, _last_email_results
+                                for a in results:
+                                    if a.type == "search_files" and a.success and a.result:
+                                        paths = [p.strip() for p in a.result.split("\n") if p.strip()]
+                                        _last_search_results = paths
+                                for a in results:
+                                    if a.type in ("check_inbox", "search_email") and a.success and a.result:
+                                        import re as _re_mod
+                                        ids = _re_mod.findall(r"\[id:([^\]]+)\]", a.result)
+                                        if ids:
+                                            _last_email_results = [{"id": mid} for mid in ids]
+
+                                # ── Vision loop: if screenshot captured → enter vision ─
+                                screenshot_b64 = None
+                                for a in results:
+                                    if a.type == "screenshot" and a.success and a.result:
+                                        screenshot_b64 = a.result
+
+                                if screenshot_b64 and any(a.type == "screenshot" for a in results):
+                                    global _vision_loop_active
+                                    _vision_loop_active = True
+                                    sys.stderr.write(f"[tsifl-agent] entering vision loop for: {text[:60]!r}\n")
+                                    try:
+                                        from PyObjCTools.AppHelper import callAfter as _ca
+                                        _ca(lambda: _panel_ref.orderOut_(None) if _panel_ref else None)
+                                    except Exception:
+                                        pass
+                                    try:
+                                        rumps.notification(
+                                            title="tsifl 👁️",
+                                            subtitle="Working in background…",
+                                            message=f"Task: {text[:80]}",
+                                        )
+                                    except Exception:
+                                        pass
+                                    _vision_loop_continue(
+                                        text, screenshot_b64, current_reply,
+                                        my_session, results
+                                    )
+                                    return  # vision loop owns the rest
+
+                                # ── Check for failures ───────────────────────────────
+                                failures = [a for a in results if not a.success and a.type != "screenshot"]
+
+                                if not failures:
+                                    # All succeeded — we're done
+                                    sys.stderr.write(f"[tsifl-agent] ✅ all actions succeeded on round {round_num}\n")
+                                    break
+
+                                # ── Failures exist — send feedback to Claude for retry ─
+                                if round_num >= _MAX_AGENT_ROUNDS:
+                                    sys.stderr.write(f"[tsifl-agent] max rounds reached, stopping with failures\n")
+                                    break
+
+                                # Build feedback message with results
+                                feedback_lines = [
+                                    f"[ACTION RESULTS — round {round_num}]",
+                                    f"Original task: \"{text}\"",
+                                    "",
+                                ]
+                                for a in results:
+                                    icon = "✅" if a.success else "❌"
+                                    feedback_lines.append(f"{icon} {a.type}: {a.description}")
+                                    if a.error:
+                                        feedback_lines.append(f"   Error: {a.error}")
+                                    elif a.result and len(str(a.result)) < 200:
+                                        feedback_lines.append(f"   Result: {a.result}")
+                                feedback_lines.append("")
+                                feedback_lines.append(
+                                    "Some actions failed. Try a DIFFERENT approach. "
+                                    "Do NOT repeat the same command that just failed — "
+                                    "use an alternative method or fix the underlying issue. "
+                                    "Return a single-step plan focused on the failed step."
+                                )
+                                feedback_msg = "\n".join(feedback_lines)
+
+                                sys.stderr.write(f"[tsifl-agent] sending failure feedback to Claude (round {round_num})\n")
+                                retry_result = _send_to_backend(feedback_msg, frontmost)
+                                new_plan = retry_result.get("_plan")
+
+                                if not new_plan or len(new_plan) == 0:
+                                    # Claude gave up or returned text-only — stop
+                                    current_reply = (retry_result.get("reply") or current_reply).strip()
+                                    sys.stderr.write(f"[tsifl-agent] Claude returned no retry plan, stopping\n")
+                                    break
+
+                                # Claude gave us a new plan — loop
+                                current_plan = new_plan
+                                current_reply = (retry_result.get("reply") or "Retrying…").strip()
+                                sys.stderr.write(f"[tsifl-agent] got retry plan ({len(new_plan)} steps), looping\n")
+
+                            # ── Build final result summary ───────────────────────
                             lines = []
-                            if reply_text and reply_text != "(no reply)":
-                                lines.append(reply_text)
+                            if current_reply and current_reply != "(no reply)":
+                                lines.append(current_reply)
                                 lines.append("")
-                            for a in results:
+
+                            # Show results from the LAST round (most relevant)
+                            last_round_results = results if results else all_results[-len(actions):] if all_results else []
+                            for a in last_round_results:
                                 icon = "✅" if a.success else "❌"
                                 lines.append(f"{icon} {a.description}")
                                 if a.type == "search_files" and a.success and a.result:
@@ -2459,16 +2519,18 @@ def _panel_submit(text: str):
                                         lines.append(f"      {folder}")
                                 elif a.type in ("check_inbox", "search_email", "read_email") and a.success and a.result:
                                     lines.append(a.result)
-                                elif a.type != "screenshot" and a.result and len(a.result) < 300:
+                                elif a.type != "screenshot" and a.result and len(str(a.result)) < 300:
                                     lines.append(f"   → {a.result}")
                                 if a.error:
                                     lines.append(f"   ⚠️ {a.error}")
+
                             if _last_search_results:
                                 lines.append("")
                                 lines.append("Say \"open 1\" or \"open the first one\" to open a result")
+
                             summary = "\n".join(lines)
                         except Exception as e:
-                            sys.stderr.write(f"[tsifl-helper] _auto_run CRASHED: {e}\n")
+                            sys.stderr.write(f"[tsifl-agent] _auto_run CRASHED: {e}\n")
                             import traceback; traceback.print_exc(file=sys.stderr)
                             summary = f"Execution failed: {e}"
 
