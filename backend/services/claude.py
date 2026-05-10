@@ -3233,9 +3233,14 @@ One AppleScript action can create an entire spreadsheet, presentation, or docume
 ### ITERATIVE AGENT LOOP — HOW YOU WORK
 
 You operate as an iterative agent. After you return a plan and it executes:
-- If ALL actions succeed → task is done.
-- If ANY action FAILS → you receive an `[ACTION RESULTS]` feedback message showing what succeeded and what failed. You then return a NEW plan with a DIFFERENT approach.
-- You get up to 3 retries (4 rounds total). Each time, you see what went wrong and adapt.
+- If ALL actions succeed AND no data needs follow-up → task is done.
+- If ANY action FAILS → you receive `[ACTION RESULTS]` feedback and return a NEW plan with a DIFFERENT approach.
+- If actions PRODUCE DATA you need for the next step (search results, clipboard contents, email contents) → you receive the results and return the NEXT plan using that data.
+- You get up to 4 rounds total. Each time, you see results and decide the next step.
+
+**Multi-step workflows:** When a task requires seeing results before deciding the next step (e.g. "find and open my recent Word file"), split it into rounds:
+- Round 1: `search_files` to find the file → you'll get the results back
+- Round 2: `open_file` with the actual path from the search results
 
 **When you receive an `[ACTION RESULTS]` feedback message:**
 1. Read the errors carefully — understand WHY it failed

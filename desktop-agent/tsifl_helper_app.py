@@ -2497,17 +2497,25 @@ def _panel_submit(text: str):
                                     )
                                     return  # vision loop owns the rest
 
-                                # ── Check for failures ───────────────────────────────
+                                # ── Check results and decide whether to continue ─────
                                 failures = [a for a in results if not a.success and a.type != "screenshot"]
 
-                                if not failures:
-                                    # All succeeded — we're done
+                                # Determine if Claude needs to see results to continue.
+                                # Actions that PRODUCE data Claude needs for the next step:
+                                _NEEDS_CONTINUATION = {"search_files", "clipboard_read", "shell",
+                                                       "check_inbox", "search_email", "read_email"}
+                                has_data_actions = any(
+                                    a.type in _NEEDS_CONTINUATION and a.success and a.result
+                                    for a in results
+                                )
+
+                                if not failures and not has_data_actions:
+                                    # All succeeded and no data to feed back — done
                                     sys.stderr.write(f"[tsifl-agent] ✅ all actions succeeded on round {round_num}\n")
                                     break
 
-                                # ── Failures exist — send feedback to Claude for retry ─
                                 if round_num >= _MAX_AGENT_ROUNDS:
-                                    sys.stderr.write(f"[tsifl-agent] max rounds reached, stopping with failures\n")
+                                    sys.stderr.write(f"[tsifl-agent] max rounds reached, stopping\n")
                                     break
 
                                 # Build feedback message with results
@@ -2521,15 +2529,23 @@ def _panel_submit(text: str):
                                     feedback_lines.append(f"{icon} {a.type}: {a.description}")
                                     if a.error:
                                         feedback_lines.append(f"   Error: {a.error}")
-                                    elif a.result and len(str(a.result)) < 200:
+                                    elif a.result and len(str(a.result)) < 500:
                                         feedback_lines.append(f"   Result: {a.result}")
-                                feedback_lines.append("")
-                                feedback_lines.append(
-                                    "Some actions failed. Try a DIFFERENT approach. "
-                                    "Do NOT repeat the same command that just failed — "
-                                    "use an alternative method or fix the underlying issue. "
-                                    "Return a single-step plan focused on the failed step."
-                                )
+
+                                if failures:
+                                    feedback_lines.append("")
+                                    feedback_lines.append(
+                                        "Some actions failed. Try a DIFFERENT approach. "
+                                        "Do NOT repeat the same command that just failed — "
+                                        "use an alternative method or fix the underlying issue."
+                                    )
+                                else:
+                                    feedback_lines.append("")
+                                    feedback_lines.append(
+                                        "All actions succeeded. Review the results above and "
+                                        "continue with the next step to complete the original task. "
+                                        "If the task is fully done, return an empty plan."
+                                    )
                                 feedback_msg = "\n".join(feedback_lines)
 
                                 sys.stderr.write(f"[tsifl-agent] sending failure feedback to Claude (round {round_num})\n")
