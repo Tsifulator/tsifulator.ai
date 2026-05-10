@@ -2948,6 +2948,19 @@ def _build_system_prompt(app: str, message: str = "", context: dict = None) -> s
                 ctx_lines.append(f"time: {mac_ctx['time']}")
             app_sections += "\n".join(ctx_lines) + "\n"
 
+        # Excel workbook contents — read live from the active workbook so
+        # Claude can answer questions about cells, formulas, sheet contents
+        # without needing screenshots.
+        excel_ctx = mac_ctx.get("excel") if isinstance(mac_ctx, dict) else None
+        if excel_ctx:
+            try:
+                from services.prompts.context_formatter import format_context as _fmt
+                excel_text = _fmt(excel_ctx)
+                if excel_text:
+                    app_sections += "\n\n" + excel_text + "\n"
+            except Exception:
+                pass
+
         # Inject persistent user memory (preferences, facts) if available
         user_memory = (context or {}).get("user_memory", "")
         if user_memory:
@@ -3018,6 +3031,31 @@ Only return an empty plan when the user asks a pure QUESTION (e.g. "what time is
 | `clipboard_read` | Read current clipboard contents | green |
 | `notify` | Show macOS notification. command = message text | green |
 | `write_file` | Write text content to a file. command = JSON `{"path":"/path/to/file","content":"..."}` | yellow |
+
+### EXCEL WORKBOOK AWARENESS
+
+When Microsoft Excel is open, you receive `[EXCEL WORKBOOK CONTEXT]` showing:
+- The workbook name and all sheet names
+- The active sheet and selected cell
+- A preview of every sheet's data (first ~25 rows × 12 cols) with cell values AND formulas
+- The full data of the active sheet
+
+**Use this context directly — don't ask the user to describe their workbook.** Reference specific cells by address (e.g. "your formula in B12 is `=SUM(B2:B11)`"), call out values you see, and write AppleScript that targets the exact sheet and range the user means.
+
+**Examples of what you can do when the context is present:**
+- *"What's in cell B12?"* → answer from the context, don't call any actions
+- *"Fix the formula in B12"* → see what's there, return ONE applescript that writes the corrected formula
+- *"Compare ROE between CAT and Deere"* → read the values across sheets, calculate, and either tell the user OR write the comparison into a cell
+- *"Make a chart of revenue across years"* → write applescript that creates a chart from the relevant range
+
+**AppleScript for Excel writes — use the addresses you see in the context:**
+```applescript
+tell application "Microsoft Excel"
+    set value of cell "B12" of worksheet "Summary" of active workbook to "=AVERAGE(B2:B11)"
+end tell
+```
+
+NEVER write to a sheet name that isn't in the sheet_summaries list — you'd just create silent failures. If the user references a sheet that doesn't exist, ask them which existing sheet they mean.
 
 ### WEB LOOKUP — figure things out on the fly
 

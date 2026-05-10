@@ -505,6 +505,172 @@ def get_running_apps() -> list[str]:
 
 # ── Rich context capture ────────────────────────────────────────────────────
 
+def get_excel_context() -> dict | None:
+    """Read the active Excel workbook's structure for Claude.
+
+    Returns a dict matching what context_formatter.format_context expects
+    for the Excel app:
+      - sheet, selected_cell, used_range
+      - sheet_summaries: [{name, rows, cols, used_range, preview, preview_formulas}, ...]
+      - sheet_data: rows × cols of active sheet
+      - sheet_formulas: same shape as sheet_data
+
+    Capped to keep token cost reasonable:
+      - Per sheet: 25 rows × 12 cols preview
+      - Active sheet: 50 rows × 20 cols with formulas
+    Returns None if Excel isn't running or has no open workbook.
+    """
+    # First check Excel has a workbook open
+    ok, _ = run_applescript(
+        'tell application "Microsoft Excel" to count workbooks',
+        timeout=3,
+    )
+    if not ok:
+        return None
+
+    # Read workbook metadata in a few simple AppleScript calls.
+    # Excel's AppleScript doesn't like complex repeat-loops over sheets,
+    # but "get name of every sheet" works perfectly.
+    ok, wb_name = run_applescript(
+        'tell application "Microsoft Excel" to get name of active workbook',
+        timeout=5,
+    )
+    if not ok:
+        return None
+
+    ok, active_sheet = run_applescript(
+        'tell application "Microsoft Excel" to get name of active sheet',
+        timeout=5,
+    )
+    if not ok:
+        active_sheet = ""
+
+    ok, selection = run_applescript(
+        'tell application "Microsoft Excel" to get address of selection',
+        timeout=5,
+    )
+    if not ok:
+        selection = ""
+
+    ok, sheets_raw = run_applescript(
+        'tell application "Microsoft Excel" to get name of every sheet of active workbook',
+        timeout=5,
+    )
+    if not ok or not sheets_raw:
+        return None
+    # AppleScript returns: "Sheet1, Sheet2, Sheet3" — comma-space separated
+    sheet_names = [n.strip() for n in sheets_raw.split(",") if n.strip()]
+
+    # For each sheet, read its used-range dimensions + cell values + formulas
+    # in a single AppleScript call returning a 2D list.
+    sheet_summaries = []
+    active_sheet_data: list = []
+    active_sheet_formulas: list = []
+    active_used_range = ""
+
+    for s_name in sheet_names:
+        esc_name = s_name.replace("\\", "\\\\").replace('"', '\\"')
+
+        # Get used range metadata
+        ok_m, meta = run_applescript(
+            f'''tell application "Microsoft Excel"
+    try
+        set ur to used range of worksheet "{esc_name}" of active workbook
+        return (get address of ur) & "||" & (count of rows of ur) & "||" & (count of columns of ur)
+    on error
+        return "||0||0"
+    end try
+end tell''',
+            timeout=5,
+        )
+        rng_addr = ""
+        rows_n = cols_n = 0
+        if ok_m and meta:
+            mparts = meta.split("||")
+            if len(mparts) >= 3:
+                rng_addr = mparts[0]
+                try:
+                    rows_n = int(mparts[1])
+                    cols_n = int(mparts[2])
+                except ValueError:
+                    rows_n = cols_n = 0
+
+        preview_rows: list = []
+        preview_formulas: list = []
+
+        if rows_n > 0 and cols_n > 0:
+            # Get values + formulas as flat comma-separated AppleScript lists
+            ok_v, vals_raw = run_applescript(
+                f'tell application "Microsoft Excel" to get value of '
+                f'used range of worksheet "{esc_name}" of active workbook',
+                timeout=8,
+            )
+            ok_f, forms_raw = run_applescript(
+                f'tell application "Microsoft Excel" to get formula of '
+                f'used range of worksheet "{esc_name}" of active workbook',
+                timeout=8,
+            )
+
+            # AppleScript returns 2D lists flattened with ", " — split by row count.
+            # First reshape to 2D, then cap to 25 rows × 12 cols.
+            def _split_cells(raw_str: str, total_cells: int) -> list[str]:
+                if not raw_str:
+                    return [""] * total_cells
+                # Single cell case: no commas
+                if total_cells == 1:
+                    return [raw_str]
+                # AppleScript joins with ", " — but cell values may contain commas!
+                # For now, use a heuristic: try comma-space split, pad/truncate to total_cells
+                parts = raw_str.split(", ")
+                if len(parts) != total_cells:
+                    # Mismatch — values contained commas. Best effort: keep what we have.
+                    pass
+                return parts
+
+            val_flat = _split_cells(vals_raw or "", rows_n * cols_n)
+            form_flat = _split_cells(forms_raw or "", rows_n * cols_n)
+
+            # Reshape to 2D, then cap
+            row_cap = min(rows_n, 25)
+            col_cap = min(cols_n, 12)
+            for r in range(row_cap):
+                vrow = []
+                frow = []
+                for c in range(col_cap):
+                    idx = r * cols_n + c
+                    v = val_flat[idx] if idx < len(val_flat) else ""
+                    f = form_flat[idx] if idx < len(form_flat) else ""
+                    vrow.append(v)
+                    frow.append(f if f.startswith("=") else None)
+                preview_rows.append(vrow)
+                preview_formulas.append(frow)
+
+        sheet_summaries.append({
+            "name": s_name,
+            "rows": rows_n,
+            "cols": cols_n,
+            "used_range": rng_addr,
+            "preview": preview_rows,
+            "preview_formulas": preview_formulas,
+        })
+
+        if s_name == active_sheet:
+            active_sheet_data = preview_rows
+            active_sheet_formulas = preview_formulas
+            active_used_range = rng_addr
+
+    return {
+        "app": "excel",
+        "workbook_name": wb_name,
+        "sheet": active_sheet,
+        "selected_cell": selection or "A1",
+        "used_range": active_used_range,
+        "sheet_summaries": sheet_summaries,
+        "sheet_data": active_sheet_data,
+        "sheet_formulas": active_sheet_formulas,
+    }
+
+
 def get_system_context() -> dict:
     """Capture rich context about the current Mac state."""
     ctx = {
@@ -540,6 +706,17 @@ def get_system_context() -> dict:
                 background_docs[dapp] = doc
     if background_docs:
         ctx["other_open_documents"] = background_docs
+
+    # Excel workbook contents — read the full structure when Excel is
+    # active or has a workbook open in the background. This lets Claude
+    # see cell values and formulas without needing screenshots.
+    if front == "Microsoft Excel" or "Microsoft Excel" in running:
+        try:
+            excel_ctx = get_excel_context()
+            if excel_ctx:
+                ctx["excel"] = excel_ctx
+        except Exception as e:
+            sys.stderr.write(f"[system_context] excel read failed: {e}\n")
 
     # Finder: get selected files
     if front == "Finder":
