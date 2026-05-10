@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field, asdict
 from enum import Enum
@@ -925,77 +926,101 @@ def spotify_play(query: str) -> tuple[bool, str]:
         # Snapshot what's playing BEFORE we do anything
         was_playing, before_track, before_artist = _get_playing()
 
+        # If something was playing, pause it first so we can detect when
+        # the new content starts (otherwise we can't tell if Play worked).
+        if was_playing:
+            run_applescript('tell application "Spotify" to pause', timeout=3)
+            time.sleep(0.3)
+
         # Ensure Spotify is running
         subprocess.run(["open", "-a", "Spotify"], check=True, timeout=10)
         time.sleep(0.5)
 
-        # ── Method 1: URL scheme + accessibility-based Play button click ──
-        # spotify:search:QUERY lands on the search results page (sometimes
-        # auto-navigates to a top playlist). We then RECURSIVELY find the
-        # first button whose description/title contains "Play" and click it.
-        # This handles both search-results pages and playlist detail pages.
+        # ── Method 1: URL scheme + click Play button at computed position ──
+        # spotify:search:QUERY lands directly on results (or a top playlist).
+        # We then compute the Play button position from window geometry.
+        # The big green Play button is consistently at ~(232, 388) relative
+        # to the main content area on playlist pages. Search pages also
+        # have a Play on the top result tile at similar offset.
         subprocess.run(["open", f"spotify:search:{encoded}"], timeout=5)
-        time.sleep(2.5)  # let page load
+        time.sleep(2.8)  # let page load + animations finish
 
-        # AppleScript handler that recursively walks the UI tree and clicks
-        # the first "Play" button found. Works for any Spotify page.
-        find_and_click_play = '''
-on findPlayButton(elem, depth)
-    if depth > 8 then return missing value
+        # Get Spotify window geometry, then click the Play button area.
+        # We also try the AppleScript UI tree walk as a primary method.
+        play_click_script = '''
+on findPlayInTree(elem, depth)
+    if depth > 12 then return missing value
     try
         set elemRole to role of elem
     on error
         return missing value
     end try
-    if elemRole is "AXButton" then
+    try
         set descr to ""
         try
             set descr to description of elem
         end try
         try
-            set descr to descr & " " & (title of elem)
+            set descr to descr & "||" & (title of elem)
         end try
         try
-            set descr to descr & " " & (help of elem)
+            set descr to descr & "||" & (help of elem)
         end try
-        if descr contains "Play" and descr does not contain "Pause" then
-            return elem
+        -- Match localized "Play" (English) or common variants
+        if descr contains "Play " or descr starts with "Play" or descr is "Play" then
+            if descr does not contain "Pause" then
+                return elem
+            end if
         end if
-    end if
+    end try
     try
         repeat with child in (UI elements of elem)
-            set r to my findPlayButton(child, depth + 1)
+            set r to my findPlayInTree(child, depth + 1)
             if r is not missing value then return r
         end repeat
     end try
     return missing value
-end findPlayButton
+end findPlayInTree
 
 tell application "Spotify" to activate
 delay 0.3
 tell application "System Events" to tell process "Spotify"
     set frontmost to true
     delay 0.3
-    set btn to my findPlayButton(window 1, 0)
+    -- Method A: recursive search for Play button
+    set btn to my findPlayInTree(window 1, 0)
     if btn is not missing value then
         click btn
-        return "clicked"
-    else
-        return "no_play_button"
+        return "AXClicked"
     end if
+    -- Method B: compute position from window geometry and CGEvent click
+    set winPos to position of window 1
+    set winSize to size of window 1
+    -- Play button is roughly at: window_left + sidebar_width(280) + 60
+    --                            window_top + header_height(60) + 320
+    set clickX to (item 1 of winPos) + 340
+    set clickY to (item 2 of winPos) + 380
+    return "POS:" & clickX & "," & clickY & "," & (item 3 of winSize) & "," & (item 4 of winSize)
 end tell
 '''
-        ok, result = run_applescript(find_and_click_play, timeout=15)
+        ok, result = run_applescript(play_click_script, timeout=15)
+        sys.stderr.write(f"[spotify_play] result: {result!r}\n")
+
+        if result and result.startswith("POS:"):
+            # AppleScript couldn't find Play via accessibility — click by position
+            try:
+                parts = result[4:].split(",")
+                cx, cy = int(parts[0]), int(parts[1])
+                sys.stderr.write(f"[spotify_play] clicking position ({cx}, {cy})\n")
+                click_at_position(cx, cy, "left")
+            except Exception as click_err:
+                sys.stderr.write(f"[spotify_play] position click failed: {click_err}\n")
+
         time.sleep(1.5)
 
-        # ── Verify: is something new playing that matches the query? ──
+        # ── Verify: is something playing now? ──
         is_playing, track, artist = _get_playing()
-        if is_playing and (track != before_track or artist != before_artist):
-            if _matches_query(track, artist):
-                return True, f"▶️ {track} — {artist}"
-            # Playlist play starts a track that may not match query name exactly
-            # (e.g. "afro beats" plays "Move" from an Afro House playlist).
-            # Accept if it started something new.
+        if is_playing:
             return True, f"▶️ {track} — {artist}"
 
         # ── Method 2: Fallback — Cmd+K search overlay + longer delays ─
