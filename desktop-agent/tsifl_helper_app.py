@@ -405,33 +405,64 @@ def _send_to_backend(message: str, frontmost_app: str, images: list | None = Non
         timeout = 120 if images else 60
         url = f"{backend.rstrip('/')}/chat/"
 
-        # DNS fallback: some home routers can't resolve Railway's long
-        # subdomain. If system DNS fails, resolve via Google DNS (8.8.8.8)
-        # and temporarily patch socket.getaddrinfo so httpx uses the IP.
+        # DNS fallback: some networks (home routers, university WiFi) can't
+        # resolve Railway's long subdomain AND block outbound DNS queries to
+        # 8.8.8.8. We cache known-good IPs in ~/.tsifl/dns_cache.json. When
+        # system DNS fails, fall back to the cached IP via socket patching.
+        from urllib.parse import urlparse as _urlparse_fn
+        hostname = _urlparse_fn(backend).hostname
+
+        def _get_cached_ip() -> str | None:
+            try:
+                cache_file = Path.home() / ".tsifl" / "dns_cache.json"
+                if cache_file.exists():
+                    data = json.loads(cache_file.read_text())
+                    return data.get(hostname)
+            except Exception:
+                pass
+            return None
+
+        def _save_cached_ip(ip: str):
+            try:
+                cache_file = Path.home() / ".tsifl" / "dns_cache.json"
+                cache_file.parent.mkdir(parents=True, exist_ok=True)
+                data = {}
+                if cache_file.exists():
+                    try:
+                        data = json.loads(cache_file.read_text())
+                    except Exception:
+                        data = {}
+                data[hostname] = ip
+                cache_file.write_text(json.dumps(data, indent=2))
+            except Exception:
+                pass
+
+        # Try normal request first
         r = None
         try:
             with _httpx.Client(timeout=timeout) as client:
                 r = client.post(url, json=body)
+            # Success! Cache the IP for future fallback use
+            try:
+                import socket as _sock
+                info = _sock.getaddrinfo(hostname, 443)
+                if info:
+                    resolved_ip = info[0][4][0]
+                    if resolved_ip and resolved_ip[0].isdigit():
+                        _save_cached_ip(resolved_ip)
+            except Exception:
+                pass
         except Exception as dns_err:
             err_str = str(dns_err).lower()
             if "nodename" not in err_str and "errno 8" not in err_str:
                 raise  # not a DNS issue
 
-            sys.stderr.write("[tsifl-helper] system DNS failed, falling back to Google DNS\n")
-            from urllib.parse import urlparse as _urlparse_fn
-            hostname = _urlparse_fn(backend).hostname
+            sys.stderr.write("[tsifl-helper] system DNS failed, trying cached IP\n")
 
-            # Resolve via dig @8.8.8.8
-            import subprocess as _sp
-            dig_out = _sp.run(
-                ["dig", "+short", hostname, "@8.8.8.8"],
-                capture_output=True, text=True, timeout=5,
-            )
-            ip = dig_out.stdout.strip().split("\n")[-1]
-            if not ip or not ip[0].isdigit():
-                raise dns_err  # Google DNS also failed
+            # Try cached IP first, then known-good Railway IP as last resort
+            ip = _get_cached_ip() or "66.33.22.247"  # current Railway IP
 
-            # Patch socket.getaddrinfo temporarily so httpx resolves correctly
+            # Patch socket.getaddrinfo temporarily so httpx uses the IP
             import socket as _sock
             _orig_getaddrinfo = _sock.getaddrinfo
             def _patched_getaddrinfo(host, port, *args, **kwargs):
@@ -444,6 +475,8 @@ def _send_to_backend(message: str, frontmost_app: str, images: list | None = Non
             try:
                 with _httpx.Client(timeout=timeout) as client:
                     r = client.post(url, json=body)
+                # Connection worked — save this IP as known-good
+                _save_cached_ip(ip)
             finally:
                 _sock.getaddrinfo = _orig_getaddrinfo
 
