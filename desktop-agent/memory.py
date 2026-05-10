@@ -1,14 +1,16 @@
 """
-memory.py — Local persistent memory for tsifl desktop agent.
+memory.py — Local persistent memory + custom shortcuts for tsifl desktop agent.
 
-Stores user preferences, facts, and context that persist across sessions.
-Examples:
-  - "my work email is nick@company.com"
-  - "use Safari for personal browsing"
-  - "my boss is called Dave"
+Two storage systems:
+  1. Memory: user facts & preferences that persist across sessions
+     - "my work email is nick@company.com"
+     - "my boss is called Dave"
+     Storage: ~/.tsifl/memory.json
 
-Storage: ~/.tsifl/memory.json — simple flat list of facts.
-The full list is sent as context with every request so Claude can use it.
+  2. Shortcuts: temporary command aliases the user can set/clear
+     - "set dataset as cmd+d"  → pressing cmd+d in tsifl = "open the dataset"
+     - "set data as /data"     → typing "/data" in tsifl = run the assigned action
+     Storage: ~/.tsifl/shortcuts.json
 """
 
 import json
@@ -17,7 +19,12 @@ from pathlib import Path
 from datetime import datetime
 
 _MEMORY_FILE = Path.home() / ".tsifl" / "memory.json"
+_SHORTCUTS_FILE = Path.home() / ".tsifl" / "shortcuts.json"
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MEMORY — persistent user facts & preferences
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def load_memories() -> list[dict]:
     """Load all stored memories. Returns list of {fact, added} dicts."""
@@ -43,15 +50,33 @@ def save_memory(fact: str) -> str:
         if m.get("fact", "").lower().strip() == fact_lower:
             return "I already know that."
 
-    memories.append({
-        "fact": fact.strip(),
-        "added": datetime.now().isoformat(timespec="seconds"),
-    })
+    # Update existing facts about the same subject
+    # e.g. "my email is X" should replace "my email is Y"
+    updated = False
+    for i, m in enumerate(memories):
+        old_fact = m.get("fact", "")
+        # Match "my X is Y" pattern — replace if same subject
+        old_match = re.match(r"^(my\s+\S+(?:\s+\S+)?\s+(?:is|are))\s+", old_fact, re.IGNORECASE)
+        new_match = re.match(r"^(my\s+\S+(?:\s+\S+)?\s+(?:is|are))\s+", fact.strip(), re.IGNORECASE)
+        if old_match and new_match and old_match.group(1).lower() == new_match.group(1).lower():
+            memories[i] = {
+                "fact": fact.strip(),
+                "added": datetime.now().isoformat(timespec="seconds"),
+            }
+            updated = True
+            break
+
+    if not updated:
+        memories.append({
+            "fact": fact.strip(),
+            "added": datetime.now().isoformat(timespec="seconds"),
+        })
+
     _MEMORY_FILE.write_text(
         json.dumps(memories, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
-    return f"Got it — I'll remember that."
+    return "Updated." if updated else "Got it — I'll remember that."
 
 
 def forget_memory(keyword: str) -> str:
@@ -86,13 +111,143 @@ def list_memories() -> str:
 def get_memory_context() -> str:
     """Get memories formatted for injection into the system prompt context."""
     memories = load_memories()
-    if not memories:
-        return ""
-    facts = [m["fact"] for m in memories]
-    return "User preferences & facts (remember these):\n" + "\n".join(f"- {f}" for f in facts)
+    shortcuts = load_shortcuts()
+    parts = []
+
+    if memories:
+        facts = [m["fact"] for m in memories]
+        parts.append("User preferences & facts (remember these):\n" + "\n".join(f"- {f}" for f in facts))
+
+    if shortcuts:
+        sc_lines = [f"- /{s['trigger']} → \"{s['action']}\"" for s in shortcuts]
+        parts.append("User shortcuts (execute the action when user types the trigger):\n" + "\n".join(sc_lines))
+
+    return "\n\n".join(parts)
 
 
-# ── Intent detection: does the user want to save/forget/list memories? ────
+# ═══════════════════════════════════════════════════════════════════════════════
+# SHORTCUTS — temporary command aliases
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def load_shortcuts() -> list[dict]:
+    """Load all stored shortcuts. Returns list of {trigger, action, description, added} dicts."""
+    if not _SHORTCUTS_FILE.exists():
+        return []
+    try:
+        data = json.loads(_SHORTCUTS_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return data
+    except (json.JSONDecodeError, OSError):
+        pass
+    return []
+
+
+def save_shortcut(trigger: str, action: str, description: str = "") -> str:
+    """Save or update a custom shortcut.
+
+    Args:
+        trigger: the keyword/slash command (e.g. "data", "report", "emails")
+        action: what to do when triggered (e.g. "open ~/Desktop/data.csv in RStudio")
+        description: optional human-readable description
+    """
+    _SHORTCUTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    shortcuts = load_shortcuts()
+    trigger_clean = trigger.lower().strip().lstrip("/")
+
+    # Update if trigger already exists
+    for i, s in enumerate(shortcuts):
+        if s.get("trigger", "").lower() == trigger_clean:
+            shortcuts[i] = {
+                "trigger": trigger_clean,
+                "action": action.strip(),
+                "description": description or action.strip()[:60],
+                "added": datetime.now().isoformat(timespec="seconds"),
+            }
+            _SHORTCUTS_FILE.write_text(
+                json.dumps(shortcuts, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            return f"Updated /{trigger_clean}"
+
+    shortcuts.append({
+        "trigger": trigger_clean,
+        "action": action.strip(),
+        "description": description or action.strip()[:60],
+        "added": datetime.now().isoformat(timespec="seconds"),
+    })
+    _SHORTCUTS_FILE.write_text(
+        json.dumps(shortcuts, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return f"Created /{trigger_clean} — type it anytime to run: {action.strip()[:60]}"
+
+
+def remove_shortcut(trigger: str) -> str:
+    """Remove a shortcut by trigger name."""
+    shortcuts = load_shortcuts()
+    trigger_clean = trigger.lower().strip().lstrip("/")
+    remaining = [s for s in shortcuts if s.get("trigger", "").lower() != trigger_clean]
+
+    if len(remaining) == len(shortcuts):
+        return f"No shortcut '/{trigger_clean}' found."
+
+    _SHORTCUTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _SHORTCUTS_FILE.write_text(
+        json.dumps(remaining, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return f"Removed /{trigger_clean}"
+
+
+def list_shortcuts() -> str:
+    """Return a formatted string of all shortcuts."""
+    shortcuts = load_shortcuts()
+    if not shortcuts:
+        return "No shortcuts set. Say 'set X as /name' to create one."
+    lines = []
+    for s in shortcuts:
+        lines.append(f"  /{s['trigger']} → {s['action'][:80]}")
+    return f"Your shortcuts:\n" + "\n".join(lines)
+
+
+def resolve_shortcut(message: str) -> str | None:
+    """Check if the message matches a shortcut trigger. Returns the action or None.
+
+    Matches: /trigger, /trigger with extra text
+    The action text is returned so it can be sent to the backend as if the user typed it.
+    """
+    msg = message.strip()
+    if not msg.startswith("/"):
+        return None
+
+    # Extract the trigger word
+    parts = msg[1:].split(None, 1)
+    if not parts:
+        return None
+    trigger = parts[0].lower()
+
+    shortcuts = load_shortcuts()
+    for s in shortcuts:
+        if s.get("trigger", "").lower() == trigger:
+            action = s["action"]
+            # If user typed extra text after the trigger, append it
+            if len(parts) > 1:
+                action += " " + parts[1]
+            return action
+
+    return None  # no matching shortcut
+
+
+def clear_all_shortcuts() -> str:
+    """Remove all shortcuts."""
+    if _SHORTCUTS_FILE.exists():
+        _SHORTCUTS_FILE.unlink()
+    return "All shortcuts cleared."
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# INTENT DETECTION — routes memory/shortcut commands locally
+# ═══════════════════════════════════════════════════════════════════════════════
 
 _REMEMBER_PATTERNS = [
     re.compile(r"^remember\s+(?:that\s+)?(.+)", re.IGNORECASE),
@@ -113,14 +268,72 @@ _LIST_PATTERNS = [
     re.compile(r"^memories$", re.IGNORECASE),
 ]
 
+# Shortcut patterns: "set X as /name", "remove shortcut /name", etc.
+_SET_SHORTCUT_PATTERNS = [
+    # "set <action> as /trigger"
+    re.compile(r"^set\s+(.+?)\s+as\s+/(\S+)$", re.IGNORECASE),
+    # "create shortcut /trigger for <action>"
+    re.compile(r"^(?:create|add)\s+(?:shortcut|command)\s+/(\S+)\s+(?:for|to|=)\s+(.+)$", re.IGNORECASE),
+    # "shortcut /trigger = action"
+    re.compile(r"^(?:shortcut|cmd)\s+/(\S+)\s*=\s*(.+)$", re.IGNORECASE),
+]
+
+_REMOVE_SHORTCUT_PATTERNS = [
+    re.compile(r"^(?:remove|delete|clear)\s+(?:shortcut|command)\s+/(\S+)$", re.IGNORECASE),
+    re.compile(r"^unset\s+/(\S+)$", re.IGNORECASE),
+]
+
+_LIST_SHORTCUTS_PATTERNS = [
+    re.compile(r"^(?:list|show)\s+(?:my\s+)?(?:shortcuts|commands)$", re.IGNORECASE),
+    re.compile(r"^shortcuts$", re.IGNORECASE),
+    re.compile(r"^my\s+shortcuts$", re.IGNORECASE),
+]
+
+_CLEAR_SHORTCUTS_PATTERNS = [
+    re.compile(r"^clear\s+(?:all\s+)?shortcuts$", re.IGNORECASE),
+]
+
 
 def check_memory_intent(message: str) -> str | None:
-    """Check if the message is a memory command. Returns response string or None.
+    """Check if the message is a memory or shortcut command. Returns response string or None.
 
     Handles locally — these never need to go to the backend.
     """
     msg = message.strip()
 
+    # ── Shortcut commands ─────────────────────────────────
+    # List shortcuts
+    for pat in _LIST_SHORTCUTS_PATTERNS:
+        if pat.match(msg):
+            return list_shortcuts()
+
+    # Clear all shortcuts
+    for pat in _CLEAR_SHORTCUTS_PATTERNS:
+        if pat.match(msg):
+            return clear_all_shortcuts()
+
+    # Remove shortcut
+    for pat in _REMOVE_SHORTCUT_PATTERNS:
+        m = pat.match(msg)
+        if m:
+            return remove_shortcut(m.group(1))
+
+    # Set shortcut — "set X as /name"
+    for pat in _SET_SHORTCUT_PATTERNS:
+        m = pat.match(msg)
+        if m:
+            groups = m.groups()
+            if len(groups) == 2:
+                # Figure out which group is trigger vs action
+                # Pattern 1: (action, trigger) — "set <action> as /<trigger>"
+                # Pattern 2&3: (trigger, action) — "create shortcut /<trigger> for <action>"
+                if pat == _SET_SHORTCUT_PATTERNS[0]:
+                    action, trigger = groups
+                else:
+                    trigger, action = groups
+                return save_shortcut(trigger, action)
+
+    # ── Memory commands ───────────────────────────────────
     # List memories
     for pat in _LIST_PATTERNS:
         if pat.match(msg):
@@ -138,4 +351,4 @@ def check_memory_intent(message: str) -> str | None:
         if m:
             return save_memory(m.group(1))
 
-    return None  # not a memory command — proceed normally
+    return None  # not a memory/shortcut command — proceed normally

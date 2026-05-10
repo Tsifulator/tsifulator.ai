@@ -498,6 +498,12 @@ def _describe_action(atype: str, payload: dict) -> str:
     elif atype == "spotify_play":
         q = payload.get("query", "")
         return f"Play '{q}' on Spotify"
+    elif atype == "save_memory":
+        fact = payload.get("fact", "")
+        return f"Remember: {fact[:50]}" if fact else "Save memory"
+    elif atype == "set_shortcut":
+        trigger = payload.get("trigger", "?")
+        return f"Create shortcut /{trigger}"
     return atype
 
 
@@ -524,6 +530,8 @@ def _extract_plan_from_reply(data: dict) -> list | None:
         "scroll", "wait",
         # App-specific fast actions
         "spotify_play",
+        # Memory & shortcuts
+        "save_memory", "set_shortcut",
     }
 
     # Risk mapping for known action types
@@ -541,6 +549,8 @@ def _extract_plan_from_reply(data: dict) -> list | None:
         "click_at": "yellow", "type_text": "yellow", "key_combo": "yellow",
         # App-specific
         "spotify_play": "green",
+        # Memory & shortcuts — silent, always green
+        "save_memory": "green", "set_shortcut": "green",
     }
 
     actions = data.get("actions") or []
@@ -2206,9 +2216,9 @@ def _panel_submit(text: str):
     # New query typed — cancel any pending plan
     _pending_plan = None
 
-    # ── Local memory commands (no backend needed) ────────────────────
+    # ── Local memory & shortcut commands (no backend needed) ─────────
     try:
-        from memory import check_memory_intent
+        from memory import check_memory_intent, resolve_shortcut
         mem_response = check_memory_intent(text)
         if mem_response is not None:
             _panel_show_response(mem_response)
@@ -2219,6 +2229,12 @@ def _panel_submit(text: str):
                 except Exception:
                     pass
             return
+
+        # Resolve shortcut: /trigger → action text, then continue as if user typed it
+        resolved = resolve_shortcut(text)
+        if resolved is not None:
+            sys.stderr.write(f"[tsifl-helper] shortcut resolved: {text!r} → {resolved!r}\n")
+            text = resolved  # replace with the action — falls through to backend
     except Exception:
         pass
 

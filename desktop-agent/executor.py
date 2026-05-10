@@ -1260,6 +1260,35 @@ def execute_action(action: Action) -> Action:
             engine = cmd_data.get("engine", "google").lower()
             action.success, action.result = _web_search(query, engine)
 
+        # ── Memory & shortcut actions ──────────────────────────────────
+        elif action.type == "save_memory":
+            # Claude can save facts about the user proactively
+            fact = cmd_data.get("fact", cmd)
+            try:
+                from memory import save_memory as _save_mem
+                action.result = _save_mem(fact)
+                action.success = True
+            except Exception as e:
+                action.success = False
+                action.error = f"Memory save failed: {e}"
+
+        elif action.type == "set_shortcut":
+            # Claude can create shortcuts for the user
+            trigger = cmd_data.get("trigger", "")
+            shortcut_action = cmd_data.get("action", "")
+            desc = cmd_data.get("description", "")
+            if not trigger or not shortcut_action:
+                action.success = False
+                action.result = "set_shortcut needs trigger and action"
+            else:
+                try:
+                    from memory import save_shortcut as _save_sc
+                    action.result = _save_sc(trigger, shortcut_action, desc)
+                    action.success = True
+                except Exception as e:
+                    action.success = False
+                    action.error = f"Shortcut save failed: {e}"
+
         else:
             action.success = False
             action.error = f"Unknown action type: {action.type}"
