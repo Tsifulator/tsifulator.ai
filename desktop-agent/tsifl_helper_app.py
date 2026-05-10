@@ -2871,7 +2871,225 @@ _TYPE_EVENT_HOTKEY_ID = 0x686B6964
 _CMD_KEY = 0x100
 _SHIFT_KEY = 0x200
 _OPTION_KEY = 0x800
+_CONTROL_KEY = 0x1000
 _VK_T = 0x11  # 'T' key virtual keycode
+
+# Virtual keycodes for dynamic hotkeys (macOS Carbon keycodes)
+_VK_MAP = {
+    "a": 0x00, "s": 0x01, "d": 0x02, "f": 0x03, "h": 0x04, "g": 0x05,
+    "z": 0x06, "x": 0x07, "c": 0x08, "v": 0x09, "b": 0x0B, "q": 0x0C,
+    "w": 0x0D, "e": 0x0E, "r": 0x0F, "y": 0x10, "t": 0x11, "1": 0x12,
+    "2": 0x13, "3": 0x14, "4": 0x15, "6": 0x16, "5": 0x17, "9": 0x19,
+    "7": 0x1A, "8": 0x1C, "0": 0x1D, "o": 0x1F, "u": 0x20, "i": 0x22,
+    "p": 0x23, "l": 0x25, "j": 0x26, "k": 0x28, "n": 0x2D, "m": 0x2E,
+    "space": 0x31, "return": 0x24, "tab": 0x30, "delete": 0x33,
+    "escape": 0x35, "left": 0x7B, "right": 0x7C, "down": 0x7D, "up": 0x7E,
+    "f1": 0x7A, "f2": 0x78, "f3": 0x63, "f4": 0x76, "f5": 0x60,
+    "f6": 0x61, "f7": 0x62, "f8": 0x64, "f9": 0x65, "f10": 0x6D,
+    "f11": 0x67, "f12": 0x6F,
+}
+
+_MODIFIER_MAP = {
+    "cmd": _CMD_KEY, "command": _CMD_KEY, "⌘": _CMD_KEY,
+    "shift": _SHIFT_KEY, "⇧": _SHIFT_KEY,
+    "opt": _OPTION_KEY, "option": _OPTION_KEY, "alt": _OPTION_KEY, "⌥": _OPTION_KEY,
+    "ctrl": _CONTROL_KEY, "control": _CONTROL_KEY, "⌃": _CONTROL_KEY,
+}
+
+# Dynamic hotkey registry: hotkey_id (int) → {"trigger": str, "action": str, "ref": c_void_p}
+_dynamic_hotkeys: dict[int, dict] = {}
+_next_hotkey_id = 100  # start at 100 to avoid conflict with id=1 (⌘⌥T)
+
+
+def _parse_hotkey_combo(combo: str) -> tuple[int, int] | None:
+    """Parse 'cmd+d', 'cmd+shift+1' → (virtual_keycode, modifier_mask) or None."""
+    parts = [p.strip().lower() for p in combo.replace("+", " ").split()]
+    if not parts:
+        return None
+
+    modifiers = 0
+    key_part = None
+    for p in parts:
+        if p in _MODIFIER_MAP:
+            modifiers |= _MODIFIER_MAP[p]
+        else:
+            key_part = p
+
+    if key_part is None or key_part not in _VK_MAP:
+        return None
+    if modifiers == 0:
+        modifiers = _CMD_KEY  # default to Cmd if no modifiers given
+
+    return (_VK_MAP[key_part], modifiers)
+
+
+def _register_dynamic_hotkey(trigger: str, action: str, hotkey_combo: str) -> tuple[bool, str]:
+    """Register a system-level global hotkey that runs a tsifl action.
+
+    Args:
+        trigger: shortcut name (e.g. "data")
+        action: what to do (e.g. "open ~/Desktop/data.csv")
+        hotkey_combo: key combo string (e.g. "cmd+d")
+
+    Returns (success, message).
+    """
+    global _next_hotkey_id
+
+    if not _CARBON_AVAILABLE or _carbon is None:
+        return False, "Carbon framework not available"
+
+    parsed = _parse_hotkey_combo(hotkey_combo)
+    if parsed is None:
+        return False, f"Couldn't parse hotkey: {hotkey_combo}"
+
+    vk_code, modifiers = parsed
+
+    # Check if this combo is already taken
+    # (⌘⌥T is reserved)
+    if vk_code == _VK_T and modifiers == (_CMD_KEY | _OPTION_KEY):
+        return False, "⌘⌥T is reserved for the tsifl panel"
+
+    # Unregister existing shortcut with same trigger
+    for hid, info in list(_dynamic_hotkeys.items()):
+        if info["trigger"] == trigger:
+            _unregister_dynamic_hotkey_by_id(hid)
+            break
+
+    hk_id = _next_hotkey_id
+    _next_hotkey_id += 1
+
+    try:
+        target = _carbon.GetApplicationEventTarget()
+        hotkey_id_struct = _EventHotKeyID(signature=0x74736966, id=hk_id)
+        hotkey_ref = ctypes.c_void_p()
+
+        status = _carbon.RegisterEventHotKey(
+            vk_code, modifiers,
+            hotkey_id_struct,
+            target, 0,
+            ctypes.byref(hotkey_ref),
+        )
+        if status != 0:
+            return False, f"RegisterEventHotKey failed (status={status})"
+
+        _dynamic_hotkeys[hk_id] = {
+            "trigger": trigger,
+            "action": action,
+            "combo": hotkey_combo,
+            "ref": hotkey_ref,
+        }
+
+        pretty = _pretty_combo(hotkey_combo)
+        sys.stderr.write(f"[tsifl-helper] registered dynamic hotkey: {pretty} → /{trigger}\n")
+        return True, f"Registered {pretty} → /{trigger}"
+
+    except Exception as e:
+        return False, f"Hotkey registration error: {e}"
+
+
+def _unregister_dynamic_hotkey_by_id(hk_id: int):
+    """Unregister a single dynamic hotkey by its ID."""
+    info = _dynamic_hotkeys.pop(hk_id, None)
+    if info and info.get("ref") and _carbon:
+        try:
+            _carbon.UnregisterEventHotKey.argtypes = [ctypes.c_void_p]
+            _carbon.UnregisterEventHotKey.restype = ctypes.c_int32
+            _carbon.UnregisterEventHotKey(info["ref"])
+        except Exception:
+            pass
+
+
+def unregister_dynamic_hotkey(trigger: str) -> tuple[bool, str]:
+    """Unregister a dynamic hotkey by trigger name."""
+    for hk_id, info in list(_dynamic_hotkeys.items()):
+        if info["trigger"] == trigger:
+            _unregister_dynamic_hotkey_by_id(hk_id)
+            return True, f"Unregistered hotkey for /{trigger}"
+    return False, f"No hotkey registered for /{trigger}"
+
+
+def _pretty_combo(combo: str) -> str:
+    """Turn 'cmd+d' into '⌘D' for display."""
+    symbols = {"cmd": "⌘", "command": "⌘", "shift": "⇧", "opt": "⌥",
+               "option": "⌥", "alt": "⌥", "ctrl": "⌃", "control": "⌃"}
+    parts = [p.strip().lower() for p in combo.replace("+", " ").split()]
+    result = ""
+    key = ""
+    for p in parts:
+        if p in symbols:
+            result += symbols[p]
+        else:
+            key = p.upper()
+    return result + key
+
+
+def _on_dynamic_hotkey(hotkey_id: int):
+    """Called when a dynamic hotkey fires. Executes the saved action."""
+    info = _dynamic_hotkeys.get(hotkey_id)
+    if not info:
+        return
+    action_text = info["action"]
+    trigger = info["trigger"]
+    sys.stderr.write(f"[tsifl-helper] dynamic hotkey fired: /{trigger} → {action_text[:60]!r}\n")
+
+    # Execute the action as if the user typed it in the panel
+    def _run_hotkey_action():
+        frontmost = _detect_frontmost_app()
+        try:
+            result = _send_to_backend(action_text, frontmost)
+            plan = result.get("_plan")
+            reply = (result.get("reply") or "").strip()
+
+            if plan and isinstance(plan, list) and len(plan) > 0:
+                # Execute the plan directly (all green/yellow = auto-execute)
+                from executor import Action, Risk, execute_plan
+                actions = []
+                for step in plan:
+                    actions.append(Action(
+                        type=step.get("type", "shell"),
+                        description=step.get("description", ""),
+                        command=step.get("command", ""),
+                        risk=Risk(step.get("risk", "green")),
+                    ))
+                sys.stderr.write(f"[tsifl-helper] hotkey executing {len(actions)} actions\n")
+                results = execute_plan(actions, stop_on_error=True)
+                # Show notification with result
+                ok_count = sum(1 for a in results if a.success)
+                fail_count = sum(1 for a in results if not a.success)
+                if fail_count == 0:
+                    msg = reply or f"✅ /{trigger} done ({ok_count} actions)"
+                else:
+                    msg = f"⚠️ {fail_count} action{'s' if fail_count > 1 else ''} failed"
+            else:
+                msg = reply or "Done"
+
+            try:
+                import rumps as _r
+                _r.notification(title=f"tsifl /{trigger}", subtitle="", message=msg[:200])
+            except Exception:
+                pass
+        except Exception as e:
+            sys.stderr.write(f"[tsifl-helper] hotkey action error: {e}\n")
+            try:
+                import rumps as _r
+                _r.notification(title="tsifl", subtitle="Error", message=str(e)[:200])
+            except Exception:
+                pass
+
+    threading.Thread(target=_run_hotkey_action, daemon=True).start()
+
+
+def _register_saved_hotkeys():
+    """On startup, register any hotkey shortcuts from ~/.tsifl/shortcuts.json."""
+    try:
+        from memory import load_shortcuts
+        shortcuts = load_shortcuts()
+        for s in shortcuts:
+            combo = s.get("hotkey", "")
+            if combo:
+                _register_dynamic_hotkey(s["trigger"], s["action"], combo)
+    except Exception as e:
+        sys.stderr.write(f"[tsifl-helper] failed loading saved hotkeys: {e}\n")
 
 # Carbon C structs as ctypes
 class _EventHotKeyID(ctypes.Structure):
@@ -2893,17 +3111,46 @@ _carbon_callback_holder: "object | None" = None
 
 
 def _carbon_hotkey_callback(next_handler, event, user_data):
-    """C callback invoked by the Carbon event manager when our hotkey fires.
+    """C callback invoked by the Carbon event manager when ANY hotkey fires.
 
     Signature: OSStatus (EventHandlerCallRef, EventRef, void*)
-    We receive the event ref but don't need to inspect it — we registered
-    only ONE hotkey, so any invocation here means ⌘⌥T was pressed.
+    We extract the hotkey ID from the event to route between the panel
+    (id=1) and dynamic user shortcuts (id >= 100).
 
-    Returning 0 (noErr) tells Carbon we handled the event. The keystroke
-    is consumed and doesn't propagate to whatever app is frontmost.
+    Returning 0 (noErr) tells Carbon we handled the event.
     """
     try:
-        _on_shortcut_pressed()
+        # Extract the hotkey ID from the Carbon event
+        hotkey_id_val = 1  # default to panel hotkey
+        try:
+            hk_id_struct = _EventHotKeyID()
+            _carbon.GetEventParameter.argtypes = [
+                ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32,
+                ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p,
+                ctypes.c_void_p,
+            ]
+            _carbon.GetEventParameter.restype = ctypes.c_int32
+            _carbon.GetEventParameter(
+                event,
+                _KEVENT_PARAM_DIRECT,       # kEventParamDirectObject
+                _TYPE_EVENT_HOTKEY_ID,       # typeEventHotKeyID
+                None,
+                ctypes.sizeof(hk_id_struct),
+                None,
+                ctypes.byref(hk_id_struct),
+            )
+            hotkey_id_val = hk_id_struct.id
+        except Exception:
+            pass  # fallback to panel hotkey
+
+        if hotkey_id_val == 1:
+            # Panel toggle: ⌘⌥T
+            _on_shortcut_pressed()
+        elif hotkey_id_val in _dynamic_hotkeys:
+            # Dynamic user shortcut
+            _on_dynamic_hotkey(hotkey_id_val)
+        else:
+            sys.stderr.write(f"[tsifl-helper] unknown hotkey id={hotkey_id_val}\n")
     except Exception as e:
         sys.stderr.write(f"[tsifl-helper] hotkey callback error: {e}\n")
     return 0  # noErr
@@ -3058,6 +3305,9 @@ class TsiflHelperApp(rumps.App):
                 "Carbon errors usually indicate a deeper macOS issue — "
                 "check Console.app for security policy denials.\n"
             )
+        else:
+            # Register any saved dynamic hotkeys from shortcuts.json
+            _register_saved_hotkeys()
 
     @staticmethod
     def _resolve_icon_path() -> str | None:

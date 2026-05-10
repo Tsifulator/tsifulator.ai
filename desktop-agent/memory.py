@@ -142,44 +142,68 @@ def load_shortcuts() -> list[dict]:
     return []
 
 
-def save_shortcut(trigger: str, action: str, description: str = "") -> str:
+def save_shortcut(trigger: str, action: str, description: str = "",
+                  hotkey: str = "") -> str:
     """Save or update a custom shortcut.
 
     Args:
         trigger: the keyword/slash command (e.g. "data", "report", "emails")
         action: what to do when triggered (e.g. "open ~/Desktop/data.csv in RStudio")
         description: optional human-readable description
+        hotkey: optional system hotkey combo (e.g. "cmd+d") — registers a global shortcut
     """
     _SHORTCUTS_FILE.parent.mkdir(parents=True, exist_ok=True)
     shortcuts = load_shortcuts()
     trigger_clean = trigger.lower().strip().lstrip("/")
 
-    # Update if trigger already exists
-    for i, s in enumerate(shortcuts):
-        if s.get("trigger", "").lower() == trigger_clean:
-            shortcuts[i] = {
-                "trigger": trigger_clean,
-                "action": action.strip(),
-                "description": description or action.strip()[:60],
-                "added": datetime.now().isoformat(timespec="seconds"),
-            }
-            _SHORTCUTS_FILE.write_text(
-                json.dumps(shortcuts, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
-            return f"Updated /{trigger_clean}"
-
-    shortcuts.append({
+    entry = {
         "trigger": trigger_clean,
         "action": action.strip(),
         "description": description or action.strip()[:60],
         "added": datetime.now().isoformat(timespec="seconds"),
-    })
+    }
+    if hotkey:
+        entry["hotkey"] = hotkey.strip().lower()
+
+    # Update if trigger already exists
+    for i, s in enumerate(shortcuts):
+        if s.get("trigger", "").lower() == trigger_clean:
+            shortcuts[i] = entry
+            _SHORTCUTS_FILE.write_text(
+                json.dumps(shortcuts, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            # Register the global hotkey if specified
+            hk_msg = ""
+            if hotkey:
+                hk_msg = _try_register_hotkey(trigger_clean, action.strip(), hotkey)
+            return f"Updated /{trigger_clean}" + (f" ({hk_msg})" if hk_msg else "")
+
+    shortcuts.append(entry)
     _SHORTCUTS_FILE.write_text(
         json.dumps(shortcuts, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
-    return f"Created /{trigger_clean} — type it anytime to run: {action.strip()[:60]}"
+
+    # Register the global hotkey if specified
+    hk_msg = ""
+    if hotkey:
+        hk_msg = _try_register_hotkey(trigger_clean, action.strip(), hotkey)
+
+    base = f"Created /{trigger_clean}"
+    if hk_msg:
+        return f"{base} ({hk_msg})"
+    return f"{base} — type it anytime to run: {action.strip()[:60]}"
+
+
+def _try_register_hotkey(trigger: str, action: str, hotkey: str) -> str:
+    """Try to register a system-level hotkey. Returns status message."""
+    try:
+        from tsifl_helper_app import _register_dynamic_hotkey
+        ok, msg = _register_dynamic_hotkey(trigger, action, hotkey)
+        return msg
+    except Exception as e:
+        return f"hotkey registration failed: {e}"
 
 
 def remove_shortcut(trigger: str) -> str:
@@ -203,11 +227,31 @@ def list_shortcuts() -> str:
     """Return a formatted string of all shortcuts."""
     shortcuts = load_shortcuts()
     if not shortcuts:
-        return "No shortcuts set. Say 'set X as /name' to create one."
+        return "No shortcuts set.\nSay 'set X as /name' or 'set X as cmd+D' to create one."
     lines = []
     for s in shortcuts:
-        lines.append(f"  /{s['trigger']} → {s['action'][:80]}")
+        hotkey = s.get("hotkey", "")
+        if hotkey:
+            pretty = _pretty_hotkey(hotkey)
+            lines.append(f"  {pretty} (/{s['trigger']}) → {s['action'][:60]}")
+        else:
+            lines.append(f"  /{s['trigger']} → {s['action'][:80]}")
     return f"Your shortcuts:\n" + "\n".join(lines)
+
+
+def _pretty_hotkey(combo: str) -> str:
+    """Turn 'cmd+d' into '⌘D' for display."""
+    symbols = {"cmd": "⌘", "command": "⌘", "shift": "⇧", "opt": "⌥",
+               "option": "⌥", "alt": "⌥", "ctrl": "⌃", "control": "⌃"}
+    parts = [p.strip().lower() for p in combo.replace("+", " ").split()]
+    result = ""
+    key = ""
+    for p in parts:
+        if p in symbols:
+            result += symbols[p]
+        else:
+            key = p.upper()
+    return result + key
 
 
 def resolve_shortcut(message: str) -> str | None:
@@ -268,7 +312,7 @@ _LIST_PATTERNS = [
     re.compile(r"^memories$", re.IGNORECASE),
 ]
 
-# Shortcut patterns: "set X as /name", "remove shortcut /name", etc.
+# Shortcut patterns: "set X as /name", "set X as cmd+d", etc.
 _SET_SHORTCUT_PATTERNS = [
     # "set <action> as /trigger"
     re.compile(r"^set\s+(.+?)\s+as\s+/(\S+)$", re.IGNORECASE),
@@ -276,6 +320,16 @@ _SET_SHORTCUT_PATTERNS = [
     re.compile(r"^(?:create|add)\s+(?:shortcut|command)\s+/(\S+)\s+(?:for|to|=)\s+(.+)$", re.IGNORECASE),
     # "shortcut /trigger = action"
     re.compile(r"^(?:shortcut|cmd)\s+/(\S+)\s*=\s*(.+)$", re.IGNORECASE),
+]
+
+# System hotkey patterns: "set <action> as cmd+d", "bind cmd+d to <action>"
+_SET_HOTKEY_PATTERNS = [
+    # "set <action> as cmd+d"
+    re.compile(r"^set\s+(.+?)\s+as\s+((?:cmd|command|ctrl|control|opt|option|alt|shift)[\+\s]\S+)$", re.IGNORECASE),
+    # "bind cmd+d to <action>"
+    re.compile(r"^bind\s+((?:cmd|command|ctrl|control|opt|option|alt|shift)[\+\s]\S+)\s+(?:to|=)\s+(.+)$", re.IGNORECASE),
+    # "hotkey cmd+d = action"
+    re.compile(r"^hotkey\s+((?:cmd|command|ctrl|control|opt|option|alt|shift)[\+\s]\S+)\s*=\s*(.+)$", re.IGNORECASE),
 ]
 
 _REMOVE_SHORTCUT_PATTERNS = [
@@ -318,7 +372,22 @@ def check_memory_intent(message: str) -> str | None:
         if m:
             return remove_shortcut(m.group(1))
 
-    # Set shortcut — "set X as /name"
+    # Set system hotkey — "set X as cmd+d"
+    for pat in _SET_HOTKEY_PATTERNS:
+        m = pat.match(msg)
+        if m:
+            groups = m.groups()
+            if len(groups) == 2:
+                if pat == _SET_HOTKEY_PATTERNS[0]:
+                    action, combo = groups
+                else:
+                    combo, action = groups
+                # Use the key letter as the trigger name
+                key_part = combo.replace("+", " ").split()[-1].lower()
+                trigger = key_part if len(key_part) <= 3 else key_part[:3]
+                return save_shortcut(trigger, action, hotkey=combo)
+
+    # Set slash shortcut — "set X as /name"
     for pat in _SET_SHORTCUT_PATTERNS:
         m = pat.match(msg)
         if m:

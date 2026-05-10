@@ -1273,17 +1273,18 @@ def execute_action(action: Action) -> Action:
                 action.error = f"Memory save failed: {e}"
 
         elif action.type == "set_shortcut":
-            # Claude can create shortcuts for the user
+            # Claude can create shortcuts (slash commands or system hotkeys)
             trigger = cmd_data.get("trigger", "")
             shortcut_action = cmd_data.get("action", "")
             desc = cmd_data.get("description", "")
+            hotkey = cmd_data.get("hotkey", "")  # e.g. "cmd+d"
             if not trigger or not shortcut_action:
                 action.success = False
                 action.result = "set_shortcut needs trigger and action"
             else:
                 try:
                     from memory import save_shortcut as _save_sc
-                    action.result = _save_sc(trigger, shortcut_action, desc)
+                    action.result = _save_sc(trigger, shortcut_action, desc, hotkey=hotkey)
                     action.success = True
                 except Exception as e:
                     action.success = False
