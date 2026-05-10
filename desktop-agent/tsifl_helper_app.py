@@ -403,27 +403,42 @@ def _send_to_backend(message: str, frontmost_app: str, images: list | None = Non
 
     try:
         timeout = 120 if images else 60
-        with _httpx.Client(timeout=timeout) as client:
-            r = client.post(f"{backend.rstrip('/')}/chat/", json=body)
-            if r.status_code == 200:
-                data = r.json()
-                # Parse plan from Claude's JSON reply (desktop agent mode)
-                plan = _extract_plan_from_reply(data)
-                if plan is not None:
-                    data["_plan"] = plan
+        url = f"{backend.rstrip('/')}/chat/"
 
-                # Track conversation history for multi-turn context
-                reply_text = data.get("reply", "")
-                _conversation_history.append({"role": "user", "content": message})
-                if reply_text:
-                    _conversation_history.append({"role": "assistant", "content": reply_text})
-                # Trim to max
-                while len(_conversation_history) > _MAX_HISTORY * 2:
-                    _conversation_history.pop(0)
+        # Retry logic: DNS resolution can fail transiently on macOS
+        last_err = None
+        for attempt in range(3):
+            try:
+                with _httpx.Client(timeout=timeout) as client:
+                    r = client.post(url, json=body)
+                break
+            except Exception as dns_err:
+                last_err = dns_err
+                if attempt < 2:
+                    import time as _time_mod
+                    _time_mod.sleep(1)  # brief pause before retry
+                    continue
+                raise last_err
 
-                return data
-            return {"reply": f"Backend error ({r.status_code}): {r.text[:200]}",
-                    "actions": []}
+        if r.status_code == 200:
+            data = r.json()
+            # Parse plan from Claude's JSON reply (desktop agent mode)
+            plan = _extract_plan_from_reply(data)
+            if plan is not None:
+                data["_plan"] = plan
+
+            # Track conversation history for multi-turn context
+            reply_text = data.get("reply", "")
+            _conversation_history.append({"role": "user", "content": message})
+            if reply_text:
+                _conversation_history.append({"role": "assistant", "content": reply_text})
+            # Trim to max
+            while len(_conversation_history) > _MAX_HISTORY * 2:
+                _conversation_history.pop(0)
+
+            return data
+        return {"reply": f"Backend error ({r.status_code}): {r.text[:200]}",
+                "actions": []}
     except Exception as e:
         return {"reply": f"Could not reach tsifl: {e}", "actions": []}
 
@@ -2297,26 +2312,23 @@ def _panel_submit(text: str):
         except Exception:
             pass
 
-    # Background mode: hide panel immediately, work runs in background.
-    # Results come back as macOS notifications.
-    # Must use callAfter for reliable main-thread UI updates.
+    # Keep panel visible — show "Working…" state so user sees progress.
+    # Panel stays up until the response comes back, then shows the result.
     try:
-        from PyObjCTools.AppHelper import callAfter as _ca_hide
-        def _do_hide():
-            if _panel_ref is not None:
-                _panel_ref.orderOut_(None)
-            try:
-                rumps.notification(title="tsifl", subtitle="On it…", message=text[:100])
-            except Exception:
-                pass
-        _ca_hide(_do_hide)
+        from PyObjCTools.AppHelper import callAfter as _ca_working
+        def _show_working():
+            _panel_show_response("Working…")
+            # Disable input while processing
+            if _panel_input is not None:
+                try:
+                    _panel_input.setStringValue_("")
+                    _panel_input.setPlaceholderString_("Working…")
+                    _panel_input.setEditable_(False)
+                except Exception:
+                    pass
+        _ca_working(_show_working)
     except Exception:
-        # Fallback: try direct hide
-        if _panel_ref is not None:
-            try:
-                _panel_ref.orderOut_(None)
-            except Exception:
-                pass
+        pass
 
     def _do_request():
         """Runs on a daemon thread — must NOT touch UI directly. UI updates
@@ -2361,19 +2373,10 @@ def _panel_submit(text: str):
                 if not has_red:
                     # ── AUTO-EXECUTE: green/yellow actions run immediately ─
                     sys.stderr.write(f"[tsifl-helper] no-red plan ({len(plan)} steps) → auto-executing\n")
-                    # Show brief feedback then hide panel — work runs in background
+                    # Keep panel visible — show status while executing
                     if _panel_session_id == my_session and _panel_is_visible():
                         _panel_show_response(reply_text if reply_text and reply_text != "(no reply)" else "Running…")
                     _panel_busy = True
-                    # Auto-dismiss panel after 1.5s — actions run in background
-                    def _auto_dismiss_panel():
-                        time.sleep(1.5)
-                        try:
-                            from PyObjCTools.AppHelper import callAfter as _ca2
-                            _ca2(lambda: _panel_ref.orderOut_(None) if _panel_ref else None)
-                        except Exception:
-                            pass
-                    threading.Thread(target=_auto_dismiss_panel, daemon=True).start()
 
                     def _auto_run():
                         """Iterative agent loop — execute → observe → retry/continue.
