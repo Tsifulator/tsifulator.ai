@@ -1629,9 +1629,28 @@ def execute_action(action: Action) -> Action:
             try:
                 from pathlib import Path as _P
                 p = _P(path).expanduser()
-                if not p.exists():
+
+                # Defense: if the path is just a bare filename (no slash) it's
+                # almost certainly a hallucination — real read_file calls have
+                # absolute paths from the user's message. Refuse explicitly so
+                # Claude gets a useful error in the agent loop.
+                if "/" not in str(path):
                     action.success = False
-                    action.result = f"File not found: {p}"
+                    action.result = (
+                        f"Refused: '{path}' is not an absolute path. If the user "
+                        f"ATTACHED a file (image/PDF), read it directly from your "
+                        f"context — do NOT call read_file. Only call read_file with "
+                        f"a real absolute path the user typed."
+                    )
+                elif not p.exists():
+                    action.success = False
+                    action.result = (
+                        f"File not found: {p}. Don't guess paths — only use ones "
+                        f"the user actually provided in their message."
+                    )
+                elif p.is_dir():
+                    action.success = False
+                    action.result = f"That's a directory, not a file: {p}"
                 elif p.stat().st_size > 5_000_000:
                     action.success = False
                     action.result = f"File too large ({p.stat().st_size:,} bytes); cap is 5MB"
