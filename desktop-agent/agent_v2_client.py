@@ -134,7 +134,7 @@ def start_turn(
     context: dict,
     conversation_id: Optional[str] = None,
     images: Optional[list[dict]] = None,
-    model: str = "claude-sonnet-4-20250514",
+    model: Optional[str] = None,
 ) -> dict:
     """Send a new user message. Returns the turn response from /agent/turn.
 
@@ -157,8 +157,9 @@ def start_turn(
         "message": message,
         "context": context,
         "images": images or [],
-        "model": model,
     }
+    if model:
+        body["model"] = model
     resp = _post_json("/agent/turn", body, timeout=180 if images else 90)
     if resp.get("error"):
         return {
@@ -178,7 +179,7 @@ def post_results(
     conversation_id: str,
     results: list[dict],
     context: dict,
-    model: str = "claude-sonnet-4-20250514",
+    model: Optional[str] = None,
 ) -> dict:
     """Post tool_result blocks for the previous tool_uses.
 
@@ -189,8 +190,9 @@ def post_results(
         "conversation_id": conversation_id,
         "results": results,
         "context": context,
-        "model": model,
     }
+    if model:
+        body["model"] = model
     resp = _post_json("/agent/result", body, timeout=120)
     if resp.get("error"):
         return {

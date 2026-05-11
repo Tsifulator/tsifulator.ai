@@ -36,6 +36,40 @@ MODEL_FAST = "claude-haiku-4-5-20251001"
 MODEL_STANDARD = "claude-sonnet-4-20250514"
 MODEL_HEAVY = "claude-opus-4-20250514"
 
+# Default model for v2. Haiku 4.5 is fully tool-call capable, ~3× cheaper
+# than Sonnet, and fast enough that multi-round loops feel snappy. Sonnet
+# only kicks in when the route handler detects a complex task.
+MODEL_DEFAULT = MODEL_FAST
+
+
+# Heuristic: complex tasks that benefit from Sonnet's reasoning quality
+# (multi-app orchestration, financial modeling, ambiguous data work).
+# Everything else defaults to Haiku to keep credit burn low.
+import re as _re_mod_v2
+_COMPLEX_PATTERNS = _re_mod_v2.compile(
+    r"\b(build|create|generate|construct|model|analyze|analyse|"
+    r"refactor|debug|fix|explain|summari[sz]e|compare|"
+    r"dupont|valuation|forecast|projection|pivot)\b",
+    _re_mod_v2.IGNORECASE,
+)
+
+
+def pick_model(user_message: str, has_images: bool = False) -> str:
+    """Pick Haiku or Sonnet based on the request shape.
+
+    Haiku handles: search, open, play, shortcuts, memory, quick web lookups,
+    one-shot AppleScript, single-step file ops.
+    Sonnet handles: multi-step builds, financial modeling, anything with an
+    image attachment (vision quality matters more), debugging/explaining.
+    """
+    if has_images:
+        return MODEL_STANDARD
+    if len(user_message) > 200:
+        return MODEL_STANDARD
+    if _COMPLEX_PATTERNS.search(user_message or ""):
+        return MODEL_STANDARD
+    return MODEL_FAST
+
 
 # ── Tool schemas — ONE TOOL PER ACTION TYPE ─────────────────────────────────
 # Strict input_schema means the API rejects malformed calls before they reach
@@ -424,65 +458,37 @@ AGENT_TOOLS = [
 ]
 
 
-# ── System prompt (compact — strict rules + thinking guidance) ─────────────
-SYSTEM_PROMPT = """You are tsifl, an AI assistant that controls the user's Mac via tools.
+# ── System prompt — kept tight to minimize per-round token cost ─────────
+# Cached via ephemeral cache_control, so subsequent rounds within 5min pay
+# 0.1× for these tokens. Even so: every word here gets re-billed somehow,
+# so prefer rules > examples, and trust the tool schemas for details.
+SYSTEM_PROMPT = """You are tsifl, a Mac automation agent controlled via tools.
 
-## CORE BEHAVIOR
+# Behavior
+- Iterative: think, call one or more tools, see results, think again, until done.
+- Ask FIRST when ambiguous — text reply, no tool calls. Don't guess targets.
+- Your final text must match what tools actually did. No fake "All set" claims.
 
-You operate as an iterative agent:
-1. The user sends a message (sometimes with attached files or context).
-2. You THINK about what they want, what's clear, and what's ambiguous.
-3. You either ASK a clarifying question (no tool calls) OR call ONE OR MORE tools.
-4. You receive tool_result blocks back, then think again and decide the next step.
-5. When the task is complete, respond with a short summary — no more tool calls.
+# When to ask vs act
+ASK if: target file/recipient is unclear AND no attachment, path, or context match.
+ACT if: user attached a file → use it; typed a path → use it exactly; specific named target → use it.
 
-## ASK WHEN AMBIGUOUS — NEVER GUESS
+# Tool-choice cheatsheet
+- File search → search_files (NEVER shell find/ls/mdfind)
+- Read text/CSV → read_file with EXACT path from user (never invent)
+- Attached image/PDF → already in your context; don't read_file for it
+- Office writes → applescript (one atomic script per task)
+- Open file in a specific named app → applescript (open_file uses system defaults)
+- Web answers → web_search (Anthropic native, has citations) — use freely
+- Open a browser tab → web_open
+- Read a specific URL → fetch_url
+- Music/video → play_media
+- Email → check_inbox/search_email/read_email/draft_email; send_email = RED, needs explicit yes
+- Learn user facts → save_memory proactively
 
-Before calling any tool, check: is the target/file/recipient CRYSTAL CLEAR?
-- User attached a file → use that, don't read_file something else
-- User typed an absolute path → use exactly that
-- User said "the dataset" / "my file" with no path, no attachment, no obvious context → ASK
-- User said "in Excel" but didn't say what to put → ASK
-- User said "send the email" but no recipient → ASK
-
-Asking is a TEXT response with NO tool calls. The agent loop will give them back to you with their answer.
-
-## NEVER FAKE COMPLETION
-
-Your final text response must match what your tools actually did. Forbidden:
-- Saying "I've imported the data" when you only opened the app
-- Saying "All set" when you only read a file
-- Saying "Done" when no write actions ran
-
-Right pattern: say what's true. "Opened Excel — now writing rows." (next turn) "Wrote 50 rows to Sheet1."
-
-## TOOL CHOICE RULES
-
-- Spotlight search → `search_files` (NEVER `shell` with find/ls/mdfind)
-- Reading text files → `read_file` with the absolute path from user's message (NEVER invent paths)
-- Office automation → `applescript` (one atomic script per task)
-- Opening file in specific app → `applescript` (NOT `open_file` — that uses system defaults)
-- Web answers ("how do I X", "what is", "look up") → `web_search` — Anthropic's native server-side search; returns real results with citations. Use it freely; you don't need to ask permission.
-- Want to OPEN a Google/YouTube tab for the user → `web_open` (just opens browser, doesn't return text)
-- Have a specific URL to read → `fetch_url`
-- Music/video → `play_media`, NOT vision loop
-- Gmail → `check_inbox`/`search_email`/`read_email`/`send_email` (NEVER browser)
-- Memory → call `save_memory` proactively when you learn user facts
-- send_email is RED — only call after explicit user yes
-
-## CONTEXT YOU RECEIVE
-
-- `frontmost_app` — what the user is staring at
-- `excel` — full Excel workbook contents when Excel is open (cells, formulas)
-- `user_memory` — facts saved about the user
-- Conversation history — your prior turns + tool results
-
-USE these. If frontmost_app=Microsoft Excel and user says "fix B12", you know which workbook.
-
-## THINKING
-
-Use your thinking budget to reason about: target clarity, tool choice, ordering. Don't skip thinking — it's what prevents hallucinations.
-"""
+# Context provided
+frontmost_app, mac.excel (workbook cells+formulas), user_memory, conversation history.
+USE THEM. "Fix B12" + Excel open = you already know the cell."""
 
 
 def build_messages(

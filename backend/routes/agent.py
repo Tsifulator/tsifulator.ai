@@ -22,8 +22,10 @@ from services.agent_v2 import (
     AGENT_TOOLS,
     MODEL_STANDARD,
     MODEL_FAST,
+    MODEL_DEFAULT,
     call_agent,
     append_tool_results,
+    pick_model,
 )
 
 router = APIRouter()
@@ -57,7 +59,9 @@ class TurnRequest(BaseModel):
     message: str
     context: dict = Field(default_factory=dict)
     images: list[ImageAttachment] = Field(default_factory=list)
-    model: str = MODEL_STANDARD
+    # If client doesn't pin a model, server auto-picks (Haiku for simple
+    # requests, Sonnet for complex). To force a specific model, set it.
+    model: Optional[str] = None
 
 
 class ToolResult(BaseModel):
@@ -70,7 +74,7 @@ class ResultRequest(BaseModel):
     conversation_id: str
     results: list[ToolResult]
     context: dict = Field(default_factory=dict)  # refreshed context for next turn
-    model: str = MODEL_STANDARD
+    model: Optional[str] = None  # None → reuse the conversation's pinned model
 
 
 class TurnResponse(BaseModel):
@@ -112,12 +116,16 @@ async def turn(req: TurnRequest):
 
     images = [img.model_dump() for img in req.images] if req.images else None
 
+    # Auto-pick model unless client pinned one. Pin to the conversation so
+    # all rounds use the same tier (consistency + caching).
+    chosen_model = req.model or pick_model(req.message, has_images=bool(images))
+
     result = call_agent(
         user_message=req.message,
         conversation=conv["messages"],
         context=req.context,
         images=images,
-        model=req.model,
+        model=chosen_model,
     )
 
     # Persist updated conversation
@@ -125,6 +133,7 @@ async def turn(req: TurnRequest):
         "messages": result["updated_conversation"],
         "last_active": time.time(),
         "context": req.context,
+        "model": chosen_model,
     }
 
     return _make_turn_response(cid, result)
@@ -151,6 +160,9 @@ async def result(req: ResultRequest):
     ]
     updated_messages = append_tool_results(conv["messages"], results_list)
 
+    # Reuse the conversation's pinned model unless the client overrides
+    chosen_model = req.model or conv.get("model") or MODEL_DEFAULT
+
     # Call Claude with the appended tool_result already as the user turn.
     # build_messages skips appending an empty user message, so passing
     # user_message="" and images=None is correct.
@@ -159,13 +171,14 @@ async def result(req: ResultRequest):
         conversation=updated_messages,
         context=req.context or conv.get("context"),
         images=None,
-        model=req.model,
+        model=chosen_model,
     )
 
     _conversations[req.conversation_id] = {
         "messages": result_dict["updated_conversation"],
         "last_active": time.time(),
         "context": req.context or conv.get("context"),
+        "model": chosen_model,
     }
 
     return _make_turn_response(req.conversation_id, result_dict)
