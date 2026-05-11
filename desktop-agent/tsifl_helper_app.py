@@ -2325,6 +2325,22 @@ def _panel_submit(text: str):
     except Exception:
         pass
 
+    # ── Routine commands (also no backend needed) ────────────────────
+    try:
+        from routines import check_routine_intent
+        routine_response = check_routine_intent(text)
+        if routine_response is not None:
+            _panel_show_response(routine_response)
+            if _panel_input is not None:
+                try:
+                    _panel_input.setStringValue_("")
+                    _panel_input.setPlaceholderString_("Ask tsifl anything…")
+                except Exception:
+                    pass
+            return
+    except Exception as _re_err:
+        sys.stderr.write(f"[tsifl-helper] routine intent check failed: {_re_err}\n")
+
     # ── Quick "open N" for search results (no backend needed) ────────
     if _last_search_results:
         import re as _re
@@ -3571,6 +3587,14 @@ class TsiflHelperApp(rumps.App):
         else:
             # Register any saved dynamic hotkeys from shortcuts.json
             _register_saved_hotkeys()
+
+        # Start the routine scheduler — fires recurring tasks in the background
+        try:
+            from scheduler import start_scheduler
+            start_scheduler()
+            sys.stderr.write("[tsifl-helper] routine scheduler started\n")
+        except Exception as _sched_err:
+            sys.stderr.write(f"[tsifl-helper] scheduler start failed: {_sched_err}\n")
 
     @staticmethod
     def _resolve_icon_path() -> str | None:
