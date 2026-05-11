@@ -27,6 +27,13 @@ from services.agent_v2 import (
     append_tool_results,
     pick_model,
 )
+from services.cost_caps import (
+    check_budget,
+    record_spend,
+    get_daily_spend,
+    SOFT_CAP_USD,
+    HARD_CAP_USD,
+)
 
 router = APIRouter()
 
@@ -85,10 +92,16 @@ class TurnResponse(BaseModel):
     thinking: str = ""
     stop_reason: str
     usage: dict
+    cost_usd: float = 0.0          # cost of THIS turn
+    cost_today_usd: float = 0.0    # user's running daily total
+    cost_warning: str = ""         # soft/hard cap message if any
+    model: str = ""
     done: bool  # true when stop_reason != "tool_use" — no more tools to run
 
 
-def _make_turn_response(cid: str, result: dict) -> TurnResponse:
+def _make_turn_response(cid: str, result: dict, user_id: str) -> TurnResponse:
+    cost = float(result.get("cost_usd", 0.0))
+    spend_info = record_spend(user_id, cost)
     return TurnResponse(
         conversation_id=cid,
         tool_uses=result["tool_uses"],
@@ -97,6 +110,10 @@ def _make_turn_response(cid: str, result: dict) -> TurnResponse:
         thinking=result.get("thinking", ""),
         stop_reason=result["stop_reason"],
         usage=result["usage"],
+        cost_usd=round(cost, 6),
+        cost_today_usd=spend_info["spent"],
+        cost_warning=spend_info["warning"],
+        model=result.get("model", ""),
         done=result["stop_reason"] != "tool_use" and len(result["tool_uses"]) == 0,
     )
 
@@ -105,6 +122,23 @@ def _make_turn_response(cid: str, result: dict) -> TurnResponse:
 async def turn(req: TurnRequest):
     """Start a new conversation or send a fresh user message to an existing one."""
     _gc_old_conversations()
+
+    # Budget pre-flight: refuse if user is over today's hard cap.
+    allowed, deny_msg = check_budget(req.user_id)
+    if not allowed:
+        cid = req.conversation_id or str(uuid.uuid4())
+        spend = get_daily_spend(req.user_id)
+        return TurnResponse(
+            conversation_id=cid,
+            tool_uses=[],
+            text=deny_msg,
+            stop_reason="budget_exceeded",
+            usage={},
+            cost_usd=0.0,
+            cost_today_usd=spend["spent"],
+            cost_warning=deny_msg,
+            done=True,
+        )
 
     cid = req.conversation_id or str(uuid.uuid4())
     conv = _conversations.get(cid, {"messages": [], "last_active": time.time()})
@@ -134,9 +168,10 @@ async def turn(req: TurnRequest):
         "last_active": time.time(),
         "context": req.context,
         "model": chosen_model,
+        "user_id": req.user_id,
     }
 
-    return _make_turn_response(cid, result)
+    return _make_turn_response(cid, result, req.user_id)
 
 
 @router.post("/result", response_model=TurnResponse)
@@ -151,6 +186,24 @@ async def result(req: ResultRequest):
         raise HTTPException(
             status_code=404,
             detail=f"Unknown conversation_id: {req.conversation_id}",
+        )
+
+    user_id = conv.get("user_id", "anon")
+
+    # Mid-loop budget check — if a runaway loop pushed us over the cap, stop here
+    allowed, deny_msg = check_budget(user_id)
+    if not allowed:
+        spend = get_daily_spend(user_id)
+        return TurnResponse(
+            conversation_id=req.conversation_id,
+            tool_uses=[],
+            text=deny_msg,
+            stop_reason="budget_exceeded",
+            usage={},
+            cost_usd=0.0,
+            cost_today_usd=spend["spent"],
+            cost_warning=deny_msg,
+            done=True,
         )
 
     # Append tool_result blocks — these form the next user turn
@@ -179,9 +232,10 @@ async def result(req: ResultRequest):
         "last_active": time.time(),
         "context": req.context or conv.get("context"),
         "model": chosen_model,
+        "user_id": user_id,
     }
 
-    return _make_turn_response(req.conversation_id, result_dict)
+    return _make_turn_response(req.conversation_id, result_dict, user_id)
 
 
 @router.delete("/conversation/{conversation_id}")
@@ -199,4 +253,12 @@ async def agent_health():
         "ok": True,
         "active_conversations": len(_conversations),
         "tools_loaded": len(AGENT_TOOLS),
+        "soft_cap_usd": SOFT_CAP_USD,
+        "hard_cap_usd": HARD_CAP_USD,
     }
+
+
+@router.get("/budget/{user_id}")
+async def budget(user_id: str):
+    """Return today's spend + remaining budget for a user."""
+    return get_daily_spend(user_id)

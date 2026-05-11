@@ -42,6 +42,46 @@ MODEL_HEAVY = "claude-opus-4-20250514"
 MODEL_DEFAULT = MODEL_FAST
 
 
+# ── Per-model output / thinking caps ───────────────────────────────────────
+# max_tokens controls the most a model can generate in a single response.
+# For Haiku (no thinking) — 2048 is enough for a few tool calls + a short reply.
+# For Sonnet with thinking — needs room for thinking_budget + actual output.
+HAIKU_MAX_TOKENS = 2048
+SONNET_MAX_TOKENS = 6000
+SONNET_THINKING_BUDGET = 2000  # tokens; must be < max_tokens
+
+# Per-model price ($/1M tokens). Cache read/write multipliers from Anthropic
+# docs: cache_creation_input_tokens billed at 1.25×, cache_read_input_tokens
+# at 0.1×. We track these separately when present in the usage payload.
+_MODEL_PRICES = {
+    MODEL_FAST: {"input": 1.0, "output": 5.0},
+    MODEL_STANDARD: {"input": 3.0, "output": 15.0},
+    MODEL_HEAVY: {"input": 15.0, "output": 75.0},
+}
+
+
+def estimate_cost(model: str, usage: dict) -> float:
+    """Estimate USD cost from an Anthropic usage block.
+
+    Handles cache_creation (1.25× input) and cache_read (0.1× input).
+    """
+    p = _MODEL_PRICES.get(model, _MODEL_PRICES[MODEL_FAST])
+    in_rate = p["input"] / 1_000_000.0
+    out_rate = p["output"] / 1_000_000.0
+
+    inp = usage.get("input_tokens", 0)
+    out = usage.get("output_tokens", 0)
+    cache_write = usage.get("cache_creation_input_tokens", 0)
+    cache_read = usage.get("cache_read_input_tokens", 0)
+
+    return (
+        inp * in_rate
+        + out * out_rate
+        + cache_write * in_rate * 1.25
+        + cache_read * in_rate * 0.1
+    )
+
+
 # Heuristic: complex tasks that benefit from Sonnet's reasoning quality
 # (multi-app orchestration, financial modeling, ambiguous data work).
 # Everything else defaults to Haiku to keep credit burn low.
@@ -588,6 +628,46 @@ def build_system_prompt(context: dict | None) -> str:
     return "\n".join(parts)
 
 
+def prune_conversation(messages: list[dict], keep_recent: int = 6) -> list[dict]:
+    """Trim verbose tool_result content from older turns to keep context lean.
+
+    Strategy: walk from the most recent message back; the first `keep_recent`
+    user/assistant exchanges are kept verbatim. For older messages, replace
+    bulky tool_result content with a short stub. Plain-text messages and
+    tool_use blocks are kept as-is so the conversational thread stays intact.
+    """
+    if len(messages) <= keep_recent * 2:
+        return messages  # nothing to trim
+
+    cutoff = len(messages) - (keep_recent * 2)
+    trimmed: list[dict] = []
+    for i, m in enumerate(messages):
+        if i >= cutoff:
+            trimmed.append(m)
+            continue
+
+        content = m.get("content")
+        if isinstance(content, list):
+            new_content = []
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    raw = block.get("content", "")
+                    text = raw if isinstance(raw, str) else str(raw)
+                    if len(text) > 400:
+                        text = text[:300] + f" …[pruned; was {len(text)} chars]"
+                    new_content.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.get("tool_use_id", ""),
+                        "content": text,
+                    })
+                else:
+                    new_content.append(block)
+            trimmed.append({"role": m["role"], "content": new_content})
+        else:
+            trimmed.append(m)
+    return trimmed
+
+
 def call_agent(
     user_message: str,
     conversation: list[dict],
@@ -609,7 +689,10 @@ def call_agent(
     blocks, and calls back with those appended to conversation.
     """
     system_prompt = build_system_prompt(context)
-    messages = build_messages(user_message, conversation, images)
+
+    # Prune older tool_results so multi-round conversations don't bloat
+    pruned_conv = prune_conversation(conversation, keep_recent=6)
+    messages = build_messages(user_message, pruned_conv, images)
 
     # System prompt as cache-enabled block (saves ~90% on tokens for the
     # static portion within 5min window)
@@ -619,14 +702,25 @@ def call_agent(
         "cache_control": {"type": "ephemeral"},
     }]
 
+    # Model-specific knobs. Sonnet/Opus get extended thinking; Haiku doesn't
+    # support it (and doesn't usually need it for tool selection).
+    is_sonnet_or_better = model in (MODEL_STANDARD, MODEL_HEAVY)
+    max_tokens = SONNET_MAX_TOKENS if is_sonnet_or_better else HAIKU_MAX_TOKENS
+    create_kwargs = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": system_blocks,
+        "tools": AGENT_TOOLS,
+        "messages": messages,
+    }
+    if is_sonnet_or_better:
+        create_kwargs["thinking"] = {
+            "type": "enabled",
+            "budget_tokens": SONNET_THINKING_BUDGET,
+        }
+
     try:
-        response = client.messages.create(
-            model=model,
-            max_tokens=4096,
-            system=system_blocks,
-            tools=AGENT_TOOLS,
-            messages=messages,
-        )
+        response = client.messages.create(**create_kwargs)
     except anthropic.APIError as e:
         logger.error("agent_v2 API error: %s", e)
         # Friendly user-facing message for the common cases
@@ -742,6 +836,12 @@ def call_agent(
 
     updated_conv = messages + [{"role": "assistant", "content": assistant_content}]
 
+    usage_block = {
+        "input_tokens": response.usage.input_tokens,
+        "output_tokens": response.usage.output_tokens,
+        "cache_creation_input_tokens": getattr(response.usage, "cache_creation_input_tokens", 0) or 0,
+        "cache_read_input_tokens": getattr(response.usage, "cache_read_input_tokens", 0) or 0,
+    }
     return {
         "tool_uses": tool_uses,
         "server_tool_uses": server_tool_uses,
@@ -749,10 +849,9 @@ def call_agent(
         "thinking": thinking_text,
         "stop_reason": response.stop_reason,
         "updated_conversation": updated_conv,
-        "usage": {
-            "input_tokens": response.usage.input_tokens,
-            "output_tokens": response.usage.output_tokens,
-        },
+        "usage": usage_block,
+        "cost_usd": estimate_cost(model, usage_block),
+        "model": model,
     }
 
 

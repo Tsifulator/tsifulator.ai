@@ -2498,11 +2498,25 @@ def _panel_submit(text: str):
             if _last_search_results:
                 lines.append("")
                 lines.append("Say \"open 1\" or \"open the first one\" to open a result")
-            if summary.get("error"):
+            if summary.get("warning"):
+                lines.append("")
+                lines.append(summary["warning"])
+            if summary.get("error") and summary.get("error") != "budget_exceeded":
                 lines.append("")
                 lines.append(f"⚠️ {summary['error']}")
+            # Footer: cost + rounds + model — keeps you honest about burn
+            footer_bits = []
             if summary.get("rounds", 0) > 1:
-                lines.append(f"\n🔄 {summary['rounds']} rounds")
+                footer_bits.append(f"🔄 {summary['rounds']} rounds")
+            cost = summary.get("total_cost_usd", 0.0) or 0.0
+            today = summary.get("today_total_usd", 0.0) or 0.0
+            if cost > 0:
+                model_label = (summary.get("model") or "").split("-")[1].title() if summary.get("model") else ""
+                model_tag = f" ({model_label})" if model_label else ""
+                footer_bits.append(f"💵 ${cost:.4f}{model_tag} · today ${today:.3f}")
+            if footer_bits:
+                lines.append("")
+                lines.append("  ·  ".join(footer_bits))
             displayed = "\n".join(lines).strip() or "(no output)"
 
             # Push to panel on main thread
