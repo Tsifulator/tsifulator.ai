@@ -218,64 +218,107 @@ def _fetch_url(url: str, max_chars: int = 8000) -> tuple[bool, str]:
 def _web_lookup(query: str, max_chars: int = 6000) -> tuple[bool, str]:
     """Search the web AND fetch the top results' content.
 
-    Claude gets actual answers, not just a URL. Used for "how do I X
-    in Macabacus" type questions. Uses DuckDuckGo's HTML endpoint.
+    Tries multiple providers in order until one returns parseable results:
+      1. DuckDuckGo HTML — fast but rate-limits aggressively
+      2. Bing HTML — slower but more reliable for finance/tools queries
+    Falls back to Google if both fail.
     """
+    import httpx as _hx
+    import re as _re
+    import urllib.parse as _up
+
+    encoded = _urlparse.quote_plus(query)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
+    # Provider list: (name, url_template, regex_to_extract_result_urls)
+    providers = [
+        ("ddg", f"https://html.duckduckgo.com/html/?q={encoded}",
+         r'href="/l/\?uddg=([^"&]+)'),
+        ("bing", f"https://www.bing.com/search?q={encoded}",
+         r'<h2><a [^>]*href="([^"]+)"'),
+        ("google", f"https://www.google.com/search?q={encoded}&hl=en",
+         r'<a href="/url\?q=([^&"]+)'),
+    ]
+
+    raw = ""
+    urls: list = []
+    used_provider = "none"
+
     try:
-        import httpx as _hx
-        encoded = _urlparse.quote_plus(query)
-        search_url = f"https://html.duckduckgo.com/html/?q={encoded}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                          "AppleWebKit/537.36 (KHTML, like Gecko) "
-                          "Chrome/120.0.0.0 Safari/537.36",
-        }
         with _hx.Client(verify=False, follow_redirects=True, timeout=15) as c:
-            resp = c.get(search_url, headers=headers)
-            raw = resp.text
-
-        import re as _re
-        import urllib.parse as _up
-        # DDG result URLs are in href="/l/?uddg=URL_ENCODED&..."
-        urls = _re.findall(r'href="/l/\?uddg=([^"&]+)', raw)
-        if not urls:
-            # Fallback: direct hrefs
-            urls = _re.findall(r'href="(https?://[^"&]+)"', raw[:60000])
-
-        seen = set()
-        result_urls = []
-        for u in urls:
-            u = _up.unquote(u)
-            host = u.split("/")[2] if "://" in u else ""
-            if "duckduckgo" in host or "google.com" in host or "bing.com" in host:
-                continue
-            if host in seen:
-                continue
-            seen.add(host)
-            result_urls.append(u)
-            if len(result_urls) >= 3:
-                break
-
-        if not result_urls:
-            # No URLs found, just clean and return search page
-            clean = _re.sub(r"<[^>]+>", " ", raw)
-            clean = _re.sub(r"\s+", " ", clean).strip()
-            return True, clean[:max_chars]
-
-        # Fetch top 2 results and concatenate
-        chunks = []
-        per_url_budget = max_chars // min(len(result_urls), 2)
-        for u in result_urls[:2]:
-            ok, content = _fetch_url(u, max_chars=per_url_budget)
-            if ok and content:
-                chunks.append(f"[Source: {u}]\n{content[:per_url_budget]}")
-        if not chunks:
-            clean = _re.sub(r"<[^>]+>", " ", raw)
-            clean = _re.sub(r"\s+", " ", clean).strip()
-            return True, clean[:max_chars]
-        return True, "\n\n---\n\n".join(chunks)
+            for name, url, pattern in providers:
+                try:
+                    resp = c.get(url, headers=headers)
+                    candidate = resp.text
+                    # Detect bot challenges / empty results
+                    low = candidate.lower()
+                    if ("unfortunately, bots" in low
+                            or "captcha" in low
+                            or "/sorry/" in low
+                            or len(candidate) < 1500):
+                        continue
+                    found = _re.findall(pattern, candidate[:80000])
+                    if found:
+                        raw = candidate
+                        urls = found
+                        used_provider = name
+                        break
+                except Exception:
+                    continue
     except Exception as e:
         return False, f"web_lookup failed: {e}"
+
+    if not urls:
+        return False, f"web_lookup: no usable results (tried {[p[0] for p in providers]})"
+
+    # Dedupe by hostname, skip search engine self-links
+    seen = set()
+    result_urls: list = []
+    for u in urls:
+        try:
+            u = _up.unquote(u)
+        except Exception:
+            pass
+        # Bing/Google sometimes wrap URLs — strip protocol prefix nonsense
+        if u.startswith("/url?q="):
+            u = u[7:]
+        host = u.split("/")[2] if "://" in u else ""
+        if not host:
+            continue
+        if any(s in host for s in ("duckduckgo", "google.", "bing.", "youtube.com/redirect")):
+            continue
+        if host in seen:
+            continue
+        seen.add(host)
+        result_urls.append(u)
+        if len(result_urls) >= 3:
+            break
+
+    if not result_urls:
+        # Couldn't extract third-party URLs — return the search page as text
+        clean = _re.sub(r"<[^>]+>", " ", raw)
+        clean = _re.sub(r"\s+", " ", clean).strip()
+        return True, f"[{used_provider} search page]\n" + clean[:max_chars]
+
+    # Fetch top 2 result pages and concatenate
+    chunks = []
+    per_url_budget = max_chars // min(len(result_urls), 2)
+    for u in result_urls[:2]:
+        ok, content = _fetch_url(u, max_chars=per_url_budget)
+        if ok and content:
+            chunks.append(f"[Source: {u}]\n{content[:per_url_budget]}")
+
+    if not chunks:
+        clean = _re.sub(r"<[^>]+>", " ", raw)
+        clean = _re.sub(r"\s+", " ", clean).strip()
+        return True, f"[{used_provider} search page — couldn't fetch result pages]\n" + clean[:max_chars]
+
+    return True, "\n\n---\n\n".join(chunks)
 
 
 # ── Data Export — battle-tested per-app scripts ─────────────────────────────

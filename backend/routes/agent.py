@@ -76,6 +76,7 @@ class ResultRequest(BaseModel):
 class TurnResponse(BaseModel):
     conversation_id: str
     tool_uses: list[dict]
+    server_tool_uses: list[dict] = []  # native Anthropic server tools (already executed)
     text: str
     thinking: str = ""
     stop_reason: str
@@ -87,6 +88,7 @@ def _make_turn_response(cid: str, result: dict) -> TurnResponse:
     return TurnResponse(
         conversation_id=cid,
         tool_uses=result["tool_uses"],
+        server_tool_uses=result.get("server_tool_uses", []),
         text=result["text"],
         thinking=result.get("thinking", ""),
         stop_reason=result["stop_reason"],

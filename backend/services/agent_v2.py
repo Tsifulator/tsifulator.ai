@@ -201,8 +201,8 @@ AGENT_TOOLS = [
         },
     },
     {
-        "name": "web_search",
-        "description": "Open a web search in the browser (just navigation, doesn't return results).",
+        "name": "web_open",
+        "description": "Open a web search in the user's browser (just navigation). Use when the user wants to BROWSE results themselves.",
         "input_schema": {
             "type": "object",
             "required": ["query"],
@@ -214,7 +214,7 @@ AGENT_TOOLS = [
     },
     {
         "name": "fetch_url",
-        "description": "Fetch a URL and return its text content (HTML stripped).",
+        "description": "Fetch a URL and return its text content (HTML stripped). Use when you have a specific URL to read.",
         "input_schema": {
             "type": "object",
             "required": ["url"],
@@ -224,22 +224,9 @@ AGENT_TOOLS = [
             },
         },
     },
-    {
-        "name": "web_lookup",
-        "description": (
-            "Search the web AND fetch the top results' content in one call. "
-            "Use this when you don't know something (e.g. 'how do I X in "
-            "Macabacus') — you'll get actual page text back, not just a URL."
-        ),
-        "input_schema": {
-            "type": "object",
-            "required": ["query"],
-            "properties": {
-                "query": {"type": "string"},
-                "max_chars": {"type": "integer", "default": 6000},
-            },
-        },
-    },
+    # web_search is Anthropic's NATIVE server-side search tool — appended
+    # below at construction time. It bypasses bot-detection on consumer
+    # search engines. Use it as the primary "look something up" path.
 
     # ── Data export ────────────────────────────────────────────────────────
     {
@@ -423,6 +410,17 @@ AGENT_TOOLS = [
             },
         },
     },
+
+    # ── Anthropic NATIVE server tool: web_search ────────────────────────────
+    # Executed on Anthropic's servers; results come back inline as
+    # `web_search_tool_result` blocks. No client execution needed.
+    # Use this for ANY "look something up online" question. It bypasses the
+    # bot-blocking that hits consumer search engine scrapers.
+    {
+        "type": "web_search_20250305",
+        "name": "web_search",
+        "max_uses": 5,
+    },
 ]
 
 
@@ -464,7 +462,9 @@ Right pattern: say what's true. "Opened Excel — now writing rows." (next turn)
 - Reading text files → `read_file` with the absolute path from user's message (NEVER invent paths)
 - Office automation → `applescript` (one atomic script per task)
 - Opening file in specific app → `applescript` (NOT `open_file` — that uses system defaults)
-- Web answers ("how do I X") → `web_lookup` (returns text), NOT `web_search` (just opens browser)
+- Web answers ("how do I X", "what is", "look up") → `web_search` — Anthropic's native server-side search; returns real results with citations. Use it freely; you don't need to ask permission.
+- Want to OPEN a Google/YouTube tab for the user → `web_open` (just opens browser, doesn't return text)
+- Have a specific URL to read → `fetch_url`
 - Music/video → `play_media`, NOT vision loop
 - Gmail → `check_inbox`/`search_email`/`read_email`/`send_email` (NEVER browser)
 - Memory → call `save_memory` proactively when you learn user facts
@@ -633,7 +633,10 @@ def call_agent(
         }
 
     # Parse the response blocks
+    # tool_uses → CLIENT-side tools the desktop agent must execute
+    # server_tool_uses → already executed by Anthropic; included for UI logging
     tool_uses = []
+    server_tool_uses = []
     text_parts = []
     thinking_text = ""
 
@@ -645,6 +648,12 @@ def call_agent(
                 "name": block.name,
                 "input": block.input,
             })
+        elif btype == "server_tool_use":
+            server_tool_uses.append({
+                "id": block.id,
+                "name": block.name,
+                "input": block.input,
+            })
         elif btype == "text":
             text_parts.append(block.text)
         elif btype == "thinking":
@@ -652,8 +661,10 @@ def call_agent(
 
     final_text = "\n".join(text_parts).strip()
 
-    # The assistant's full content (text + tool_use blocks) is appended to the
-    # conversation as-is so future turns can reference the tool_use ids.
+    # The assistant's full content (text + tool_use + server_tool_use +
+    # web_search_tool_result blocks) is appended to the conversation
+    # as-is so future turns can reference the tool_use ids and see the
+    # search results from native server tools.
     assistant_content = []
     for block in response.content:
         btype = getattr(block, "type", None)
@@ -666,6 +677,46 @@ def call_agent(
                 "name": block.name,
                 "input": block.input,
             })
+        elif btype == "server_tool_use":
+            # Native Anthropic server tool call (e.g. web_search). We keep
+            # the block as-is so the next turn sees what was searched.
+            assistant_content.append({
+                "type": "server_tool_use",
+                "id": block.id,
+                "name": block.name,
+                "input": block.input,
+            })
+        elif btype == "web_search_tool_result":
+            # Results from the server-side search. Persist them so the
+            # model can reference them in follow-up turns.
+            raw_content = block.content
+            # Anthropic returns the content either as a list of result
+            # objects or an error object. Serialize to a list of dicts.
+            if isinstance(raw_content, list):
+                serialized = []
+                for item in raw_content:
+                    serialized.append({
+                        "type": "web_search_result",
+                        "url": getattr(item, "url", ""),
+                        "title": getattr(item, "title", ""),
+                        "encrypted_content": getattr(item, "encrypted_content", ""),
+                        "page_age": getattr(item, "page_age", None),
+                    })
+                assistant_content.append({
+                    "type": "web_search_tool_result",
+                    "tool_use_id": block.tool_use_id,
+                    "content": serialized,
+                })
+            else:
+                # Error case — serialize as-is
+                assistant_content.append({
+                    "type": "web_search_tool_result",
+                    "tool_use_id": block.tool_use_id,
+                    "content": {
+                        "type": "web_search_tool_result_error",
+                        "error_code": getattr(raw_content, "error_code", "unknown"),
+                    },
+                })
         elif btype == "thinking":
             # Don't persist thinking blocks — they bloat the context
             pass
@@ -674,6 +725,7 @@ def call_agent(
 
     return {
         "tool_uses": tool_uses,
+        "server_tool_uses": server_tool_uses,
         "text": final_text,
         "thinking": thinking_text,
         "stop_reason": response.stop_reason,

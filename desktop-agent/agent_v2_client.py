@@ -31,8 +31,7 @@ _TOOL_RISK = {
     "search_files": "green", "read_file": "green", "open_file": "green",
     "open_app": "green", "open_url": "green", "shell": "green",
     "clipboard_read": "green", "clipboard_copy": "green", "notify": "green",
-    "play_media": "green", "web_search": "green", "fetch_url": "green",
-    "web_lookup": "green",
+    "play_media": "green", "web_open": "green", "fetch_url": "green",
     "check_inbox": "green", "search_email": "green", "read_email": "green",
     "screenshot": "green", "scroll": "green", "wait": "green",
     "save_memory": "green", "set_shortcut": "green",
@@ -207,17 +206,25 @@ def post_results(
     return resp
 
 
+# Map agent_v2 tool names → executor action types. Most are 1:1; a few
+# rename for clarity in the v2 schema while keeping the executor stable.
+_TOOL_TO_ACTION = {
+    "web_open": "web_search",  # v2 renamed (executor's web_search opens browser)
+}
+
+
 def tool_use_to_action(tu: dict):
     """Convert a tool_use dict {id, name, input} into an executor.Action."""
     from executor import Action, Risk
     name = tu.get("name", "")
     inp = tu.get("input", {}) or {}
+    action_type = _TOOL_TO_ACTION.get(name, name)
     risk = Risk(_TOOL_RISK.get(name, "yellow"))
     # The executor parses command as either raw text or JSON. We always send
     # JSON so payload fields stay structured.
-    cmd_str = json.dumps(inp) if inp else name
+    cmd_str = json.dumps(inp) if inp else action_type
     return Action(
-        type=name,
+        type=action_type,
         description=_describe_tool_use(name, inp),
         command=cmd_str,
         risk=risk,
@@ -260,12 +267,10 @@ def _describe_tool_use(name: str, inp: dict) -> str:
         return f"Export {inp.get('source_app', '?')} → {inp.get('destination', '?')}"
     if name == "play_media":
         return f"Play '{inp.get('query', '?')}' on {inp.get('platform', '?')}"
-    if name == "web_search":
-        return f"Search {inp.get('engine', 'google')}: '{inp.get('query', '?')}'"
+    if name == "web_open":
+        return f"Open {inp.get('engine', 'google')} search: '{inp.get('query', '?')}'"
     if name == "fetch_url":
         return f"Fetch {inp.get('url', '?')[:60]}"
-    if name == "web_lookup":
-        return f"Look up '{inp.get('query', '?')}'"
     if name == "check_inbox":
         return f"Check inbox ({inp.get('max_results', 10)} emails)"
     if name == "search_email":
