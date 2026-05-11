@@ -1675,28 +1675,49 @@ def execute_action(action: Action) -> Action:
 
                 # Defense: if the path is just a bare filename (no slash) it's
                 # almost certainly a hallucination — real read_file calls have
-                # absolute paths from the user's message. Refuse explicitly so
-                # Claude gets a useful error in the agent loop.
+                # absolute paths from the user's message. Refuse with an
+                # instructive error so Claude knows what to do next.
                 if "/" not in str(path):
                     action.success = False
                     action.result = (
-                        f"Refused: '{path}' is not an absolute path. If the user "
-                        f"ATTACHED a file (image/PDF), read it directly from your "
-                        f"context — do NOT call read_file. Only call read_file with "
-                        f"a real absolute path the user typed."
+                        f"REJECTED: '{path}' is not an absolute path (no '/'). "
+                        f"STOP. Do NOT retry with another guessed path. "
+                        f"Two cases:\n"
+                        f"1. If the user ATTACHED a file (image/PDF), it's "
+                        f"already in your context — read it directly from "
+                        f"the image/document blocks. Do NOT call read_file "
+                        f"for attached files.\n"
+                        f"2. If the user mentioned a file but didn't give a "
+                        f"path, respond with TEXT asking them for the full "
+                        f"absolute path. Do NOT call read_file again with a "
+                        f"different guess."
                     )
                 elif not p.exists():
                     action.success = False
                     action.result = (
-                        f"File not found: {p}. Don't guess paths — only use ones "
-                        f"the user actually provided in their message."
+                        f"NOT FOUND: {p}\n"
+                        f"This path does not exist. STOP — do not retry with "
+                        f"variants of the path. Either:\n"
+                        f"1. The user gave you a typo'd path. Respond with "
+                        f"TEXT asking them to confirm/correct it.\n"
+                        f"2. You misread/modified the path. Look back at the "
+                        f"original user message and use it EXACTLY."
                     )
                 elif p.is_dir():
                     action.success = False
-                    action.result = f"That's a directory, not a file: {p}"
+                    action.result = (
+                        f"IS A DIRECTORY: {p}\n"
+                        f"You can't read a directory with read_file. If you "
+                        f"want to list directory contents, use the `shell` "
+                        f"tool with `ls`."
+                    )
                 elif p.stat().st_size > 5_000_000:
                     action.success = False
-                    action.result = f"File too large ({p.stat().st_size:,} bytes); cap is 5MB"
+                    action.result = (
+                        f"FILE TOO LARGE: {p.stat().st_size:,} bytes (cap is "
+                        f"5 MB). For large files, ask the user to slice or "
+                        f"summarize before importing."
+                    )
                 else:
                     try:
                         content = p.read_text(encoding="utf-8", errors="replace")
@@ -1706,7 +1727,11 @@ def execute_action(action: Action) -> Action:
                     action.success = True
                     action.result = content[:max_chars]
                     if len(content) > max_chars:
-                        action.result += f"\n... [truncated; file has {len(content):,} chars total]"
+                        action.result += (
+                            f"\n... [TRUNCATED — file has {len(content):,} chars total. "
+                            f"Call read_file again with max_chars={len(content)} "
+                            f"to see the rest.]"
+                        )
             except Exception as e:
                 action.success = False
                 action.error = f"read_file failed: {e}"
