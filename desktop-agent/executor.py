@@ -1753,6 +1753,24 @@ def execute_action(action: Action) -> Action:
                     action.success = False
                     action.error = f"Shortcut save failed: {e}"
 
+        elif action.type == "create_routine":
+            # Claude can create recurring background tasks
+            r_name = cmd_data.get("name", "")
+            r_prompt = cmd_data.get("prompt", "")
+            r_schedule = cmd_data.get("schedule", "")
+            if not r_prompt or not r_schedule:
+                action.success = False
+                action.result = "create_routine needs `prompt` and `schedule`"
+            else:
+                try:
+                    from routines import create_routine as _create_routine
+                    ok, msg = _create_routine(r_name, r_prompt, r_schedule)
+                    action.success = ok
+                    action.result = msg
+                except Exception as e:
+                    action.success = False
+                    action.error = f"Routine create failed: {e}"
+
         else:
             action.success = False
             action.error = f"Unknown action type: {action.type}"

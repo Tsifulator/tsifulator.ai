@@ -484,6 +484,32 @@ AGENT_TOOLS = [
             },
         },
     },
+    {
+        "name": "create_routine",
+        "description": (
+            "Create a recurring background task that fires its prompt on a "
+            "schedule. Use this when the user asks for something to happen "
+            "automatically over time (e.g. 'every morning summarize my inbox', "
+            "'every hour check market', 'every Sunday review my calendar'). "
+            "The scheduler will fire `prompt` through this same agent each time."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["name", "prompt", "schedule"],
+            "properties": {
+                "name": {"type": "string", "description": "Short human label (e.g. 'Morning inbox summary')"},
+                "prompt": {"type": "string", "description": "The instruction to fire each time the routine runs."},
+                "schedule": {
+                    "type": "string",
+                    "description": (
+                        "Friendly schedule. Examples: 'daily 08:00', "
+                        "'weekdays 9am', 'every 30 min', 'hourly', "
+                        "'mondays 10:00', 'market hours every 60 min'."
+                    ),
+                },
+            },
+        },
+    },
 
     # ── Anthropic NATIVE server tool: web_search ────────────────────────────
     # Executed on Anthropic's servers; results come back inline as

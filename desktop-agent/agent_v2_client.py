@@ -35,6 +35,7 @@ _TOOL_RISK = {
     "check_inbox": "green", "search_email": "green", "read_email": "green",
     "screenshot": "green", "scroll": "green", "wait": "green",
     "save_memory": "green", "set_shortcut": "green",
+    "create_routine": "green",
     # YELLOW — writes/creates
     "applescript": "yellow", "write_file": "yellow", "data_export": "yellow",
     "click_at": "yellow", "type_text": "yellow", "key_combo": "yellow",
@@ -300,6 +301,10 @@ def _describe_tool_use(name: str, inp: dict) -> str:
         return f"Remember: {inp.get('fact', '')[:50]}"
     if name == "set_shortcut":
         return f"Create shortcut /{inp.get('trigger', '?')}"
+    if name == "create_routine":
+        sched = inp.get("schedule", "?")
+        n = inp.get("name") or inp.get("prompt", "")[:40]
+        return f"Schedule '{n}' — {sched}"
     return name
 
 
