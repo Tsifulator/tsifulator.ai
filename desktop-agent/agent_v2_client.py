@@ -338,7 +338,7 @@ def run_agent_loop(
     user_message: str,
     context: dict,
     images: Optional[list[dict]] = None,
-    max_steps: int = 8,
+    max_steps: int = 5,
     on_step=None,
 ) -> dict:
     """Drive the full agent loop until done or max_steps reached.
@@ -365,6 +365,10 @@ def run_agent_loop(
     conversation_id: Optional[str] = None
     final_text = ""
     last_thinking = ""
+    total_cost = 0.0
+    last_warning = ""
+    last_today_total = 0.0
+    last_model = ""
 
     # Round 1: start the conversation
     resp = start_turn(user_message, context, conversation_id, images)
@@ -378,12 +382,35 @@ def run_agent_loop(
                 "rounds": step - 1,
                 "all_executed": all_executed,
                 "error": resp["error"],
+                "total_cost_usd": total_cost,
+                "today_total_usd": last_today_total,
+                "warning": last_warning,
+                "model": last_model,
             }
 
         tool_uses = resp.get("tool_uses", [])
         text = resp.get("text", "")
         thinking = resp.get("thinking", "")
         last_thinking = thinking or last_thinking
+        # Accumulate cost across rounds
+        total_cost += float(resp.get("cost_usd", 0.0) or 0.0)
+        last_today_total = float(resp.get("cost_today_usd", last_today_total) or last_today_total)
+        last_warning = resp.get("cost_warning", "") or last_warning
+        last_model = resp.get("model", "") or last_model
+
+        # Budget-exceeded: server already returned an error message in `text`
+        if resp.get("stop_reason") == "budget_exceeded":
+            return {
+                "conversation_id": conversation_id,
+                "final_text": text,
+                "rounds": step,
+                "all_executed": all_executed,
+                "error": "budget_exceeded",
+                "total_cost_usd": total_cost,
+                "today_total_usd": last_today_total,
+                "warning": last_warning,
+                "model": last_model,
+            }
 
         # No tool calls → the agent is asking a question or finishing
         if not tool_uses:
@@ -437,4 +464,8 @@ def run_agent_loop(
         "all_executed": all_executed,
         "thinking": last_thinking,
         "error": resp.get("error"),
+        "total_cost_usd": total_cost,
+        "today_total_usd": last_today_total,
+        "warning": last_warning,
+        "model": last_model,
     }
