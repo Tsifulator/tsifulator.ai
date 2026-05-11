@@ -398,14 +398,14 @@ def run_agent_loop(
         last_warning = resp.get("cost_warning", "") or last_warning
         last_model = resp.get("model", "") or last_model
 
-        # Budget-exceeded: server already returned an error message in `text`
-        if resp.get("stop_reason") == "budget_exceeded":
+        # Budget / per-turn cap halts — server returned the explanation in `text`
+        if resp.get("stop_reason") in ("budget_exceeded", "turn_cap_exceeded"):
             return {
                 "conversation_id": conversation_id,
                 "final_text": text,
                 "rounds": step,
                 "all_executed": all_executed,
-                "error": "budget_exceeded",
+                "error": resp["stop_reason"],
                 "total_cost_usd": total_cost,
                 "today_total_usd": last_today_total,
                 "warning": last_warning,

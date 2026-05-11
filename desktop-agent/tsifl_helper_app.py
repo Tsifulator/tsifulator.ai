@@ -2501,7 +2501,10 @@ def _panel_submit(text: str):
             if summary.get("warning"):
                 lines.append("")
                 lines.append(summary["warning"])
-            if summary.get("error") and summary.get("error") != "budget_exceeded":
+            # Hide error footer for graceful cap halts (the friendly message
+            # is already in `final_text`); show only real failures.
+            _silent_errors = {"budget_exceeded", "turn_cap_exceeded"}
+            if summary.get("error") and summary.get("error") not in _silent_errors:
                 lines.append("")
                 lines.append(f"⚠️ {summary['error']}")
             # Footer: cost + rounds + model — keeps you honest about burn

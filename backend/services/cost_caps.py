@@ -20,6 +20,11 @@ from datetime import datetime, timezone
 SOFT_CAP_USD = float(os.environ.get("TSIFL_SOFT_CAP_USD", "1.0"))
 HARD_CAP_USD = float(os.environ.get("TSIFL_HARD_CAP_USD", "3.0"))
 
+# Per-turn cap: max cost a SINGLE user message can spend across all its
+# follow-up rounds (search → read → write → reply, etc.). This prevents
+# one runaway prompt from burning the daily budget in one shot.
+PER_TURN_CAP_USD = float(os.environ.get("TSIFL_PER_TURN_CAP_USD", "0.25"))
+
 
 _lock = threading.Lock()
 # {user_id: {"date": "YYYY-MM-DD", "spent": float, "calls": int}}

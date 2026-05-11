@@ -33,6 +33,7 @@ from services.cost_caps import (
     get_daily_spend,
     SOFT_CAP_USD,
     HARD_CAP_USD,
+    PER_TURN_CAP_USD,
 )
 
 router = APIRouter()
@@ -92,16 +93,24 @@ class TurnResponse(BaseModel):
     thinking: str = ""
     stop_reason: str
     usage: dict
-    cost_usd: float = 0.0          # cost of THIS turn
+    cost_usd: float = 0.0          # cost of THIS API call
+    cost_turn_usd: float = 0.0     # running cost of this user-turn (all rounds so far)
     cost_today_usd: float = 0.0    # user's running daily total
     cost_warning: str = ""         # soft/hard cap message if any
     model: str = ""
     done: bool  # true when stop_reason != "tool_use" — no more tools to run
 
 
-def _make_turn_response(cid: str, result: dict, user_id: str) -> TurnResponse:
+def _make_turn_response(cid: str, result: dict, user_id: str, turn_cost: float) -> TurnResponse:
     cost = float(result.get("cost_usd", 0.0))
     spend_info = record_spend(user_id, cost)
+    # Combine daily warning with per-turn warning if the turn went over
+    warning = spend_info["warning"]
+    if turn_cost >= PER_TURN_CAP_USD and not warning:
+        warning = (
+            f"💸 This request hit the per-turn cap (${turn_cost:.3f} of "
+            f"${PER_TURN_CAP_USD:.2f}). Stopped to prevent runaway spend."
+        )
     return TurnResponse(
         conversation_id=cid,
         tool_uses=result["tool_uses"],
@@ -111,8 +120,9 @@ def _make_turn_response(cid: str, result: dict, user_id: str) -> TurnResponse:
         stop_reason=result["stop_reason"],
         usage=result["usage"],
         cost_usd=round(cost, 6),
+        cost_turn_usd=round(turn_cost, 6),
         cost_today_usd=spend_info["spent"],
-        cost_warning=spend_info["warning"],
+        cost_warning=warning,
         model=result.get("model", ""),
         done=result["stop_reason"] != "tool_use" and len(result["tool_uses"]) == 0,
     )
@@ -162,6 +172,9 @@ async def turn(req: TurnRequest):
         model=chosen_model,
     )
 
+    # New user message → reset per-turn cost meter
+    turn_cost = float(result.get("cost_usd", 0.0))
+
     # Persist updated conversation
     _conversations[cid] = {
         "messages": result["updated_conversation"],
@@ -169,9 +182,10 @@ async def turn(req: TurnRequest):
         "context": req.context,
         "model": chosen_model,
         "user_id": req.user_id,
+        "turn_cost_usd": turn_cost,
     }
 
-    return _make_turn_response(cid, result, req.user_id)
+    return _make_turn_response(cid, result, req.user_id, turn_cost)
 
 
 @router.post("/result", response_model=TurnResponse)
@@ -189,8 +203,9 @@ async def result(req: ResultRequest):
         )
 
     user_id = conv.get("user_id", "anon")
+    prior_turn_cost = float(conv.get("turn_cost_usd", 0.0))
 
-    # Mid-loop budget check — if a runaway loop pushed us over the cap, stop here
+    # Mid-loop budget check — if a runaway loop pushed us over the daily cap, stop here
     allowed, deny_msg = check_budget(user_id)
     if not allowed:
         spend = get_daily_spend(user_id)
@@ -201,8 +216,30 @@ async def result(req: ResultRequest):
             stop_reason="budget_exceeded",
             usage={},
             cost_usd=0.0,
+            cost_turn_usd=prior_turn_cost,
             cost_today_usd=spend["spent"],
             cost_warning=deny_msg,
+            done=True,
+        )
+
+    # Per-turn cap — has this single user message already burned too much?
+    if prior_turn_cost >= PER_TURN_CAP_USD:
+        msg = (
+            f"💸 This request already cost ${prior_turn_cost:.3f}, hitting the "
+            f"per-turn cap of ${PER_TURN_CAP_USD:.2f}. Stopping. Try a more "
+            f"specific prompt, or raise TSIFL_PER_TURN_CAP_USD."
+        )
+        spend = get_daily_spend(user_id)
+        return TurnResponse(
+            conversation_id=req.conversation_id,
+            tool_uses=[],
+            text=msg,
+            stop_reason="turn_cap_exceeded",
+            usage={},
+            cost_usd=0.0,
+            cost_turn_usd=prior_turn_cost,
+            cost_today_usd=spend["spent"],
+            cost_warning=msg,
             done=True,
         )
 
@@ -227,15 +264,18 @@ async def result(req: ResultRequest):
         model=chosen_model,
     )
 
+    new_turn_cost = prior_turn_cost + float(result_dict.get("cost_usd", 0.0))
+
     _conversations[req.conversation_id] = {
         "messages": result_dict["updated_conversation"],
         "last_active": time.time(),
         "context": req.context or conv.get("context"),
         "model": chosen_model,
         "user_id": user_id,
+        "turn_cost_usd": new_turn_cost,
     }
 
-    return _make_turn_response(req.conversation_id, result_dict, user_id)
+    return _make_turn_response(req.conversation_id, result_dict, user_id, new_turn_cost)
 
 
 @router.delete("/conversation/{conversation_id}")
@@ -255,6 +295,7 @@ async def agent_health():
         "tools_loaded": len(AGENT_TOOLS),
         "soft_cap_usd": SOFT_CAP_USD,
         "hard_cap_usd": HARD_CAP_USD,
+        "per_turn_cap_usd": PER_TURN_CAP_USD,
     }
 
 
