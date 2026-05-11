@@ -629,9 +629,22 @@ def call_agent(
         )
     except anthropic.APIError as e:
         logger.error("agent_v2 API error: %s", e)
+        # Friendly user-facing message for the common cases
+        err_text = str(e).lower()
+        if "credit balance" in err_text or "credit_balance" in err_text:
+            msg = (
+                "💳 Anthropic API credits depleted. "
+                "Top up at console.anthropic.com → Billing, then try again."
+            )
+        elif "rate" in err_text and "limit" in err_text:
+            msg = "⏱ Rate-limited by Anthropic. Wait a few seconds and retry."
+        elif "overloaded" in err_text:
+            msg = "🟧 Anthropic is overloaded. Try again in a moment."
+        else:
+            msg = f"API error: {str(e)[:200]}"
         return {
             "tool_uses": [],
-            "text": f"API error: {e}",
+            "text": msg,
             "thinking": "",
             "stop_reason": "error",
             "updated_conversation": conversation,
