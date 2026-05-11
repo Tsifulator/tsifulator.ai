@@ -120,19 +120,32 @@ AGENT_TOOLS = [
     {
         "name": "search_files",
         "description": (
-            "Search the user's Mac via Spotlight, sorted by most recently "
-            "modified. Use this for ANY file search — never use shell `find`, "
-            "`mdfind`, `ls`, or `locate`."
+            "Search the Mac via Spotlight (mdfind). Returns a list of absolute "
+            "file paths, sorted by most-recently-modified first. "
+            "Use this for ALL file searches. Never call `shell` with find, "
+            "mdfind, ls, or locate. "
+            "For 'open my recent <type>', call with file_type=<type> and use "
+            "index 0 of the result. The sorting guarantees you get the right "
+            "file without having to pick. "
+            "Returns 'No files found' if nothing matches — in that case, ASK "
+            "the user instead of guessing."
         ),
         "input_schema": {
             "type": "object",
             "required": ["query"],
             "properties": {
-                "query": {"type": "string", "description": "Search term (filename or content)."},
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Search term — filename or content. Use '*' (or any "
+                        "single character) when you only care about file_type "
+                        "and want the most recent file of that type."
+                    ),
+                },
                 "file_type": {
                     "type": "string",
                     "enum": ["excel", "word", "ppt", "pdf", "image", "csv", "text"],
-                    "description": "Optional filter by file type.",
+                    "description": "Filter by type. Strongly recommended for 'recent X' queries.",
                 },
                 "max_results": {"type": "integer", "default": 10},
             },
@@ -141,9 +154,13 @@ AGENT_TOOLS = [
     {
         "name": "open_file",
         "description": (
-            "Open a file in its default app. If the user named a SPECIFIC app "
-            "(e.g. 'open this CSV in Excel'), use applescript instead — "
-            "open_file uses system defaults (CSV → Numbers, etc)."
+            "Open a file in its macOS DEFAULT app (CSV → Numbers, PDF → Preview, "
+            "DOCX → Word, etc.). "
+            "DO NOT use this when the user named a specific app — use "
+            "`applescript` instead. Example: user says 'open data.csv in Excel' "
+            "→ applescript `tell application \"Microsoft Excel\" to open \"...\"`, "
+            "NOT open_file (which would open in Numbers). "
+            "Use open_file when the user said just 'open X' with no app preference."
         ),
         "input_schema": {
             "type": "object",
@@ -156,29 +173,55 @@ AGENT_TOOLS = [
     {
         "name": "read_file",
         "description": (
-            "Read a text file (CSV, TSV, TXT, JSON, .py, .r) from disk. Returns "
-            "the contents so you can act on them in the next turn. ONLY use "
-            "with absolute paths the user actually provided. NEVER invent a "
-            "filename. If the user attached a file (image/PDF), it's already "
-            "in your context — do NOT call read_file for it."
+            "Read a text file from disk and return its contents in the next "
+            "tool_result. Use for: CSV, TSV, TXT, JSON, source code (.py, .r, "
+            ".js, etc.), markdown, HTML, log files. "
+            "\n\nSTRICT RULES:\n"
+            "• path MUST be absolute (starts with '/'). Bare filenames are "
+            "rejected; the error will tell you.\n"
+            "• Use the EXACT path the user provided in their message. Do not "
+            "modify, normalize, or invent paths. If the user didn't give a "
+            "path, ASK for it rather than guess.\n"
+            "• If the user ATTACHED an image or PDF (it appears as an image/ "
+            "document block in your context), you can READ IT DIRECTLY. "
+            "Calling read_file for an attached file is a hallucination — the "
+            "content is already in your context window.\n"
+            "\nReturns contents truncated to max_chars. If you see a "
+            "'[truncated]' marker, call read_file again with a larger "
+            "max_chars to see the rest."
         ),
         "input_schema": {
             "type": "object",
             "required": ["path"],
             "properties": {
-                "path": {"type": "string", "description": "Absolute path. Must start with /."},
-                "max_chars": {"type": "integer", "default": 30000},
+                "path": {
+                    "type": "string",
+                    "description": "Absolute path. Must start with '/'.",
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "default": 30000,
+                    "description": "Max chars to return. Default is enough for typical files.",
+                },
             },
         },
     },
     {
         "name": "write_file",
-        "description": "Write text content to a file. Creates parent dirs.",
+        "description": (
+            "Write text content to a file on disk. Creates parent directories "
+            "if missing. Overwrites existing files without warning. "
+            "Use for: saving generated reports, CSVs, scripts, markdown notes. "
+            "Path must be absolute. "
+            "For OFFICE documents (.xlsx, .docx, .pptx) — use applescript "
+            "instead so the content is structured correctly; write_file would "
+            "produce a corrupt binary file."
+        ),
         "input_schema": {
             "type": "object",
             "required": ["path", "content"],
             "properties": {
-                "path": {"type": "string"},
+                "path": {"type": "string", "description": "Absolute path."},
                 "content": {"type": "string"},
             },
         },
@@ -187,18 +230,38 @@ AGENT_TOOLS = [
     # ── App control ────────────────────────────────────────────────────────
     {
         "name": "open_app",
-        "description": "Launch or activate a Mac app by name.",
+        "description": (
+            "Launch or activate a Mac app by exact name. "
+            "Use as a precursor to applescript when the app must be running "
+            "first (rarely needed — most applescript blocks include `tell "
+            "application X to activate` themselves). "
+            "On its own, this just opens the app — not a complete task. "
+            "If the user asked you to DO something in the app, you still need "
+            "an applescript call afterward. Don't claim 'done' just because "
+            "an app opened."
+        ),
         "input_schema": {
             "type": "object",
             "required": ["name"],
             "properties": {
-                "name": {"type": "string", "description": "App name (e.g. 'Microsoft Excel', 'Safari')."},
+                "name": {
+                    "type": "string",
+                    "description": (
+                        "Exact app name as it appears in /Applications, e.g. "
+                        "'Microsoft Excel', 'Safari', 'Numbers', 'RStudio'."
+                    ),
+                },
             },
         },
     },
     {
         "name": "open_url",
-        "description": "Open a URL in the default browser.",
+        "description": (
+            "Open a URL in the user's default browser. Use for: launching a "
+            "specific webpage the user named, opening a SaaS dashboard, etc. "
+            "For Gmail/calendar use the dedicated tools (check_inbox, etc.) "
+            "instead — they're faster and don't open a tab."
+        ),
         "input_schema": {
             "type": "object",
             "required": ["url"],
@@ -208,23 +271,49 @@ AGENT_TOOLS = [
     {
         "name": "applescript",
         "description": (
-            "Run AppleScript to control any Mac app. Use this for: writing to "
-            "Excel/Word/PPT cells, building documents, opening files in a "
-            "specific app, pressing Macabacus/Think-Cell shortcuts via "
-            "keystroke, etc. Prefer ONE atomic script over multiple actions."
+            "Run AppleScript. The most powerful tool — it can drive ANY Mac "
+            "app: Excel, Word, PowerPoint, Numbers, Pages, Keynote, Finder, "
+            "Safari, Chrome, Mail, Calendar, Reminders, and system events. "
+            "\n\nUSE FOR:\n"
+            "• Writing to Excel/Word/PPT cells, formulas, slides\n"
+            "• Opening files in a specific app: `tell application \"Microsoft "
+            "Excel\" to open \"/path/to/data.csv\"`\n"
+            "• Pressing app shortcuts (Macabacus, Think-Cell) via System "
+            "Events keystroke commands\n"
+            "• Building entire documents in one script (preferred over "
+            "multiple cell-by-cell calls)\n"
+            "\nWRITE ONE ATOMIC SCRIPT per task, not many tiny ones. A whole "
+            "workbook of values + formulas should be one script. "
+            "\nWhen writing to Excel, target the EXACT sheet name from the "
+            "mac.excel context block. If you reference a sheet name that "
+            "doesn't exist, the script silently fails. "
+            "\nESCAPE QUOTES carefully — AppleScript uses double quotes; if "
+            "your content has double quotes, escape them as \\\". "
+            "\nAfter the script runs, you'll get a string result. Read it: "
+            "errors look like 'error: Microsoft Excel got an error...'."
         ),
         "input_schema": {
             "type": "object",
             "required": ["script"],
-            "properties": {"script": {"type": "string", "description": "AppleScript source."}},
+            "properties": {
+                "script": {
+                    "type": "string",
+                    "description": "Complete AppleScript source — multiple lines OK.",
+                },
+            },
         },
     },
     {
         "name": "shell",
         "description": (
-            "Run a read-only shell command. Do NOT use for file search "
-            "(use search_files), file reading (use read_file), or anything "
-            "destructive."
+            "Run a read-only shell command. Returns stdout. "
+            "\nDO NOT use for:\n"
+            "• File search → use `search_files` (faster, Spotlight-indexed)\n"
+            "• File reading → use `read_file`\n"
+            "• Anything destructive (rm, mv, kill, etc.)\n"
+            "• App automation → use `applescript`\n"
+            "\nGOOD uses: `ls -la /tmp/some_specific_dir`, `wc -l <file>`, "
+            "`date`, `whoami`, querying system info."
         ),
         "input_schema": {
             "type": "object",
@@ -236,7 +325,12 @@ AGENT_TOOLS = [
     # ── Clipboard + notify ─────────────────────────────────────────────────
     {
         "name": "clipboard_copy",
-        "description": "Copy text to the system clipboard.",
+        "description": (
+            "Copy text to the system clipboard. The user can then ⌘V into "
+            "any app. Use when you've generated content the user will paste "
+            "elsewhere (a SQL query, a code snippet, an email body to paste "
+            "into Outlook, etc)."
+        ),
         "input_schema": {
             "type": "object",
             "required": ["text"],
@@ -245,12 +339,21 @@ AGENT_TOOLS = [
     },
     {
         "name": "clipboard_read",
-        "description": "Read the current clipboard contents.",
+        "description": (
+            "Read the current clipboard contents. Use when the user says "
+            "'use what's on my clipboard', 'paste that', or 'I just copied "
+            "X — do Y with it'."
+        ),
         "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "notify",
-        "description": "Show a macOS notification.",
+        "description": (
+            "Show a macOS notification banner. Use sparingly — only for "
+            "things the user explicitly asked to be notified about, or for "
+            "background routines completing. Don't notify for normal "
+            "interactive responses — your text reply is the response."
+        ),
         "input_schema": {
             "type": "object",
             "required": ["message"],
@@ -262,33 +365,58 @@ AGENT_TOOLS = [
     {
         "name": "play_media",
         "description": (
-            "Play music/video on a specific platform. Battle-tested — "
-            "no vision loop needed."
+            "Play music or a video on a specific platform. Battle-tested per "
+            "app — uses URL schemes + UI scripting + verification. "
+            "FOR 'play X on spotify' OR 'play X' (no platform named) — use "
+            "this tool, not a vision loop. "
+            "FOR 'play X on youtube' — use this with platform='youtube'. "
+            "platform='apple music' is supported but rarely needed. "
+            "Returns the actual track name + artist that started playing — "
+            "if it doesn't match what the user asked for, you can apologize "
+            "and try again."
         ),
         "input_schema": {
             "type": "object",
             "required": ["platform", "query"],
             "properties": {
                 "platform": {"type": "string", "enum": ["spotify", "youtube", "apple music"]},
-                "query": {"type": "string"},
+                "query": {"type": "string", "description": "Song, artist, playlist, or video title."},
             },
         },
     },
     {
         "name": "web_open",
-        "description": "Open a web search in the user's browser (just navigation). Use when the user wants to BROWSE results themselves.",
+        "description": (
+            "Open a web SEARCH PAGE in the user's browser. Use when the user "
+            "wants to look at results themselves: 'pull up google for X', "
+            "'open YouTube and find me X'. "
+            "Does NOT return any text — you're just navigating. "
+            "For getting actual content/answers, use `web_search` (which "
+            "returns text)."
+        ),
         "input_schema": {
             "type": "object",
             "required": ["query"],
             "properties": {
                 "query": {"type": "string"},
-                "engine": {"type": "string", "enum": ["google", "bing", "duckduckgo", "youtube"], "default": "google"},
+                "engine": {
+                    "type": "string",
+                    "enum": ["google", "bing", "duckduckgo", "youtube"],
+                    "default": "google",
+                },
             },
         },
     },
     {
         "name": "fetch_url",
-        "description": "Fetch a URL and return its text content (HTML stripped). Use when you have a specific URL to read.",
+        "description": (
+            "Fetch a SPECIFIC URL and return its text content (HTML stripped). "
+            "Use when you have a known URL — e.g. the user shared a link, or "
+            "you got a URL from a previous web_search result that you want "
+            "to read in full. "
+            "For exploratory 'look up X' questions, use `web_search` "
+            "instead — it searches AND returns content in one call."
+        ),
         "input_schema": {
             "type": "object",
             "required": ["url"],
@@ -306,16 +434,27 @@ AGENT_TOOLS = [
     {
         "name": "data_export",
         "description": (
-            "Export data from a Mac app to a file. Battle-tested per-app "
-            "scripts. ALWAYS use this for 'export the data' instead of "
-            "writing your own AppleScript."
+            "Export the active document from a Mac app to a file. Uses "
+            "battle-tested AppleScript per app — works correctly with HFS "
+            "paths, format options, etc. "
+            "USE THIS for 'export this data', 'save the Numbers spreadsheet "
+            "as a CSV', 'export the active document as PDF'. "
+            "Do NOT roll your own AppleScript for this — the per-app script "
+            "logic (Numbers uses HFS colon paths, Excel uses POSIX, etc.) is "
+            "easy to get wrong."
         ),
         "input_schema": {
             "type": "object",
             "required": ["source_app", "destination"],
             "properties": {
-                "source_app": {"type": "string", "description": "e.g. 'Numbers', 'Microsoft Excel'"},
-                "destination": {"type": "string", "description": "Output file path."},
+                "source_app": {
+                    "type": "string",
+                    "description": "App name: 'Numbers', 'Microsoft Excel', 'Pages', 'Preview'.",
+                },
+                "destination": {
+                    "type": "string",
+                    "description": "Absolute output path. ~ in paths is expanded.",
+                },
                 "format": {"type": "string", "enum": ["csv", "tsv", "pdf"], "default": "csv"},
             },
         },
@@ -324,15 +463,31 @@ AGENT_TOOLS = [
     # ── Gmail ──────────────────────────────────────────────────────────────
     {
         "name": "check_inbox",
-        "description": "Fetch recent emails from the user's Gmail inbox.",
+        "description": (
+            "Fetch recent emails from the user's Gmail inbox. Returns a list "
+            "with sender, subject, snippet, and message_id for each. "
+            "Each result includes '[id:ABC123]' — you'll use that id with "
+            "read_email or send_email's reply_to_id. "
+            "User can follow up with 'read 3' or 'reply to the first one' — "
+            "the message_ids are remembered for follow-up turns."
+        ),
         "input_schema": {
             "type": "object",
-            "properties": {"max_results": {"type": "integer", "default": 10}},
+            "properties": {
+                "max_results": {"type": "integer", "default": 10},
+            },
         },
     },
     {
         "name": "search_email",
-        "description": "Search Gmail with query syntax (from:, subject:, is:unread, newer_than:, has:attachment).",
+        "description": (
+            "Search Gmail with native query syntax. Same operators as the "
+            "Gmail web UI: from:, to:, subject:, is:unread, is:starred, "
+            "has:attachment, newer_than:7d, older_than:1m, label:work, etc. "
+            "Combine freely: 'from:dave subject:meeting newer_than:14d'. "
+            "Returns the same shape as check_inbox (id, sender, subject, "
+            "snippet)."
+        ),
         "input_schema": {
             "type": "object",
             "required": ["query"],
@@ -344,33 +499,62 @@ AGENT_TOOLS = [
     },
     {
         "name": "read_email",
-        "description": "Read the full body of a specific email by message ID.",
+        "description": (
+            "Read the FULL body of a specific email. Use after check_inbox or "
+            "search_email returned a list — pass the [id:…] value from the "
+            "result you want. "
+            "Use this before drafting a reply so you can quote/reference "
+            "specifics from the original."
+        ),
         "input_schema": {
             "type": "object",
             "required": ["message_id"],
-            "properties": {"message_id": {"type": "string"}},
+            "properties": {
+                "message_id": {
+                    "type": "string",
+                    "description": "The id returned by check_inbox or search_email.",
+                },
+            },
         },
     },
     {
         "name": "send_email",
         "description": (
-            "Send an email via Gmail. RED RISK — always requires explicit "
-            "user confirmation before being called."
+            "Send an email via Gmail. THIS IS RED RISK — it actually leaves "
+            "the user's outbox and arrives in someone's inbox. "
+            "\nDO NOT CALL unless the user has explicitly said 'send', 'send "
+            "it', 'yes send', or similar in the same conversation. "
+            "Drafting a message and asking 'should I send?' counts — wait for "
+            "their confirmation. "
+            "\nFor replies: ALWAYS set reply_to_id to keep the thread intact. "
+            "The id comes from a prior check_inbox/search_email/read_email. "
+            "\nIf you want to prepare an email but aren't sure about sending, "
+            "use draft_email instead — that's yellow risk and the user can "
+            "review in Gmail."
         ),
         "input_schema": {
             "type": "object",
             "required": ["to", "subject", "body"],
             "properties": {
-                "to": {"type": "string"},
+                "to": {"type": "string", "description": "Recipient email address."},
                 "subject": {"type": "string"},
-                "body": {"type": "string"},
-                "reply_to_id": {"type": "string", "description": "Message ID to thread the reply to."},
+                "body": {"type": "string", "description": "Plain text body."},
+                "reply_to_id": {
+                    "type": "string",
+                    "description": "If replying, the message_id of the email being replied to. Threads the reply.",
+                },
             },
         },
     },
     {
         "name": "draft_email",
-        "description": "Create a Gmail draft (does NOT send).",
+        "description": (
+            "Create a Gmail draft — does NOT send. The user reviews it in "
+            "Gmail's drafts folder. "
+            "This is the right tool for: outreach campaigns, sensitive emails, "
+            "anything where the user wants a final review before sending. "
+            "Also the right tool when you're not 100% confident about content."
+        ),
         "input_schema": {
             "type": "object",
             "required": ["to", "subject", "body"],
@@ -383,9 +567,22 @@ AGENT_TOOLS = [
     },
 
     # ── Screen automation (vision loop) ───────────────────────────────────
+    # USE THESE ONLY when no specialized tool will work: the user wants you
+    # to interact with a GUI element that has no AppleScript or API path.
+    # If applescript can do the job, do that instead — it's 10× more reliable.
     {
         "name": "screenshot",
-        "description": "Capture the screen. Returns a base64 image you can analyze in the next turn.",
+        "description": (
+            "Capture the screen and return it as a base64 image you can "
+            "analyze in the NEXT turn. The image is returned as a tool_result; "
+            "you'll see it in your conversation context. "
+            "Use ONLY for: web pages with no API, custom apps with no "
+            "AppleScript dictionary, anything where you need to visually "
+            "identify a UI element to click. "
+            "If the user is in Excel/Word/PPT/Numbers — use applescript, NOT "
+            "screenshot. Office apps have full AppleScript dictionaries; "
+            "vision is fragile and slow by comparison."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -403,20 +600,35 @@ AGENT_TOOLS = [
     },
     {
         "name": "click_at",
-        "description": "Click at screen coordinates (from a screenshot).",
+        "description": (
+            "Click at screen coordinates. Coordinates come from a "
+            "PREVIOUS screenshot — they map 1:1 to screen points. "
+            "Always pair with a screenshot in the same workflow. "
+            "Click the CENTER of the target element, not the edge. "
+            "Don't fabricate coordinates — if you didn't take a screenshot, "
+            "take one first."
+        ),
         "input_schema": {
             "type": "object",
             "required": ["x", "y"],
             "properties": {
                 "x": {"type": "integer"},
                 "y": {"type": "integer"},
-                "click_type": {"type": "string", "enum": ["left", "right", "double"], "default": "left"},
+                "click_type": {
+                    "type": "string",
+                    "enum": ["left", "right", "double"],
+                    "default": "left",
+                },
             },
         },
     },
     {
         "name": "type_text",
-        "description": "Type text via keyboard into the focused field.",
+        "description": (
+            "Type text via simulated keystrokes into the focused field. "
+            "Don't use for filling Office docs — applescript is more reliable. "
+            "Use for: web forms, chat boxes, search fields after a click_at."
+        ),
         "input_schema": {
             "type": "object",
             "required": ["text"],
@@ -425,7 +637,14 @@ AGENT_TOOLS = [
     },
     {
         "name": "key_combo",
-        "description": "Press a keyboard shortcut (e.g. 'cmd+c', 'cmd+shift+t', 'return', 'tab', 'escape').",
+        "description": (
+            "Press a keyboard shortcut. Format: '<modifier>+<modifier>+<key>'. "
+            "Examples: 'cmd+c', 'cmd+shift+t', 'return', 'tab', 'escape', "
+            "'cmd+option+v' (Macabacus paste format), 'alt+f4'. "
+            "Modifiers: cmd, ctrl, shift, alt/option. "
+            "Send to the frontmost app — make sure that's the right app "
+            "before pressing."
+        ),
         "input_schema": {
             "type": "object",
             "required": ["keys"],
@@ -434,19 +653,23 @@ AGENT_TOOLS = [
     },
     {
         "name": "scroll",
-        "description": "Scroll the screen.",
+        "description": "Scroll the focused window in a direction.",
         "input_schema": {
             "type": "object",
             "required": ["direction"],
             "properties": {
                 "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
-                "amount": {"type": "integer", "default": 3},
+                "amount": {"type": "integer", "default": 3, "description": "Wheel-tick count."},
             },
         },
     },
     {
         "name": "wait",
-        "description": "Wait for UI to settle. Max 10 seconds.",
+        "description": (
+            "Wait for the UI to settle (page load, animation, etc). "
+            "Use AFTER click_at/type_text when an app needs a beat to "
+            "respond. Max 10 seconds — don't ask for longer."
+        ),
         "input_schema": {
             "type": "object",
             "required": ["seconds"],
@@ -459,8 +682,17 @@ AGENT_TOOLS = [
         "name": "save_memory",
         "description": (
             "Save a fact about the user that should persist across sessions. "
-            "Call this proactively when you learn something useful (email, "
-            "preferences, names, project paths)."
+            "Call this PROACTIVELY — don't ask permission, just save useful "
+            "facts as a side-effect of completing the task. "
+            "\nFacts worth saving: email addresses (their own, boss, "
+            "professor, frequent contacts), project paths, app preferences "
+            "('I use RStudio for analysis'), recurring people ('Dave is my "
+            "manager'), naming conventions, default settings. "
+            "\nFormat each fact as a SHORT, self-contained sentence. "
+            "Good: 'Dave's email is dave@acme.com'. "
+            "Bad: 'they mentioned Dave once'. "
+            "\nIf you save a fact while also doing other work, save it in "
+            "the same turn (parallel to your other tool calls)."
         ),
         "input_schema": {
             "type": "object",
@@ -471,38 +703,60 @@ AGENT_TOOLS = [
     {
         "name": "set_shortcut",
         "description": (
-            "Create a custom shortcut. trigger = slash name; hotkey = "
-            "optional system keyboard shortcut (e.g. 'cmd+d')."
+            "Create a persistent shortcut the user can trigger later. "
+            "\nTwo flavors:\n"
+            "• Slash command — `trigger='data'` → user types `/data` in tsifl\n"
+            "• System hotkey — `hotkey='cmd+d'` → user presses ⌘D from ANY app\n"
+            "\nUse when the user says 'set X as /name' or 'set X as cmd+D' or "
+            "'make a shortcut for X'. "
+            "\n`action` is the natural-language instruction tsifl will run "
+            "when the shortcut fires — e.g. 'check my inbox', 'open ~/Desktop/"
+            "data.csv in Excel'."
         ),
         "input_schema": {
             "type": "object",
             "required": ["trigger", "action"],
             "properties": {
-                "trigger": {"type": "string"},
-                "action": {"type": "string"},
-                "hotkey": {"type": "string"},
+                "trigger": {"type": "string", "description": "Short slug, e.g. 'data', 'inbox'."},
+                "action": {"type": "string", "description": "Instruction to run when triggered."},
+                "hotkey": {
+                    "type": "string",
+                    "description": "Optional system hotkey like 'cmd+d', 'cmd+shift+1'.",
+                },
             },
         },
     },
     {
         "name": "create_routine",
         "description": (
-            "Create a recurring background task that fires its prompt on a "
-            "schedule. Use this when the user asks for something to happen "
-            "automatically over time (e.g. 'every morning summarize my inbox', "
-            "'every hour check market', 'every Sunday review my calendar'). "
-            "The scheduler will fire `prompt` through this same agent each time."
+            "Create a RECURRING background task. The scheduler will fire the "
+            "`prompt` through this same agent at each scheduled time, "
+            "automatically. Results appear as macOS notifications. "
+            "\nUse when the user asks for something to happen automatically "
+            "over time. Triggers: 'every morning', 'every hour', 'each "
+            "weekday', 'every Sunday', etc. "
+            "\nThe `prompt` will be executed by a future instance of you — "
+            "write it as a clear self-contained instruction. "
+            "\nBAD: prompt='do that thing again' (no context for future you). "
+            "GOOD: prompt='check my Gmail inbox, summarize the 5 most recent "
+            "unread emails, ignore newsletters and promos'."
         ),
         "input_schema": {
             "type": "object",
             "required": ["name", "prompt", "schedule"],
             "properties": {
-                "name": {"type": "string", "description": "Short human label (e.g. 'Morning inbox summary')"},
-                "prompt": {"type": "string", "description": "The instruction to fire each time the routine runs."},
+                "name": {
+                    "type": "string",
+                    "description": "Short human label, e.g. 'Morning inbox summary'.",
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "Clear self-contained instruction to fire on each run.",
+                },
                 "schedule": {
                     "type": "string",
                     "description": (
-                        "Friendly schedule. Examples: 'daily 08:00', "
+                        "Friendly schedule string. Examples: 'daily 08:00', "
                         "'weekdays 9am', 'every 30 min', 'hourly', "
                         "'mondays 10:00', 'market hours every 60 min'."
                     ),
@@ -524,37 +778,98 @@ AGENT_TOOLS = [
 ]
 
 
-# ── System prompt — kept tight to minimize per-round token cost ─────────
-# Cached via ephemeral cache_control, so subsequent rounds within 5min pay
-# 0.1× for these tokens. Even so: every word here gets re-billed somehow,
-# so prefer rules > examples, and trust the tool schemas for details.
-SYSTEM_PROMPT = """You are tsifl, a Mac automation agent controlled via tools.
+# ── System prompt — instruction manual for the model ─────────────────────
+# Cached via ephemeral cache_control: first request within a 5min window
+# writes the cache at 1.25× cost, subsequent ones read at 0.1×. Length here
+# is not the bottleneck — quality of behavioral scaffolding is.
+SYSTEM_PROMPT = """You are tsifl, a Mac automation agent that acts through tools.
 
-# Behavior
-- Iterative: think, call one or more tools, see results, think again, until done.
-- Ask FIRST when ambiguous — text reply, no tool calls. Don't guess targets.
-- Your final text must match what tools actually did. No fake "All set" claims.
+# How you work
+You operate in a loop:
+1. Read the user's message and the CURRENT MAC STATE block below.
+2. Decide: is the target/file/recipient clear, or should I ASK first?
+3. If asking: respond with text and NO tool calls. The loop continues when the user replies.
+4. If acting: call the smallest set of tools needed for the next step.
+5. Read the tool_result. Decide the next step. Repeat until the task is done.
+6. When done, respond with a short factual summary of what you actually did.
 
-# When to ask vs act
-ASK if: target file/recipient is unclear AND no attachment, path, or context match.
-ACT if: user attached a file → use it; typed a path → use it exactly; specific named target → use it.
+# Before each tool call, think this through (silently)
+- What is the user actually asking for?
+- Is the target (file, app, recipient, cell) explicitly named, attached, or visible in the context block?
+- If YES: which tool is the right one (see tool-choice rules below)?
+- If NO: respond with a clarifying question. Do NOT guess.
 
-# Tool-choice cheatsheet
-- File search → search_files (NEVER shell find/ls/mdfind)
-- Read text/CSV → read_file with EXACT path from user (never invent)
-- Attached image/PDF → already in your context; don't read_file for it
-- Office writes → applescript (one atomic script per task)
-- Open file in a specific named app → applescript (open_file uses system defaults)
-- Web answers → web_search (Anthropic native, has citations) — use freely
-- Open a browser tab → web_open
-- Read a specific URL → fetch_url
-- Music/video → play_media
-- Email → check_inbox/search_email/read_email/draft_email; send_email = RED, needs explicit yes
-- Learn user facts → save_memory proactively
+# Ask vs act — concrete examples
+User: "import a dataset"
+  → No attached file, no path in message. ASK: "Which dataset? Drag a CSV into tsifl, or paste its full path."
 
-# Context provided
-frontmost_app, mac.excel (workbook cells+formulas), user_memory, conversation history.
-USE THEM. "Fix B12" + Excel open = you already know the cell."""
+User: "import /Users/me/Downloads/data.csv into a new Excel workbook"
+  → Path is explicit. Call read_file(path=…) first, then applescript to write to Excel.
+
+User: "open my latest Word doc"
+  → Target is clear (latest .docx). Call search_files(file_type='word'); use the FIRST result (Spotlight sorts by recency); call applescript to open in Word.
+
+User: "fix B12" — frontmost_app=Microsoft Excel, mac.excel.sheet=Summary
+  → You know the cell. Look at the formula in the context block. If it's broken, write applescript to fix it. Don't ask.
+
+User: "send the email"
+  → No recipient, no body specified. ASK what to send and to whom.
+
+User: drops an image showing a small table, says "import this"
+  → The image is in your context as an image block. READ THE TABLE FROM THE IMAGE. Open the target app. Call applescript to write the rows. Do NOT call read_file or search_files — the data is right there.
+
+# Tool-choice rules
+- File search → `search_files`. Never `shell` with find/ls/mdfind/locate. search_files uses Spotlight and sorts by most-recently-modified.
+- Read text on disk → `read_file` with the EXACT absolute path the user provided. If they didn't give a path, ASK.
+- Open a file in a specific app → `applescript` (e.g. `tell application "Microsoft Excel" to open "/path/to/data.csv"`). Plain `open_file` uses macOS defaults (CSV → Numbers, not Excel).
+- Office writes (Excel/Word/PPT cells, formulas, slides) → ONE `applescript` per task. Atomic.
+- Web lookup → `web_search` (Anthropic native, returns real content with citations). Use freely.
+- Open a search tab for the user to browse → `web_open`.
+- Read a known URL → `fetch_url`.
+- Music/video → `play_media`. Not vision loop.
+- Gmail → `check_inbox`, `search_email`, `read_email`, `draft_email`, `send_email`. NEVER open Gmail in a browser to read mail.
+- Learn user facts (their email, boss's name, project paths, preferences) → call `save_memory` proactively as part of the same turn.
+- Recurring tasks → `create_routine`.
+
+# Risk
+- `send_email` is RED. Never call it without an explicit user confirmation in the SAME message ("send it", "yes send", etc.).
+- All others auto-execute. Use them confidently when the target is clear.
+
+# Attached files vs file paths — read this twice
+The user can attach files in two ways:
+
+A) ATTACHED (image, PDF) — appears as an image/document block in your input. You read its content DIRECTLY. **Never call read_file when the user has attached a file** — the content is already in your context window. Calling read_file for an attached file is a hallucination unless the user separately typed a path.
+
+B) PATH in text — the user typed or dragged a path like `/Users/me/Downloads/data.csv`. Call `read_file(path="/Users/me/Downloads/data.csv")` with that EXACT string. Never invent a path, never modify it, never normalize it.
+
+If neither applies and the user says "the file" or "the data" — ASK.
+
+# After a tool returns
+- Read the result before deciding the next step.
+- If the result has data (file contents, search results, email body) — USE that data; don't re-fetch.
+- If a tool errored — read the error. Do NOT retry with a guess. If the path was wrong, ASK the user. If the script syntax was wrong, FIX the script. If a path doesn't exist, don't search for variants — ask.
+- A search_files result is a list of paths sorted by recency. For "open my recent X", use index 0. Don't pick randomly.
+
+# Never fake completion
+Your final text response must reflect what tools actually ran. Forbidden:
+- "All set" / "Done" / "I've imported the data" when no write tool ran
+- "Formatting applied" with only an `open_app` call
+- Claiming a result that didn't appear in any tool_result
+
+Right pattern:
+- After applescript that wrote Excel cells: "Wrote 50 rows to Sheet1 of CAT_vs_Deere_DuPont_Appendix.xlsx."
+- After search_files only: "Found 8 .docx files — the most recent is at /Users/.../Roosevelt_Final.docx. Want me to open it?"
+- After only open_app: "Opened Excel. What should I put in it?"
+
+# Context block (CURRENT MAC STATE)
+You will receive a block below with:
+- `frontmost_app` — what the user is staring at right now.
+- `mac.excel` — if Excel is open: workbook name, sheet names, used range, cell values + formulas.
+- `mac.other_open_documents` — other apps with open docs (Numbers, Pages, Preview).
+- `user_memory` — facts saved about this user (emails, names, preferences). Use them; don't ask for things you already know.
+- Recent conversation history with your prior tool calls and results.
+
+USE THIS CONTEXT. If frontmost_app=Microsoft Excel and user says "what's in B12" — answer from the excel block; no tool call needed. If user says "email my professor" and user_memory contains "professor murphy@bc.edu" — use that address."""
 
 
 def build_messages(
