@@ -1461,7 +1461,7 @@ def _define_panel_classes():
                     # First-time use also includes a ~140MB model download.
                     if _panel_mic_btn is not None:
                         try:
-                            _panel_mic_btn.setTitle_("⋯")
+                            _set_mic_icon(_panel_mic_btn, "transcribing")
                         except Exception:
                             pass
                     # Detect first-press (no cached model yet) → louder message
@@ -1484,7 +1484,7 @@ def _define_panel_classes():
                             # doesn't get stuck in "Listening…" state on error.
                             if _panel_mic_btn is not None:
                                 try:
-                                    _panel_mic_btn.setTitle_("🎙")
+                                    _set_mic_icon(_panel_mic_btn, "idle")
                                 except Exception:
                                     pass
                             if _panel_input is not None:
@@ -1521,13 +1521,13 @@ def _define_panel_classes():
                     return
                 if _panel_mic_btn is not None:
                     try:
-                        _panel_mic_btn.setTitle_("🔴")
+                        _set_mic_icon(_panel_mic_btn, "recording")
                     except Exception:
                         pass
                 # Hint in the input field placeholder so the user knows
                 if _panel_input is not None:
                     try:
-                        _panel_input.setPlaceholderString_("Listening… click 🔴 to stop")
+                        _panel_input.setPlaceholderString_("Listening… click mic to stop")
                     except Exception:
                         pass
             except Exception as e:
@@ -1562,6 +1562,54 @@ _THINKING_LINES = (
     "Reading the room (round 2)…",
     "The intern's still researching…",
 )
+
+
+def _set_mic_icon(btn, state: str):
+    """Set the mic button's icon using native SF Symbols.
+
+    States:
+      'idle'        → mic.fill  (gray, ready)
+      'recording'   → record.circle.fill  (red dot)
+      'transcribing'→ waveform.circle  (animated-feel waveform)
+
+    Falls back to a unicode glyph if SF Symbols aren't available
+    (pre-Big Sur Macs or PyObjC build without the API).
+    """
+    try:
+        from AppKit import NSImage
+        from Foundation import NSString
+        symbol_map = {
+            "idle": ("mic.fill", "Dictate"),
+            "recording": ("record.circle.fill", "Recording — click to stop"),
+            "transcribing": ("waveform.circle", "Transcribing…"),
+        }
+        symbol, desc = symbol_map.get(state, symbol_map["idle"])
+        img = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+            symbol, desc,
+        )
+        if img is not None:
+            btn.setImage_(img)
+            btn.setImagePosition_(2)  # NSImageOnly
+            btn.setTitle_("")
+            # Tint red while recording so it's unmistakable
+            try:
+                from AppKit import NSColor
+                if state == "recording":
+                    btn.setContentTintColor_(NSColor.systemRedColor())
+                else:
+                    # Fall back to the parent muted color
+                    muted = NSColor.colorWithCalibratedRed_green_blue_alpha_(
+                        0.5, 0.5, 0.5, 1.0
+                    )
+                    btn.setContentTintColor_(muted)
+            except Exception:
+                pass
+            return
+    except Exception:
+        pass
+    # Fallback if SF Symbol path failed entirely
+    fallback = {"idle": "mic", "recording": "● REC", "transcribing": "…"}.get(state, "mic")
+    btn.setTitle_(fallback)
 
 
 def _build_floating_panel():
@@ -1755,15 +1803,16 @@ def _build_floating_panel():
         pass
     content.addSubview_(attach_btn)
 
-    # 3b. Mic button (left of attach) — speech-to-text via local Whisper
+    # 3b. Mic button (left of attach) — speech-to-text via local Whisper.
+    # Uses native SF Symbols so the icon style matches the rest of macOS
+    # rather than the cartoon emoji 🎙.
     mic_x = attach_x - btn_size - 2.0
     mic_y = attach_y
     mic_btn = NSButton.alloc().initWithFrame_(
         NSMakeRect(mic_x, mic_y, btn_size, btn_size)
     )
     mic_btn.setBordered_(False)
-    mic_btn.setTitle_("🎙")
-    mic_btn.setFont_(NSFont.systemFontOfSize_(15.0))
+    _set_mic_icon(mic_btn, "idle")
     try:
         mic_btn.setContentTintColor_(muted)
     except Exception:

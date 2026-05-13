@@ -23,7 +23,6 @@ Public API:
 from __future__ import annotations
 import os
 import sys
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -207,28 +206,20 @@ def stop_recording() -> tuple[Optional[str], str]:
     if len(audio) < _sample_rate * 0.5:
         return None, "Too short. Hold for at least half a second."
 
-    # Save to a temp WAV for whisper
-    try:
-        tmp_path = _save_wav(audio, _sample_rate)
-    except Exception as e:
-        return None, f"Could not save audio: {e}"
-
-    # Transcribe
+    # Transcribe directly from the numpy buffer. This sidesteps ffmpeg
+    # entirely (Whisper only needs ffmpeg when given a file path / bytes;
+    # numpy float32 at 16kHz mono is its native input format).
     try:
         model = _ensure_model()
         sys.stderr.write(f"[voice] transcribing {duration:.1f}s of audio…\n")
         t0 = time.time()
-        result = model.transcribe(tmp_path, language="en", fp16=False)
+        # Whisper expects mono float32 at 16kHz. Our recording already is.
+        result = model.transcribe(audio, language="en", fp16=False)
         elapsed = time.time() - t0
         text = (result.get("text") or "").strip()
         sys.stderr.write(f"[voice] transcribed in {elapsed:.1f}s: {text!r}\n")
     except Exception as e:
         return None, f"Transcription failed: {e}"
-    finally:
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
 
     if not text:
         return None, "Whisper couldn't hear anything. Speak a bit louder."
@@ -240,22 +231,3 @@ def cancel_recording():
     global _recording, _audio_buffer
     _recording = False
     _audio_buffer = []
-
-
-def _save_wav(audio_float32, sample_rate: int) -> str:
-    """Write a float32 numpy array to a temp WAV file. Returns the path."""
-    import wave
-    np = _numpy_module
-
-    # Convert float32 [-1, 1] → int16
-    audio_int16 = (audio_float32 * 32767).clip(-32768, 32767).astype(np.int16)
-
-    fd, path = tempfile.mkstemp(suffix=".wav", prefix="tsifl_voice_")
-    os.close(fd)
-
-    with wave.open(path, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)  # 16-bit
-        wf.setframerate(sample_rate)
-        wf.writeframes(audio_int16.tobytes())
-    return path
