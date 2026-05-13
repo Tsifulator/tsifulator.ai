@@ -718,6 +718,7 @@ _panel_ref: "object | None" = None         # NSPanel — module-level so it does
 _panel_input: "object | None" = None       # NSTextField inside the panel
 _panel_send_btn: "object | None" = None    # send button (→)
 _panel_attach_btn: "object | None" = None  # attach button (+)
+_panel_mic_btn: "object | None" = None     # mic button (🎙 / 🔴 while recording)
 _panel_response: "object | None" = None    # NSTextField for inline response below input
 _panel_target: "object | None" = None      # NSObject target for input + buttons
 _panel_esc_monitor: "object | None" = None # NSEvent monitor for Esc key
@@ -1441,6 +1442,82 @@ def _define_panel_classes():
             except Exception as e:
                 _log_shortcut_error("attach failed", e)
 
+        def micClicked_(self, sender):
+            """Mic button toggle. Click → record. Click again → stop + transcribe.
+
+            Heavy work runs on a background thread so the UI stays responsive.
+            On completion the transcript is dropped into the input field; the
+            user can edit it or just press Enter to submit.
+            """
+            try:
+                import voice
+            except Exception as e:
+                _panel_show_response(f"Voice unavailable: {e}")
+                return
+
+            try:
+                if voice.is_recording():
+                    # Stop & transcribe — show "Transcribing…" then update on done
+                    if _panel_mic_btn is not None:
+                        try:
+                            _panel_mic_btn.setTitle_("⋯")
+                        except Exception:
+                            pass
+                    _panel_show_response("Transcribing…")
+
+                    def _do_stop():
+                        text, err = voice.stop_recording()
+
+                        def _on_main():
+                            # Reset mic icon
+                            if _panel_mic_btn is not None:
+                                try:
+                                    _panel_mic_btn.setTitle_("🎙")
+                                except Exception:
+                                    pass
+                            if err or not text:
+                                _panel_show_response(err or "(empty transcript)")
+                                return
+                            # Drop transcript into the input field; user reviews + submits
+                            if _panel_input is not None:
+                                try:
+                                    _panel_input.setStringValue_(text)
+                                    _panel_input.setPlaceholderString_("Ask tsifl anything…")
+                                    _panel_input.becomeFirstResponder()
+                                except Exception:
+                                    pass
+                            # Clear any "Transcribing..." status
+                            _panel_show_response("")
+
+                        try:
+                            from PyObjCTools.AppHelper import callAfter
+                            callAfter(_on_main)
+                        except Exception:
+                            _on_main()
+
+                    threading.Thread(target=_do_stop, daemon=True).start()
+                    return
+
+                # Not recording → start
+                ok, err = voice.start_recording()
+                if not ok:
+                    _panel_show_response(f"🎙 {err}")
+                    return
+                if _panel_mic_btn is not None:
+                    try:
+                        _panel_mic_btn.setTitle_("🔴")
+                    except Exception:
+                        pass
+                # Hint in the input field placeholder so the user knows
+                if _panel_input is not None:
+                    try:
+                        _panel_input.setPlaceholderString_("Listening… click 🔴 to stop")
+                    except Exception:
+                        pass
+            except Exception as e:
+                _log_shortcut_error("mic failed", e)
+                _panel_show_response(f"Mic error: {e}")
+
     return (_TsiflFloatingPanel, _PanelTarget, _TsiflContentView,
             _TsiflPanelDelegate, _TsiflInputField)
 
@@ -1662,12 +1739,33 @@ def _build_floating_panel():
         pass
     content.addSubview_(attach_btn)
 
-    # 4. Input field (between logo and attach button). Use the drag-
+    # 3b. Mic button (left of attach) — speech-to-text via local Whisper
+    mic_x = attach_x - btn_size - 2.0
+    mic_y = attach_y
+    mic_btn = NSButton.alloc().initWithFrame_(
+        NSMakeRect(mic_x, mic_y, btn_size, btn_size)
+    )
+    mic_btn.setBordered_(False)
+    mic_btn.setTitle_("🎙")
+    mic_btn.setFont_(NSFont.systemFontOfSize_(15.0))
+    try:
+        mic_btn.setContentTintColor_(muted)
+    except Exception:
+        pass
+    try:
+        mic_btn.setToolTip_(
+            "Click to dictate. Click again to stop and transcribe."
+        )
+    except Exception:
+        pass
+    content.addSubview_(mic_btn)
+
+    # 4. Input field (between logo and mic button). Use the drag-
     # rejecting NSTextField subclass so file drops bubble up to the
     # content view (which queues them as attachments) instead of being
     # inserted as URL text inside the input.
     input_x = logo_x + logo_size + 12.0
-    input_width = attach_x - input_x - 8.0
+    input_width = mic_x - input_x - 8.0
     input_height = 24.0
     input_y = (INPUT_ROW_HEIGHT - input_height) / 2.0
     input_cls = _TsiflInputFieldClass or NSTextField
@@ -1728,7 +1826,7 @@ def _build_floating_panel():
     _response_text_view = text_view
     response_field = scroll_view
 
-    return panel, input_field, send_btn, attach_btn, response_field
+    return panel, input_field, send_btn, attach_btn, mic_btn, response_field
 
 
 def _make_panel_target():
@@ -1913,7 +2011,7 @@ def _panel_dismiss():
     Rebuild from scratch is ~5ms and bug-proof.
     """
     global _panel_busy, _panel_thinking_timer, _pending_plan
-    global _panel_ref, _panel_input, _panel_send_btn, _panel_attach_btn
+    global _panel_ref, _panel_input, _panel_send_btn, _panel_attach_btn, _panel_mic_btn
     global _panel_response, _panel_expanded, _vision_loop_active
     _pending_plan = None  # cancel any pending action plan
     # Kill any running vision loop — Esc is the emergency stop
@@ -1944,6 +2042,7 @@ def _panel_dismiss():
     _panel_input = None
     _panel_send_btn = None
     _panel_attach_btn = None
+    _panel_mic_btn = None
     _panel_response = None
     global _response_text_view
     _response_text_view = None
@@ -2951,7 +3050,7 @@ def _show_shortcut_panel():
     fully eliminate. Rebuilding takes ~5ms — fast enough that the user
     can't tell, and guarantees zero state carryover.
     """
-    global _panel_ref, _panel_input, _panel_send_btn, _panel_attach_btn
+    global _panel_ref, _panel_input, _panel_send_btn, _panel_attach_btn, _panel_mic_btn
     global _panel_response, _panel_target, _panel_esc_monitor
     global _panel_session_id, _panel_expanded
     global _app_before_panel
@@ -2994,6 +3093,7 @@ def _show_shortcut_panel():
             _panel_input,
             _panel_send_btn,
             _panel_attach_btn,
+            _panel_mic_btn,
             _panel_response,
         ) = _build_floating_panel()
 
@@ -3011,6 +3111,8 @@ def _show_shortcut_panel():
         _panel_send_btn.setAction_("sendClicked:")
         _panel_attach_btn.setTarget_(_panel_target)
         _panel_attach_btn.setAction_("attachClicked:")
+        _panel_mic_btn.setTarget_(_panel_target)
+        _panel_mic_btn.setAction_("micClicked:")
 
         # Also wire the input as the target's delegate, so
         # `controlTextDidChange_` fires on every user-initiated edit.
