@@ -31,7 +31,8 @@ _TOOL_RISK = {
     "search_files": "green", "read_file": "green", "open_file": "green",
     "open_app": "green", "open_url": "green", "shell": "green",
     "clipboard_read": "green", "clipboard_copy": "green", "notify": "green",
-    "play_media": "green", "web_open": "green", "fetch_url": "green",
+    "play_media": "green", "play_spotify_playlist": "green",
+    "web_open": "green", "fetch_url": "green",
     "check_inbox": "green", "search_email": "green", "read_email": "green",
     "screenshot": "green", "scroll": "green", "wait": "green",
     "save_memory": "green", "set_shortcut": "green",
@@ -270,6 +271,8 @@ def _describe_tool_use(name: str, inp: dict) -> str:
         return f"Export {inp.get('source_app', '?')} → {inp.get('destination', '?')}"
     if name == "play_media":
         return f"Play '{inp.get('query', '?')}' on {inp.get('platform', '?')}"
+    if name == "play_spotify_playlist":
+        return f"Play playlist '{inp.get('name', '?')}'"
     if name == "web_open":
         return f"Open {inp.get('engine', 'google')} search: '{inp.get('query', '?')}'"
     if name == "fetch_url":

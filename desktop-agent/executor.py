@@ -1101,6 +1101,176 @@ def wait_seconds(seconds: float) -> tuple[bool, str]:
 
 # ── Spotify (instant play via AppleScript — no vision loop needed) ────────
 
+def spotify_play_library_playlist(name: str) -> tuple[bool, str]:
+    """Find a playlist in Spotify's sidebar (Your Library) by name and play it.
+
+    This is the right tool for 'play my FR playlist' / 'play Chill Mix' /
+    'play <any named playlist in the user's library>'. Public search via
+    spotify_play won't surface a private library playlist; navigating the
+    sidebar will.
+
+    Flow:
+    1. Activate Spotify.
+    2. Recursively walk the UI tree looking for a sidebar item whose
+       title/value matches `name` (case-insensitive substring).
+    3. Click it — Spotify loads the playlist detail page.
+    4. Click the big green Play button via the same accessibility walker
+       we use for play_media.
+
+    Returns (True, "▶️ playlist name") on success, (False, error) on miss.
+    """
+    safe_name = name.replace("\\", "\\\\").replace('"', '\\"')
+
+    # Make sure Spotify is up
+    try:
+        subprocess.run(["open", "-a", "Spotify"], check=True, timeout=10)
+        time.sleep(0.6)
+    except Exception as e:
+        return False, f"Could not open Spotify: {e}"
+
+    # Snapshot current playback so we can detect a new playlist starting
+    def _get_playing() -> tuple[bool, str, str]:
+        ok_s, info = run_applescript(
+            'tell application "Spotify"\n'
+            '    if player state is playing then\n'
+            '        return (name of current track) & "||" & (artist of current track)\n'
+            '    else\n'
+            '        return "NOT_PLAYING"\n'
+            '    end if\n'
+            'end tell',
+            timeout=5,
+        )
+        if not ok_s or not info or "NOT_PLAYING" in info:
+            return False, "", ""
+        parts = info.split("||", 1)
+        return True, parts[0] if parts else "", (parts[1] if len(parts) > 1 else "")
+
+    before_playing, before_track, before_artist = _get_playing()
+    # Pause anything currently playing so we can verify a new track starts
+    if before_playing:
+        run_applescript('tell application "Spotify" to pause', timeout=3)
+        time.sleep(0.3)
+
+    # Single AppleScript that:
+    #   - Walks the UI tree of Spotify's main window
+    #   - Finds first element whose AXTitle / AXValue contains `safe_name`
+    #   - Clicks it (perform AXPress if available, else click)
+    #   - Waits, then walks again looking for the Play button and clicks it
+    script = f'''
+on findByLabel(elem, target, depth)
+    if depth > 14 then return missing value
+    try
+        set v to ""
+        try
+            set v to (value of elem) as text
+        end try
+        try
+            set v to v & " || " & ((title of elem) as text)
+        end try
+        try
+            set v to v & " || " & ((description of elem) as text)
+        end try
+        if v contains target then
+            try
+                set elemRole to (role of elem) as text
+            on error
+                set elemRole to ""
+            end try
+            if elemRole is in {{"AXStaticText", "AXLink", "AXButton", "AXRow", "AXCell"}} then
+                return elem
+            end if
+        end if
+    end try
+    try
+        repeat with child in (UI elements of elem)
+            set r to my findByLabel(child, target, depth + 1)
+            if r is not missing value then return r
+        end repeat
+    end try
+    return missing value
+end findByLabel
+
+on findPlayButton(elem, depth)
+    if depth > 14 then return missing value
+    try
+        set elemRole to (role of elem) as text
+    on error
+        return missing value
+    end try
+    if elemRole is "AXButton" then
+        set descr to ""
+        try
+            set descr to descr & (description of elem) as text
+        end try
+        try
+            set descr to descr & " || " & ((title of elem) as text)
+        end try
+        try
+            set descr to descr & " || " & ((help of elem) as text)
+        end try
+        if (descr contains "Play ") or (descr starts with "Play") or (descr is "Play") then
+            if descr does not contain "Pause" then return elem
+        end if
+    end if
+    try
+        repeat with child in (UI elements of elem)
+            set r to my findPlayButton(child, depth + 1)
+            if r is not missing value then return r
+        end repeat
+    end try
+    return missing value
+end findPlayButton
+
+tell application "Spotify" to activate
+delay 0.4
+tell application "System Events" to tell process "Spotify"
+    set frontmost to true
+    delay 0.3
+    set target to "{safe_name}"
+    set sidebarItem to my findByLabel(window 1, target, 0)
+    if sidebarItem is missing value then
+        return "NOT_FOUND"
+    end if
+    try
+        click sidebarItem
+    on error
+        try
+            perform action "AXPress" of sidebarItem
+        end try
+    end try
+    delay 1.2
+    set btn to my findPlayButton(window 1, 0)
+    if btn is missing value then
+        return "FOUND_BUT_NO_PLAY"
+    end if
+    click btn
+    return "OK"
+end tell
+'''
+    ok, result = run_applescript(script, timeout=15)
+    time.sleep(1.5)
+
+    if not ok:
+        return False, f"AppleScript failed: {result}"
+    if result == "NOT_FOUND":
+        return False, (
+            f"Couldn't find a sidebar item matching '{name}'. Open Spotify "
+            f"and check the exact playlist name, or pin it to the sidebar."
+        )
+    if result == "FOUND_BUT_NO_PLAY":
+        return False, (
+            f"Navigated to '{name}' but couldn't find the Play button. "
+            f"Try clicking play manually this time."
+        )
+
+    is_playing, track, artist = _get_playing()
+    if is_playing and (track != before_track or artist != before_artist):
+        return True, f"▶️ {name} — playing {track} by {artist}"
+    if is_playing:
+        return True, f"▶️ {name} (still on {track} — playlist may have queued)"
+    return False, f"Navigated to '{name}' but playback didn't start."
+
+
 def spotify_play(query: str) -> tuple[bool, str]:
     """Play on Spotify — uses URL scheme to land on search page, then plays first track.
 
@@ -1777,6 +1947,15 @@ def execute_action(action: Action) -> Action:
                 except Exception as e:
                     action.success = False
                     action.error = f"Shortcut save failed: {e}"
+
+        elif action.type == "play_spotify_playlist":
+            # Navigate Spotify's sidebar to the user's named playlist and play
+            name = cmd_data.get("name", cmd)
+            if not name:
+                action.success = False
+                action.result = "play_spotify_playlist needs a `name`"
+            else:
+                action.success, action.result = spotify_play_library_playlist(name)
 
         elif action.type == "create_routine":
             # Claude can create recurring background tasks

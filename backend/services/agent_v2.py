@@ -363,6 +363,33 @@ AGENT_TOOLS = [
 
     # ── Deterministic media/web ────────────────────────────────────────────
     {
+        "name": "play_spotify_playlist",
+        "description": (
+            "Play one of the user's OWN Spotify playlists by name. "
+            "Navigates Spotify's sidebar (Your Library) to the named playlist "
+            "and starts playback. "
+            "\nUSE FOR: 'play my FR playlist', 'play Chill Mix', 'shuffle "
+            "Type shit', 'play summer' — anywhere the user names a specific "
+            "playlist that's in their library. The name is matched as a "
+            "case-insensitive substring against sidebar labels. "
+            "\nDO NOT USE FOR public song search ('play Bohemian Rhapsody' "
+            "— use play_media for that). "
+            "\nIf the user says 'play a song from my playlists' WITHOUT "
+            "naming one, ASK which one — there are usually 5-15 in a "
+            "library and you can't enumerate them from here."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Playlist name as it appears in the user's Spotify sidebar.",
+                },
+            },
+        },
+    },
+    {
         "name": "play_media",
         "description": (
             "Play music or a video by SEARCHING the public catalog on a "
@@ -832,11 +859,11 @@ User: "send the email"
 User: drops an image showing a small table, says "import this"
   → The image is in your context as an image block. READ THE TABLE FROM THE IMAGE. Open the target app. Call applescript to write the rows. Do NOT call read_file or search_files — the data is right there.
 
-User: "play a song from my playlists" / "play something from my library"
-  → You CANNOT enumerate the user's Spotify library — those playlists are private to their account, and play_media only does public Spotify search. Two options:
-  (a) ASK which playlist or song they want, OR
-  (b) Use `applescript` to navigate Spotify to their library: `tell application "Spotify" to activate` then keystroke shortcuts to focus the sidebar.
-  DO NOT call play_media with a guessed query — you'll just trigger a public search for "chill vibes" or similar and play a random track that has nothing to do with their library.
+User: "play my FR playlist" / "shuffle Chill Mix" / "play summer" (any NAMED playlist in their library)
+  → Call `play_spotify_playlist(name="FR")`. The tool navigates the Spotify sidebar and finds the playlist by name, then hits Play. This is the ONLY right tool for named user playlists — play_media only does public search.
+
+User: "play a song from my playlists" / "play something from my library" (no specific playlist named)
+  → You can't enumerate their playlists from here. ASK which one. Do NOT call play_media with a guessed query — you'd trigger a public search and play a random track unrelated to their library.
 
 # Tool-choice rules
 - File search → `search_files`. Never `shell` with find/ls/mdfind/locate. search_files uses Spotlight and sorts by most-recently-modified.
