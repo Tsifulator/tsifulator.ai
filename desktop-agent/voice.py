@@ -84,14 +84,45 @@ def ensure_dependencies() -> tuple[bool, str]:
 
 
 def _ensure_model():
-    """Lazy-load the Whisper model. First call downloads ~140MB (base)."""
+    """Lazy-load the Whisper model.
+
+    First call downloads ~140MB to ~/.cache/whisper/. On networks with SSL
+    inspection (corp/edu MITM), the default urlopen rejects the connection
+    with CERTIFICATE_VERIFY_FAILED. We monkey-patch ssl to unverified for
+    the download only — Whisper checks the file SHA after download anyway,
+    so the integrity guarantee is preserved.
+    """
     global _whisper_model
     if _whisper_model is not None:
         return _whisper_model
+
     import whisper
-    sys.stderr.write(f"[voice] loading whisper '{_WHISPER_MODEL_SIZE}' model (one-time)…\n")
-    _whisper_model = whisper.load_model(_WHISPER_MODEL_SIZE)
-    sys.stderr.write("[voice] model loaded\n")
+    from pathlib import Path as _P
+
+    # Check if the model file already exists locally — skip the SSL dance
+    # if we're loading from disk. Whisper caches at ~/.cache/whisper/<name>.pt
+    cache_root = _P.home() / ".cache" / "whisper"
+    cached = cache_root / f"{_WHISPER_MODEL_SIZE}.pt"
+    needs_download = not cached.exists()
+
+    if needs_download:
+        sys.stderr.write(
+            f"[voice] downloading whisper '{_WHISPER_MODEL_SIZE}' model "
+            f"(~140MB, one-time)…\n"
+        )
+
+    # Monkey-patch SSL verification for the duration of the load call.
+    # Whisper hashes the file after download so a MITM substitution would
+    # still fail integrity checks — bypassing SSL here is safe.
+    import ssl
+    _orig_https_ctx = ssl._create_default_https_context
+    try:
+        ssl._create_default_https_context = ssl._create_unverified_context
+        _whisper_model = whisper.load_model(_WHISPER_MODEL_SIZE)
+    finally:
+        ssl._create_default_https_context = _orig_https_ctx
+
+    sys.stderr.write(f"[voice] model '{_WHISPER_MODEL_SIZE}' loaded\n")
     return _whisper_model
 
 

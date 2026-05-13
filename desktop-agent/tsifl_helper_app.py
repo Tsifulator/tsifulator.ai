@@ -1457,22 +1457,39 @@ def _define_panel_classes():
 
             try:
                 if voice.is_recording():
-                    # Stop & transcribe — show "Transcribing…" then update on done
+                    # Stop & transcribe — show appropriate status during the wait.
+                    # First-time use also includes a ~140MB model download.
                     if _panel_mic_btn is not None:
                         try:
                             _panel_mic_btn.setTitle_("⋯")
                         except Exception:
                             pass
-                    _panel_show_response("Transcribing…")
+                    # Detect first-press (no cached model yet) → louder message
+                    try:
+                        from pathlib import Path as _P
+                        model_size = os.environ.get("TSIFL_WHISPER_MODEL", "base")
+                        _cached = (_P.home() / ".cache" / "whisper" / f"{model_size}.pt").exists()
+                    except Exception:
+                        _cached = True
+                    _panel_show_response(
+                        "Transcribing…" if _cached
+                        else "First use — downloading Whisper model (~140MB). One-time."
+                    )
 
                     def _do_stop():
                         text, err = voice.stop_recording()
 
                         def _on_main():
-                            # Reset mic icon
+                            # Always reset mic icon AND placeholder so the panel
+                            # doesn't get stuck in "Listening…" state on error.
                             if _panel_mic_btn is not None:
                                 try:
                                     _panel_mic_btn.setTitle_("🎙")
+                                except Exception:
+                                    pass
+                            if _panel_input is not None:
+                                try:
+                                    _panel_input.setPlaceholderString_("Ask tsifl anything…")
                                 except Exception:
                                     pass
                             if err or not text:
@@ -1482,7 +1499,6 @@ def _define_panel_classes():
                             if _panel_input is not None:
                                 try:
                                     _panel_input.setStringValue_(text)
-                                    _panel_input.setPlaceholderString_("Ask tsifl anything…")
                                     _panel_input.becomeFirstResponder()
                                 except Exception:
                                     pass
