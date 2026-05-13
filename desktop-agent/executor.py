@@ -1151,47 +1151,27 @@ def spotify_play_library_playlist(name: str) -> tuple[bool, str]:
         run_applescript('tell application "Spotify" to pause', timeout=3)
         time.sleep(0.3)
 
-    # Single AppleScript that:
-    #   - Walks the UI tree of Spotify's main window
-    #   - Finds first element whose AXTitle / AXValue contains `safe_name`
-    #   - Clicks it (perform AXPress if available, else click)
-    #   - Waits, then walks again looking for the Play button and clicks it
-    script = f'''
-on findByLabel(elem, target, depth)
-    if depth > 14 then return missing value
-    try
-        set v to ""
-        try
-            set v to (value of elem) as text
-        end try
-        try
-            set v to v & " || " & ((title of elem) as text)
-        end try
-        try
-            set v to v & " || " & ((description of elem) as text)
-        end try
-        if v contains target then
-            try
-                set elemRole to (role of elem) as text
-            on error
-                set elemRole to ""
-            end try
-            if elemRole is in {{"AXStaticText", "AXLink", "AXButton", "AXRow", "AXCell"}} then
-                return elem
-            end if
-        end if
-    end try
-    try
-        repeat with child in (UI elements of elem)
-            set r to my findByLabel(child, target, depth + 1)
-            if r is not missing value then return r
-        end repeat
-    end try
-    return missing value
-end findByLabel
+    # Approach: navigate Spotify to the search results for the playlist name
+    # via the spotify:search: URL scheme (which surfaces user's own playlists
+    # near the top when there's an exact name match), then click the first
+    # Play button found via accessibility walk.
+    #
+    # This is much simpler than walking the entire sidebar tree, which is
+    # fragile across Spotify UI updates and across user view states (sidebar
+    # collapsed, playlist scrolled out of view, etc.).
+    import urllib.parse as _up
+    encoded = _up.quote(name)
+    try:
+        subprocess.run(["open", f"spotify:search:{encoded}"], timeout=5)
+    except Exception as e:
+        return False, f"Could not open Spotify search: {e}"
+    time.sleep(2.5)  # let results load
 
-on findPlayButton(elem, depth)
-    if depth > 14 then return missing value
+    # Walk the UI to find the first Play button on the search results page.
+    # Same shape as spotify_play's helper but kept inline to avoid coupling.
+    script = '''
+on findPlay(elem, depth)
+    if depth > 12 then return missing value
     try
         set elemRole to (role of elem) as text
     on error
@@ -1200,48 +1180,35 @@ on findPlayButton(elem, depth)
     if elemRole is "AXButton" then
         set descr to ""
         try
-            set descr to descr & (description of elem) as text
+            set descr to (description of elem) as text
         end try
         try
-            set descr to descr & " || " & ((title of elem) as text)
+            set descr to descr & " " & ((title of elem) as text)
         end try
         try
-            set descr to descr & " || " & ((help of elem) as text)
+            set descr to descr & " " & ((help of elem) as text)
         end try
-        if (descr contains "Play ") or (descr starts with "Play") or (descr is "Play") then
-            if descr does not contain "Pause" then return elem
+        if descr contains "Play" and descr does not contain "Pause" then
+            return elem
         end if
     end if
     try
         repeat with child in (UI elements of elem)
-            set r to my findPlayButton(child, depth + 1)
+            set r to my findPlay(child, depth + 1)
             if r is not missing value then return r
         end repeat
     end try
     return missing value
-end findPlayButton
+end findPlay
 
 tell application "Spotify" to activate
 delay 0.4
 tell application "System Events" to tell process "Spotify"
     set frontmost to true
     delay 0.3
-    set target to "{safe_name}"
-    set sidebarItem to my findByLabel(window 1, target, 0)
-    if sidebarItem is missing value then
-        return "NOT_FOUND"
-    end if
-    try
-        click sidebarItem
-    on error
-        try
-            perform action "AXPress" of sidebarItem
-        end try
-    end try
-    delay 1.2
-    set btn to my findPlayButton(window 1, 0)
+    set btn to my findPlay(window 1, 0)
     if btn is missing value then
-        return "FOUND_BUT_NO_PLAY"
+        return "NO_PLAY_BUTTON"
     end if
     click btn
     return "OK"
@@ -1251,24 +1218,22 @@ end tell
     time.sleep(1.5)
 
     if not ok:
-        return False, f"AppleScript failed: {result}"
-    if result == "NOT_FOUND":
         return False, (
-            f"Couldn't find a sidebar item matching '{name}'. Open Spotify "
-            f"and check the exact playlist name, or pin it to the sidebar."
+            f"Couldn't navigate Spotify (AppleScript: {str(result)[:120]}). "
+            f"Open Spotify manually and try clicking '{name}' yourself."
         )
-    if result == "FOUND_BUT_NO_PLAY":
+    if "NO_PLAY_BUTTON" in (result or ""):
         return False, (
-            f"Navigated to '{name}' but couldn't find the Play button. "
-            f"Try clicking play manually this time."
+            f"Opened Spotify search for '{name}' but no Play button visible. "
+            f"Spotify may need a different exact name — check your sidebar."
         )
 
     is_playing, track, artist = _get_playing()
     if is_playing and (track != before_track or artist != before_artist):
-        return True, f"▶️ {name} — playing {track} by {artist}"
+        return True, f"▶️ {track} — {artist} (from '{name}')"
     if is_playing:
-        return True, f"▶️ {name} (still on {track} — playlist may have queued)"
-    return False, f"Navigated to '{name}' but playback didn't start."
+        return True, f"▶️ {track} (search for '{name}' loaded but old track still playing)"
+    return False, f"Found '{name}' but playback didn't start."
 
 
 def spotify_play(query: str) -> tuple[bool, str]:
