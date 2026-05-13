@@ -83,6 +83,23 @@ run_tsifl_server <- function(port = 7444) {
     base
   }
 
+  # ── HTTP retry helper ─────────────────────────────────────────────────────
+  # Wraps any httr2 request with conservative retry: max 3 attempts on
+  # transient errors (502/503/504 = backend cold-start, 500 = transient
+  # blip, 429 = rate-limit, plus any connection-level failure caught by
+  # httr2's default retry-on-error path). Backoff: 2s, 4s, 8s.
+  # Use BEFORE req_perform().
+  .tsifl_req_retry <- function(req) {
+    httr2::req_retry(
+      req,
+      max_tries = 3,
+      backoff = function(att) min(2 ^ att, 8),
+      is_transient = function(resp) {
+        httr2::resp_status(resp) %in% c(429, 500, 502, 503, 504)
+      }
+    )
+  }
+
   # ── CSS ────────────────────────────────────────────────────────────────────
   CSS <- "
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1783,6 +1800,7 @@ run_tsifl_server <- function(port = 7444) {
           httr2::req_url_path_append("transfer", "pending", "rstudio") |>
           httr2::req_options(ssl_verifypeer = 0) |>
           httr2::req_timeout(5) |>
+          .tsifl_req_retry() |>
           httr2::req_perform()
         pending <- httr2::resp_body_json(resp, simplifyVector = FALSE)$pending
         if (is.list(pending) && length(pending) > 0) {
@@ -1796,6 +1814,7 @@ run_tsifl_server <- function(port = 7444) {
                   httr2::req_url_path_append("transfer", p$transfer_id) |>
                   httr2::req_options(ssl_verifypeer = 0) |>
                   httr2::req_timeout(5) |>
+                  .tsifl_req_retry() |>
                   httr2::req_perform()
                 full <- httr2::resp_body_json(full_resp, simplifyVector = FALSE)
                 job_prompt <- full$data
@@ -1888,6 +1907,7 @@ run_tsifl_server <- function(port = 7444) {
             # 180s — allows room for the server-side retry loop (up to 2
             # extra API calls at ~20-30s each) without dropping the client.
             httr2::req_timeout(180) |>
+            .tsifl_req_retry() |>
             httr2::req_perform()
 
           set_status("generating")
@@ -1988,98 +2008,172 @@ run_tsifl_server <- function(port = 7444) {
                 r_codes <- paste(Filter(Negate(is.null), r_codes), collapse = "\n")
 
                 # ── Self-heal: delimiter mismatch ───────────────────────
-                # If the previous code hit the wrong-delimiter bug (data
-                # came back as 1 column with semicolons in the name, or an
-                # 'object not found' error after a fresh read), ask Claude
-                # to re-emit the run_r_code with read_delim() — short-
-                # circuiting the normal interpretation phase.
+                # The previous code hit the wrong-delimiter bug (Columns:1,
+                # semicolons in the name, or 'object X not found' after a
+                # fresh read). We DO NOT trust the model to fix this — last
+                # round it acknowledged the bug in chat but still emitted
+                # read_csv. Instead, fix it DIRECTLY in R: extract the file
+                # path from the previous code, re-load with read_delim()
+                # locally, then ask the model to re-run the original
+                # ANALYSIS on the now-correct data frame.
                 delim_bug <- .tsifl_detect_delimiter_bug(r_output, r_codes)
                 if (!is.null(delim_bug)) {
-                  add_message("action",
-                              "Detected delimiter mismatch — asking tsifl to re-read with read_delim()")
-                  retry_msg <- paste0(
-                    "[DELIMITER MISMATCH DETECTED]\n",
-                    "The previous run_r_code loaded the file with the wrong ",
-                    "delimiter. Symptoms: Columns: 1 with a single column ",
-                    "name containing ", delim_bug$suggested_delim,
-                    if (delim_bug$not_found) " AND an 'object not found' error" else "",
-                    ".\n\n",
-                    "RE-EMIT a SINGLE run_r_code action that:\n",
-                    "1. Re-reads the SAME file with `readr::read_delim(path, show_col_types=FALSE)` ",
-                    "(auto-detects delimiter — works for ; , \\t and |)\n",
-                    "2. Calls `glimpse(df)` so we can confirm the column names\n",
-                    "3. Re-runs the analysis the user originally asked for\n\n",
-                    "DO NOT explain the bug at length — the user already saw the error. ",
-                    "Your text reply should be one short line like ",
-                    "\"Re-reading with the right delimiter and rebuilding the chart.\" ",
-                    "Then emit the corrected run_r_code action.\n\n",
-                    "Original user request: \"", local_msg, "\"\n\n",
-                    "The bad R output you're recovering from:\n```\n",
-                    substr(r_output, 1, 2000), "\n```\n"
-                  )
-                  retry_body <- list(
-                    user_id = USER_ID,
-                    message = retry_msg,
-                    context = list(app = "rstudio")
-                  )
-                  set_status("retrying")
-                  retry_resp <- tryCatch({
-                    httr2::request(BACKEND_URL) |>
-                      httr2::req_url_path_append("chat", "") |>
-                      httr2::req_headers(!!!.tsifl_headers()) |>
-                      httr2::req_body_json(retry_body) |>
-                      httr2::req_options(ssl_verifypeer = 0) |>
-                      httr2::req_timeout(60) |>
-                      httr2::req_perform()
-                  }, error = function(e) NULL)
+                  # Pull the file path the user-supplied code used. Look for
+                  # `read_csv("...")`, `read.csv("...")`, `read_delim("...")`,
+                  # or any read_* with a quoted path.
+                  bad_path <- NA_character_
+                  path_match <- regmatches(
+                    r_codes,
+                    regexec('read[._][a-z]+\\(\\s*["\']([^"\']+)["\']',
+                            r_codes, perl = TRUE)
+                  )[[1]]
+                  if (length(path_match) >= 2) bad_path <- path_match[2]
 
-                  if (!is.null(retry_resp)) {
-                    retry_data <- tryCatch(
-                      httr2::resp_body_json(retry_resp, simplifyVector = FALSE),
-                      error = function(e) NULL
+                  # Also pull the dataframe variable name (the LHS of the
+                  # assignment) so the corrected re-load uses the same name.
+                  df_name <- "df"
+                  varname_match <- regmatches(
+                    r_codes,
+                    regexec('([A-Za-z_][A-Za-z0-9_.]*)\\s*<-\\s*read[._][a-z]+',
+                            r_codes, perl = TRUE)
+                  )[[1]]
+                  if (length(varname_match) >= 2 && nzchar(varname_match[2])) {
+                    df_name <- varname_match[2]
+                  }
+
+                  if (!is.na(bad_path) && nzchar(bad_path)) {
+                    add_message(
+                      "action",
+                      paste0("Detected delimiter mismatch — re-loading ",
+                             basename(bad_path), " with read_delim()")
                     )
-                    if (!is.null(retry_data)) {
-                      retry_actions <- list()
-                      if (!is.null(retry_data$actions) && length(retry_data$actions) > 0) {
-                        for (a in retry_data$actions) {
-                          if (is.list(a) && !is.null(a$type)) {
-                            retry_actions <- c(retry_actions, list(a))
+                    # Build a hardcoded re-load script and run it via the
+                    # same pending-file bridge our normal flow uses. This
+                    # bypasses the model entirely for the fix.
+                    fix_code <- paste0(
+                      '# tsifl auto-fix: re-load with auto-detected delimiter\n',
+                      'suppressMessages(library(readr))\n',
+                      'suppressMessages(library(dplyr))\n',
+                      df_name, ' <- readr::read_delim("', bad_path,
+                      '", show_col_types = FALSE)\n',
+                      'cat("[tsifl fix] reloaded ', df_name, ' with ",\n',
+                      '    ncol(', df_name, '), " columns: ",\n',
+                      '    paste(names(', df_name, '), collapse = ", "), "\n", sep="")\n'
+                    )
+                    fix_pending <- tsifulator:::.tsifl_tmp("pending_code.R")
+                    fix_done <- tsifulator:::.tsifl_tmp("done.marker")
+                    try(unlink(fix_done), silent = TRUE)
+                    try(writeLines(fix_code, fix_pending), silent = TRUE)
+                    # Wait up to 6s for the listener to consume + finish
+                    for (.fx in 1:24) {
+                      Sys.sleep(0.25)
+                      if (file.exists(fix_done)) break
+                    }
+                    # Re-read the listener's output to confirm reload
+                    Sys.sleep(0.5)
+                    fix_output <- tryCatch(
+                      paste(readLines(tsifulator:::.tsifl_tmp("last_output.txt"),
+                                      warn = FALSE), collapse = "\n"),
+                      error = function(e) ""
+                    )
+                    # If the fix worked, ask Claude for ONLY the analysis
+                    # (no re-read, no re-explanation of the bug). Cheap,
+                    # focused, no opportunity for the model to re-introduce
+                    # read_csv.
+                    if (grepl("\\[tsifl fix\\] reloaded", fix_output)) {
+                      cols_match <- regmatches(
+                        fix_output,
+                        regexpr("columns:[^\\n]+", fix_output, perl = TRUE)
+                      )
+                      cols_str <- if (length(cols_match) > 0) cols_match[1] else ""
+                      retry_msg <- paste0(
+                        "[DATA RELOADED CORRECTLY]\n",
+                        "The dataframe `", df_name, "` is now loaded with the ",
+                        "right delimiter. Available ", cols_str, "\n\n",
+                        "EMIT a single run_r_code that does ONLY the ANALYSIS ",
+                        "the user originally asked for, using `", df_name,
+                        "` as-is. DO NOT include another read_csv / read_delim — ",
+                        "the data is already loaded. DO NOT re-explain the bug.\n\n",
+                        "Original user request: \"", local_msg, "\"\n"
+                      )
+                      retry_body <- list(
+                        user_id = USER_ID,
+                        message = retry_msg,
+                        context = list(app = "rstudio")
+                      )
+                      set_status("retrying")
+                      retry_resp <- tryCatch({
+                        httr2::request(BACKEND_URL) |>
+                          httr2::req_url_path_append("chat", "") |>
+                          httr2::req_headers(!!!.tsifl_headers()) |>
+                          httr2::req_body_json(retry_body) |>
+                          httr2::req_options(ssl_verifypeer = 0) |>
+                          httr2::req_timeout(60) |>
+                          httr2::req_retry(max_tries = 3,
+                                           backoff = function(att) 1 * 2 ^ att,
+                                           is_transient = function(resp) {
+                                             httr2::resp_status(resp) %in% c(429, 502, 503, 504)
+                                           }) |>
+                          httr2::req_perform()
+                      }, error = function(e) NULL)
+
+                      if (!is.null(retry_resp)) {
+                        retry_data <- tryCatch(
+                          httr2::resp_body_json(retry_resp, simplifyVector = FALSE),
+                          error = function(e) NULL
+                        )
+                        if (!is.null(retry_data)) {
+                          retry_actions <- list()
+                          if (!is.null(retry_data$actions) && length(retry_data$actions) > 0) {
+                            for (a in retry_data$actions) {
+                              if (is.list(a) && !is.null(a$type)) {
+                                retry_actions <- c(retry_actions, list(a))
+                              }
+                            }
                           }
+                          if (length(retry_actions) == 0 &&
+                              !is.null(retry_data$action) && is.list(retry_data$action) &&
+                              !is.null(retry_data$action$type) &&
+                              !identical(retry_data$action$type, "none")) {
+                            retry_actions <- list(retry_data$action)
+                          }
+                          if (!is.null(retry_data$reply) && nchar(trimws(retry_data$reply)) > 0) {
+                            add_message("assistant", retry_data$reply)
+                          }
+                          for (action in retry_actions) {
+                            tryCatch({
+                              execute_r_action(action, add_message, r_context,
+                                               user_wants_excel = local_wants_excel)
+                            }, error = function(e) {
+                              add_message("action", paste0("Retry error: ", e$message))
+                            })
+                          }
+                          Sys.sleep(4)
+                          r_output <- tryCatch(
+                            paste(readLines(tsifulator:::.tsifl_tmp("last_output.txt"),
+                                            warn = FALSE), collapse = "\n"),
+                            error = function(e) r_output
+                          )
+                          r_codes <- paste0(
+                            r_codes, "\n\n# --- auto-fix re-load ---\n", fix_code,
+                            "\n\n# --- corrected analysis ---\n",
+                            paste(sapply(retry_actions, function(a) {
+                              if (identical(a$type, "run_r_code")) a$payload$code else ""
+                            }), collapse = "\n")
+                          )
                         }
                       }
-                      if (length(retry_actions) == 0 &&
-                          !is.null(retry_data$action) && is.list(retry_data$action) &&
-                          !is.null(retry_data$action$type) &&
-                          !identical(retry_data$action$type, "none")) {
-                        retry_actions <- list(retry_data$action)
-                      }
-                      if (!is.null(retry_data$reply) && nchar(trimws(retry_data$reply)) > 0) {
-                        add_message("assistant", retry_data$reply)
-                      }
-                      for (action in retry_actions) {
-                        tryCatch({
-                          execute_r_action(action, add_message, r_context,
-                                           user_wants_excel = local_wants_excel)
-                        }, error = function(e) {
-                          add_message("action", paste0("Retry error: ", e$message))
-                        })
-                      }
-                      # Wait for the retry's output to land, then re-read
-                      # so the normal interpretation phase below sees the
-                      # corrected results — not the broken first attempt.
-                      Sys.sleep(4)
-                      r_output <- tryCatch(
-                        paste(readLines(tsifulator:::.tsifl_tmp("last_output.txt"),
-                                        warn = FALSE), collapse = "\n"),
-                        error = function(e) r_output
-                      )
-                      r_codes <- paste0(
-                        r_codes, "\n\n# --- retry with correct delimiter ---\n",
-                        paste(sapply(retry_actions, function(a) {
-                          if (identical(a$type, "run_r_code")) a$payload$code else ""
-                        }), collapse = "\n")
+                    } else {
+                      add_message(
+                        "action",
+                        "Auto-fix didn't produce confirmation output — falling through to normal interpretation."
                       )
                     }
+                  } else {
+                    add_message(
+                      "action",
+                      "Detected delimiter mismatch but couldn't find the file path in the previous code — please paste the path explicitly."
+                    )
                   }
                 }
 
@@ -2118,6 +2212,7 @@ run_tsifl_server <- function(port = 7444) {
                   httr2::req_body_json(followup_body) |>
                   httr2::req_options(ssl_verifypeer = 0) |>
                   httr2::req_timeout(90) |>
+                  .tsifl_req_retry() |>
                   httr2::req_perform()
 
                 followup_data <- httr2::resp_body_json(followup_resp, simplifyVector = FALSE)
@@ -2351,6 +2446,7 @@ run_tsifl_server <- function(port = 7444) {
                   httr2::req_headers(!!!.tsifl_headers()) |>
                   httr2::req_body_json(transfer_body) |>
                   httr2::req_options(ssl_verifypeer = 0) |>
+                  .tsifl_req_retry() |>
                   httr2::req_perform()
               }, error = function(e) {})
             }
@@ -2392,6 +2488,7 @@ run_tsifl_server <- function(port = 7444) {
                   httr2::req_headers(!!!.tsifl_headers()) |>
                   httr2::req_body_json(transfer_body) |>
                   httr2::req_options(ssl_verifypeer = 0) |>
+                  .tsifl_req_retry() |>
                   httr2::req_perform()
               }, error = function(e) {})
             }
@@ -2418,6 +2515,7 @@ run_tsifl_server <- function(port = 7444) {
                   httr2::req_headers(!!!.tsifl_headers()) |>
                   httr2::req_body_json(transfer_body) |>
                   httr2::req_options(ssl_verifypeer = 0) |>
+                  .tsifl_req_retry() |>
                   httr2::req_perform()
 
                 add_message("action", "Plot exported to Excel")
@@ -2475,6 +2573,7 @@ run_tsifl_server <- function(port = 7444) {
               httr2::req_headers(!!!.tsifl_headers()) |>
               httr2::req_body_json(transfer_body) |>
               httr2::req_options(ssl_verifypeer = 0) |>
+              .tsifl_req_retry() |>
               httr2::req_perform()
 
             result <- httr2::resp_body_json(resp)
