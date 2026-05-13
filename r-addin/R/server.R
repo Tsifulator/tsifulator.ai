@@ -38,6 +38,37 @@ run_tsifl_server <- function(port = 7444) {
     "dev-user-001"
   }
 
+  # ── Delimiter-mismatch detector ───────────────────────────────────────────
+  # Catches the #1 R add-in bug: user loaded a semicolon/tab-delimited CSV
+  # with read_csv (default comma), so everything ends up in a single column
+  # with all field names mashed into the column header. Symptoms in the R
+  # output are unambiguous:
+  #   1) `Rows: <N>` and `Columns: 1`
+  #   2) A column name containing `;` or `\t`
+  # When detected, we tell Claude on the next round to re-read with
+  # read_delim() instead of running the normal interpretation phase.
+  .tsifl_detect_delimiter_bug <- function(r_output, last_code = "") {
+    if (!nzchar(r_output)) return(NULL)
+    has_one_col <- grepl("Columns:\\s*1\\b", r_output)
+    if (!has_one_col) return(NULL)
+    # Look for a $ <columnname> line where the name has a semicolon or tab
+    bad_col <- regmatches(
+      r_output,
+      regexpr("\\$\\s*`?[^`\\n]*[;\\t][^`\\n]*`?", r_output, perl = TRUE)
+    )
+    has_bad_name <- length(bad_col) > 0 && nzchar(bad_col[1])
+    not_found <- grepl("object '[^']+' not found", r_output)
+    if (has_bad_name || not_found) {
+      list(
+        bad_column_name = if (has_bad_name) bad_col[1] else NA_character_,
+        not_found       = not_found,
+        suggested_delim = if (has_bad_name) {
+          if (grepl(";", bad_col[1])) ";" else "\t"
+        } else ";"
+      )
+    } else NULL
+  }
+
   # ── BYOK header helper ─────────────────────────────────────────────────────
   # Every backend chat request passes through this — it adds the user's
   # Anthropic key as a header when configured. The backend reads
@@ -1955,6 +1986,102 @@ run_tsifl_server <- function(port = 7444) {
                   if (identical(a$type, "run_r_code")) a$payload$code else NULL
                 })
                 r_codes <- paste(Filter(Negate(is.null), r_codes), collapse = "\n")
+
+                # ── Self-heal: delimiter mismatch ───────────────────────
+                # If the previous code hit the wrong-delimiter bug (data
+                # came back as 1 column with semicolons in the name, or an
+                # 'object not found' error after a fresh read), ask Claude
+                # to re-emit the run_r_code with read_delim() — short-
+                # circuiting the normal interpretation phase.
+                delim_bug <- .tsifl_detect_delimiter_bug(r_output, r_codes)
+                if (!is.null(delim_bug)) {
+                  add_message("action",
+                              "Detected delimiter mismatch — asking tsifl to re-read with read_delim()")
+                  retry_msg <- paste0(
+                    "[DELIMITER MISMATCH DETECTED]\n",
+                    "The previous run_r_code loaded the file with the wrong ",
+                    "delimiter. Symptoms: Columns: 1 with a single column ",
+                    "name containing ", delim_bug$suggested_delim,
+                    if (delim_bug$not_found) " AND an 'object not found' error" else "",
+                    ".\n\n",
+                    "RE-EMIT a SINGLE run_r_code action that:\n",
+                    "1. Re-reads the SAME file with `readr::read_delim(path, show_col_types=FALSE)` ",
+                    "(auto-detects delimiter — works for ; , \\t and |)\n",
+                    "2. Calls `glimpse(df)` so we can confirm the column names\n",
+                    "3. Re-runs the analysis the user originally asked for\n\n",
+                    "DO NOT explain the bug at length — the user already saw the error. ",
+                    "Your text reply should be one short line like ",
+                    "\"Re-reading with the right delimiter and rebuilding the chart.\" ",
+                    "Then emit the corrected run_r_code action.\n\n",
+                    "Original user request: \"", local_msg, "\"\n\n",
+                    "The bad R output you're recovering from:\n```\n",
+                    substr(r_output, 1, 2000), "\n```\n"
+                  )
+                  retry_body <- list(
+                    user_id = USER_ID,
+                    message = retry_msg,
+                    context = list(app = "rstudio")
+                  )
+                  set_status("retrying")
+                  retry_resp <- tryCatch({
+                    httr2::request(BACKEND_URL) |>
+                      httr2::req_url_path_append("chat", "") |>
+                      httr2::req_headers(!!!.tsifl_headers()) |>
+                      httr2::req_body_json(retry_body) |>
+                      httr2::req_options(ssl_verifypeer = 0) |>
+                      httr2::req_timeout(60) |>
+                      httr2::req_perform()
+                  }, error = function(e) NULL)
+
+                  if (!is.null(retry_resp)) {
+                    retry_data <- tryCatch(
+                      httr2::resp_body_json(retry_resp, simplifyVector = FALSE),
+                      error = function(e) NULL
+                    )
+                    if (!is.null(retry_data)) {
+                      retry_actions <- list()
+                      if (!is.null(retry_data$actions) && length(retry_data$actions) > 0) {
+                        for (a in retry_data$actions) {
+                          if (is.list(a) && !is.null(a$type)) {
+                            retry_actions <- c(retry_actions, list(a))
+                          }
+                        }
+                      }
+                      if (length(retry_actions) == 0 &&
+                          !is.null(retry_data$action) && is.list(retry_data$action) &&
+                          !is.null(retry_data$action$type) &&
+                          !identical(retry_data$action$type, "none")) {
+                        retry_actions <- list(retry_data$action)
+                      }
+                      if (!is.null(retry_data$reply) && nchar(trimws(retry_data$reply)) > 0) {
+                        add_message("assistant", retry_data$reply)
+                      }
+                      for (action in retry_actions) {
+                        tryCatch({
+                          execute_r_action(action, add_message, r_context,
+                                           user_wants_excel = local_wants_excel)
+                        }, error = function(e) {
+                          add_message("action", paste0("Retry error: ", e$message))
+                        })
+                      }
+                      # Wait for the retry's output to land, then re-read
+                      # so the normal interpretation phase below sees the
+                      # corrected results — not the broken first attempt.
+                      Sys.sleep(4)
+                      r_output <- tryCatch(
+                        paste(readLines(tsifulator:::.tsifl_tmp("last_output.txt"),
+                                        warn = FALSE), collapse = "\n"),
+                        error = function(e) r_output
+                      )
+                      r_codes <- paste0(
+                        r_codes, "\n\n# --- retry with correct delimiter ---\n",
+                        paste(sapply(retry_actions, function(a) {
+                          if (identical(a$type, "run_r_code")) a$payload$code else ""
+                        }), collapse = "\n")
+                      )
+                    }
+                  }
+                }
 
                 phase1_reply <- if (!is.null(data$reply)) substr(data$reply, 1, 3000) else ""
                 followup_msg <- paste0(
