@@ -12,7 +12,8 @@ import os
 import re
 import logging
 from collections import OrderedDict
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 from fastapi.responses import StreamingResponse
@@ -2087,7 +2088,28 @@ async def debug():
     }
 
 @router.post("/", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(
+    request: ChatRequest,
+    x_user_api_key: Optional[str] = Header(None, alias="X-User-Api-Key"),
+):
+    # BYOK: if the client supplied its own Anthropic key, route the request
+    # through a per-request override so the cost is on them. We use a
+    # ContextVar in services.claude so the SDK calls in this request path
+    # pick it up automatically without threading the client through every
+    # function signature.
+    from services import claude as _claude
+    _byok_token = None
+    if x_user_api_key and x_user_api_key.strip():
+        try:
+            _byok_token = _claude._request_client.set(
+                _claude.make_user_client(x_user_api_key.strip())
+            )
+        except Exception as _e:
+            # If we can't build the client (e.g. malformed key), fall back
+            # to the server's key. The Anthropic API will reject bad keys
+            # with a clear error, so the user sees what they did wrong.
+            pass
+
     # Skip usage check for automatic follow-up interpretation requests
     is_followup = request.message.startswith("[R OUTPUT INTERPRETATION]")
 

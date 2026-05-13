@@ -1,3 +1,21 @@
+#' Cross-platform path for tsifl's scratch files.
+#'
+#' On macOS/Linux this lives under `/tmp/`; on Windows it lands in
+#' `tempdir()` (typically `C:/Users/<you>/AppData/Local/Temp`). The dot-
+#' prefix is kept for visual consistency on Unix but is harmless on Windows.
+#'
+#' @param name Suffix (e.g. "pending_code.R", "last_plot.png").
+#' @return Absolute file path as a character scalar.
+#' @keywords internal
+.tsifl_tmp <- function(name) {
+  base <- if (.Platform$OS.type == "unix" && dir.exists("/tmp")) {
+    "/tmp"
+  } else {
+    tempdir()
+  }
+  file.path(base, paste0(".tsifl_", name))
+}
+
 #' Install a file-based code listener in the current (main) R session.
 #'
 #' rstudioapi::sendToConsole() from a background job to the main RStudio
@@ -23,15 +41,15 @@
     return(invisible(FALSE))
   }
 
-  pending_file <- "/tmp/.tsifl_pending_code.R"
-  output_file  <- "/tmp/.tsifl_last_output.txt"
-  done_file    <- "/tmp/.tsifl_done.marker"
-  plot_file    <- "/tmp/.tsifl_last_plot.png"
+  pending_file <- .tsifl_tmp("pending_code.R")
+  output_file  <- .tsifl_tmp("last_output.txt")
+  done_file    <- .tsifl_tmp("done.marker")
+  plot_file    <- .tsifl_tmp("last_plot.png")
   # Plots directory keeps timestamped copies so the chat UI can reference
   # historical plots, and we can have both PNG (inline preview) and HTML
   # (interactive, clickable) versions side by side.
-  plots_dir    <- "/tmp/.tsifl_plots"
-  plot_meta    <- "/tmp/.tsifl_last_plot.json"
+  plots_dir    <- .tsifl_tmp("plots")
+  plot_meta    <- .tsifl_tmp("last_plot.json")
   try(dir.create(plots_dir, showWarnings = FALSE, recursive = TRUE), silent = TRUE)
 
   # Clean up any stale single-shot files from previous sessions
@@ -310,7 +328,7 @@
   # this watcher was installed via rstudioapi::sendToConsole — but we moved
   # away from that API because it's unreliable. Install it here in the main
   # session directly, so env snapshots always flow regardless of IPC state.
-  env_snapshot_file <- "/tmp/.tsifl_env_snapshot.rds"
+  env_snapshot_file <- .tsifl_tmp("env_snapshot.rds")
 
   capture_env <- function() {
     tryCatch({
@@ -418,6 +436,11 @@ tsifulator_addin <- function() {
         error = function(e) {}
       )
       Sys.sleep(0.5)
+    } else {
+      # Windows: no portable way to kill by port without an extra dependency.
+      # Tell the user what to do.
+      message("tsifl: on Windows, please close RStudio fully and reopen, ",
+              "or kill the R process holding port ", PORT, " via Task Manager.")
     }
   }
 

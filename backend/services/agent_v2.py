@@ -32,6 +32,23 @@ client = anthropic.Anthropic(
     timeout=httpx.Timeout(600.0, connect=10.0),
 )
 
+# BYOK plumbing — when a request has a per-user Anthropic key, route through
+# this contextvar so the user pays for their own usage. See services/claude.py
+# for the full architecture; this is the mirror for the v2 agent path.
+import contextvars as _contextvars
+_request_client: _contextvars.ContextVar = _contextvars.ContextVar(
+    "request_client", default=None,
+)
+
+
+def get_client():
+    override = _request_client.get()
+    return override if override is not None else client
+
+
+def make_user_client(api_key: str):
+    return anthropic.Anthropic(api_key=api_key, timeout=httpx.Timeout(600.0, connect=10.0))
+
 MODEL_FAST = "claude-haiku-4-5-20251001"
 MODEL_STANDARD = "claude-sonnet-4-20250514"
 MODEL_HEAVY = "claude-opus-4-20250514"
@@ -1146,7 +1163,7 @@ def call_agent(
         }
 
     try:
-        response = client.messages.create(**create_kwargs)
+        response = get_client().messages.create(**create_kwargs)
     except anthropic.APIError as e:
         logger.error("agent_v2 API error: %s", e)
         # Friendly user-facing message for the common cases

@@ -38,6 +38,20 @@ run_tsifl_server <- function(port = 7444) {
     "dev-user-001"
   }
 
+  # ── BYOK header helper ─────────────────────────────────────────────────────
+  # Every backend chat request passes through this — it adds the user's
+  # Anthropic key as a header when configured. The backend reads
+  # X-User-Api-Key and uses it for that request only, so the user pays for
+  # their own Anthropic usage.
+  .tsifl_headers <- function() {
+    base <- list("Content-Type" = "application/json")
+    user_key <- tryCatch(get_api_key(), error = function(e) NA_character_)
+    if (!is.na(user_key) && nzchar(user_key)) {
+      base[["X-User-Api-Key"]] <- user_key
+    }
+    base
+  }
+
   # ── CSS ────────────────────────────────────────────────────────────────────
   CSS <- "
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1238,7 +1252,7 @@ run_tsifl_server <- function(port = 7444) {
     # plot HTML directly (file:// URLs don't work cross-origin in Shiny's
     # iframe sandbox, but http://127.0.0.1:7444/plots/x.html does).
     tryCatch(
-      shiny::addResourcePath("plots", "/tmp/.tsifl_plots"),
+      shiny::addResourcePath("plots", tsifulator:::.tsifl_tmp("plots")),
       error = function(e) {}
     )
 
@@ -1250,7 +1264,7 @@ run_tsifl_server <- function(port = 7444) {
       intervalMillis = 5000,
       session = session,
       checkFunc = function() {
-        files <- list.files("/tmp/.tsifl_plots",
+        files <- list.files(tsifulator:::.tsifl_tmp("plots"),
                             pattern = "\\.(html|png)$",
                             full.names = TRUE)
         if (length(files) == 0) return(0)
@@ -1260,7 +1274,7 @@ run_tsifl_server <- function(port = 7444) {
         sum(as.numeric(file.info(files)$mtime))
       },
       valueFunc = function() {
-        files <- list.files("/tmp/.tsifl_plots",
+        files <- list.files(tsifulator:::.tsifl_tmp("plots"),
                             pattern = "\\.(html|png)$",
                             full.names = TRUE)
         if (length(files) == 0) return(character(0))
@@ -1556,11 +1570,15 @@ run_tsifl_server <- function(port = 7444) {
     #   B) On each chat: also fire a one-shot capture as a safety net.
     # Both write to the same shared temp file.
 
-    ENV_SNAPSHOT_FILE <- "/tmp/.tsifl_env_snapshot.rds"
+    ENV_SNAPSHOT_FILE <- tsifulator:::.tsifl_tmp("env_snapshot.rds")
 
     # The R code that captures the main session's environment.
-    # Written as a standalone script file so `source()` is reliable.
-    ENV_CAPTURE_SCRIPT <- "/tmp/.tsifl_capture_env.R"
+    # Written as a standalone script file so `source()` is reliable. The
+    # save path needs to be embedded as a literal string in the script
+    # source — we substitute it via paste0() rather than hardcoding so
+    # the script works regardless of the underlying tempdir.
+    ENV_CAPTURE_SCRIPT <- tsifulator:::.tsifl_tmp("capture_env.R")
+    .snap_path <- gsub("\\\\", "/", ENV_SNAPSHOT_FILE)  # POSIX-style in source code
     writeLines(c(
       'tryCatch({',
       '  nms <- setdiff(ls(.GlobalEnv), c(".tsifl_watcher", ".tsifl_capture"))',
@@ -1576,21 +1594,22 @@ run_tsifl_server <- function(port = 7444) {
       '    r',
       '  })',
       '  pkgs <- gsub("^package:", "", grep("^package:", search(), value = TRUE))',
-      '  saveRDS(list(env = info, pkgs = pkgs, ts = Sys.time()), "/tmp/.tsifl_env_snapshot.rds")',
+      paste0('  saveRDS(list(env = info, pkgs = pkgs, ts = Sys.time()), "', .snap_path, '")'),
       '}, error = function(e) {',
-      '  saveRDS(list(env = list(), pkgs = character(0), ts = Sys.time(), err = conditionMessage(e)), "/tmp/.tsifl_env_snapshot.rds")',
+      paste0('  saveRDS(list(env = list(), pkgs = character(0), ts = Sys.time(), err = conditionMessage(e)), "', .snap_path, '")'),
       '})'
     ), ENV_CAPTURE_SCRIPT)
 
     # (A) Install a recurring watcher in the MAIN R session via sendToConsole.
     #     Uses later::later (always available — it's a shiny dependency).
     #     The watcher captures the env every 3 seconds automatically.
+    .script_path <- gsub("\\\\", "/", ENV_CAPTURE_SCRIPT)
     watcher_cmd <- paste0(
       'local({ ',
       'if (!exists(".tsifl_watcher", envir = .GlobalEnv)) { ',
       '  assign(".tsifl_watcher", TRUE, envir = .GlobalEnv); ',
       '  .tsifl_capture <- function() { ',
-      '    tryCatch(source("/tmp/.tsifl_capture_env.R", local = TRUE, echo = FALSE), error = function(e) {}); ',
+      '    tryCatch(source("', .script_path, '", local = TRUE, echo = FALSE), error = function(e) {}); ',
       '    later::later(.tsifl_capture, delay = 3) ',
       '  }; ',
       '  assign(".tsifl_capture", .tsifl_capture, envir = .GlobalEnv); ',
@@ -1615,7 +1634,10 @@ run_tsifl_server <- function(port = 7444) {
       # (B) Fire a one-shot capture as safety net (in case the watcher isn't running)
       tryCatch(
         rstudioapi::sendToConsole(
-          'tryCatch(source("/tmp/.tsifl_capture_env.R", local = TRUE, echo = FALSE), error = function(e) {})',
+          paste0(
+            'tryCatch(source("', .script_path,
+            '", local = TRUE, echo = FALSE), error = function(e) {})'
+          ),
           execute = TRUE, echo = FALSE, focus = FALSE
         ),
         error = function(e) {}
@@ -1695,7 +1717,8 @@ run_tsifl_server <- function(port = 7444) {
       if (is.null(path) || !nzchar(path)) return()
       # Only allow files inside our plots dir — prevents any funny business
       # from a tampered input value.
-      if (!startsWith(path, "/tmp/.tsifl_plots/")) return()
+      .plots_root <- paste0(tsifulator:::.tsifl_tmp("plots"), "/")
+      if (!startsWith(path, .plots_root)) return()
       if (!file.exists(path)) return()
       tryCatch(utils::browseURL(path), error = function(e) {})
     })
@@ -1828,7 +1851,7 @@ run_tsifl_server <- function(port = 7444) {
         tryCatch({
           resp <- httr2::request(BACKEND_URL) |>
             httr2::req_url_path_append("chat", "") |>
-            httr2::req_headers("Content-Type" = "application/json") |>
+            httr2::req_headers(!!!.tsifl_headers()) |>
             httr2::req_body_json(body) |>
             httr2::req_options(ssl_verifypeer = 0) |>
             # 180s — allows room for the server-side retry loop (up to 2
@@ -1917,9 +1940,9 @@ run_tsifl_server <- function(port = 7444) {
               Sys.sleep(5)
               r_output <- ""
               for (.retry in 1:3) {
-                if (file.exists("/tmp/.tsifl_last_output.txt")) {
+                if (file.exists(tsifulator:::.tsifl_tmp("last_output.txt"))) {
                   r_output <- tryCatch(
-                    paste(readLines("/tmp/.tsifl_last_output.txt", warn = FALSE), collapse = "\n"),
+                    paste(readLines(tsifulator:::.tsifl_tmp("last_output.txt"), warn = FALSE), collapse = "\n"),
                     error = function(e) ""
                   )
                   if (nchar(trimws(r_output)) > 5) break
@@ -1964,7 +1987,7 @@ run_tsifl_server <- function(port = 7444) {
                 set_status("interpreting")
                 followup_resp <- httr2::request(BACKEND_URL) |>
                   httr2::req_url_path_append("chat", "") |>
-                  httr2::req_headers("Content-Type" = "application/json") |>
+                  httr2::req_headers(!!!.tsifl_headers()) |>
                   httr2::req_body_json(followup_body) |>
                   httr2::req_options(ssl_verifypeer = 0) |>
                   httr2::req_timeout(90) |>
@@ -1975,8 +1998,8 @@ run_tsifl_server <- function(port = 7444) {
                   # Attach plot preview if the listener saved one
                   plot_attachment <- NULL
                   tryCatch({
-                    if (file.exists("/tmp/.tsifl_last_plot.json")) {
-                      raw <- paste(readLines("/tmp/.tsifl_last_plot.json",
+                    if (file.exists(tsifulator:::.tsifl_tmp("last_plot.json"))) {
+                      raw <- paste(readLines(tsifulator:::.tsifl_tmp("last_plot.json"),
                                              warn = FALSE),
                                    collapse = "")
                       meta <- jsonlite::fromJSON(raw, simplifyVector = TRUE)
@@ -1996,7 +2019,7 @@ run_tsifl_server <- function(port = 7444) {
                         )
                         # Consume the metadata file so we don't re-attach
                         # the same plot to the next turn by accident.
-                        try(unlink("/tmp/.tsifl_last_plot.json"), silent = TRUE)
+                        try(unlink(tsifulator:::.tsifl_tmp("last_plot.json")), silent = TRUE)
                       }
                     }
                   }, error = function(e) {})
@@ -2048,7 +2071,7 @@ run_tsifl_server <- function(port = 7444) {
         target <- if (is.null(payload$target)) "new" else payload$target
 
         if (target != "console") {
-          code_file <- "/tmp/.tsifl_insert_code.R"
+          code_file <- tsifulator:::.tsifl_tmp("insert_code.R")
           tryCatch(writeLines(code, code_file), error = function(e) {})
 
           if (target == "active") {
@@ -2087,7 +2110,7 @@ run_tsifl_server <- function(port = 7444) {
             )
           }
 
-          script_file <- "/tmp/.tsifl_insert_script.R"
+          script_file <- tsifulator:::.tsifl_tmp("insert_script.R")
           tryCatch(writeLines(insert_script, script_file), error = function(e) {})
 
           tryCatch({
@@ -2111,8 +2134,8 @@ run_tsifl_server <- function(port = 7444) {
         #    The listener handles sink(), output capture, and plot snapshot —
         #    so no preamble commands needed.
 
-        pending_file <- "/tmp/.tsifl_pending_code.R"
-        done_file    <- "/tmp/.tsifl_done.marker"
+        pending_file <- tsifulator:::.tsifl_tmp("pending_code.R")
+        done_file    <- tsifulator:::.tsifl_tmp("done.marker")
 
         # Detect if code will produce a plot (used for wait timing below)
         plot_keywords <- c("plot(", "ggplot(", "boxplot(", "hist(", "barplot(",
@@ -2180,9 +2203,9 @@ run_tsifl_server <- function(port = 7444) {
           tryCatch({
             # Read captured output
             output_text <- ""
-            if (file.exists("/tmp/.tsifl_last_output.txt")) {
+            if (file.exists(tsifulator:::.tsifl_tmp("last_output.txt"))) {
               output_text <- tryCatch(
-                paste(readLines("/tmp/.tsifl_last_output.txt", warn = FALSE), collapse = "\n"),
+                paste(readLines(tsifulator:::.tsifl_tmp("last_output.txt"), warn = FALSE), collapse = "\n"),
                 error = function(e) ""
               )
             }
@@ -2198,7 +2221,7 @@ run_tsifl_server <- function(port = 7444) {
               tryCatch({
                 httr2::request(BACKEND_URL) |>
                   httr2::req_url_path_append("transfer", "store") |>
-                  httr2::req_headers("Content-Type" = "application/json") |>
+                  httr2::req_headers(!!!.tsifl_headers()) |>
                   httr2::req_body_json(transfer_body) |>
                   httr2::req_options(ssl_verifypeer = 0) |>
                   httr2::req_perform()
@@ -2211,7 +2234,7 @@ run_tsifl_server <- function(port = 7444) {
             # existed and caused a noisy gzfile warning on every chat.
             .pick <- function(x, default = "") if (is.null(x) || length(x) == 0) default else x
             env_snap <- suppressWarnings(tryCatch(
-              readRDS("/tmp/.tsifl_env_snapshot.rds"),
+              readRDS(tsifulator:::.tsifl_tmp("env_snapshot.rds")),
               error = function(e) list()
             ))
             env_objs <- if (is.list(env_snap) && !is.null(env_snap$env))
@@ -2239,7 +2262,7 @@ run_tsifl_server <- function(port = 7444) {
               tryCatch({
                 httr2::request(BACKEND_URL) |>
                   httr2::req_url_path_append("transfer", "store") |>
-                  httr2::req_headers("Content-Type" = "application/json") |>
+                  httr2::req_headers(!!!.tsifl_headers()) |>
                   httr2::req_body_json(transfer_body) |>
                   httr2::req_options(ssl_verifypeer = 0) |>
                   httr2::req_perform()
@@ -2265,7 +2288,7 @@ run_tsifl_server <- function(port = 7444) {
 
                 httr2::request(BACKEND_URL) |>
                   httr2::req_url_path_append("transfer", "store") |>
-                  httr2::req_headers("Content-Type" = "application/json") |>
+                  httr2::req_headers(!!!.tsifl_headers()) |>
                   httr2::req_body_json(transfer_body) |>
                   httr2::req_options(ssl_verifypeer = 0) |>
                   httr2::req_perform()
@@ -2292,7 +2315,7 @@ run_tsifl_server <- function(port = 7444) {
       } else if (type == "export_plot") {
         # Save current plot via main console, then upload
         tryCatch({
-          plot_path <- "/tmp/.tsifl_last_plot.png"
+          plot_path <- tsifulator:::.tsifl_tmp("last_plot.png")
           # First check if auto-capture already saved the plot
           if (!file.exists(plot_path) || file.info(plot_path)$size < 100) {
             # No auto-captured plot — try dev.copy from console
@@ -2322,7 +2345,7 @@ run_tsifl_server <- function(port = 7444) {
 
             resp <- httr2::request(BACKEND_URL) |>
               httr2::req_url_path_append("transfer", "store") |>
-              httr2::req_headers("Content-Type" = "application/json") |>
+              httr2::req_headers(!!!.tsifl_headers()) |>
               httr2::req_body_json(transfer_body) |>
               httr2::req_options(ssl_verifypeer = 0) |>
               httr2::req_perform()
@@ -2353,7 +2376,7 @@ run_tsifl_server <- function(port = 7444) {
           if (is.null(file_path) || !nzchar(file_path)) {
             # Ask the main R session for the active document path
             # Try multiple rstudioapi methods for reliability
-            path_file <- "/tmp/.tsifl_rmd_path.txt"
+            path_file <- tsifulator:::.tsifl_tmp("rmd_path.txt")
             tryCatch({
               unlink(path_file)
               rstudioapi::sendToConsole(
