@@ -363,6 +363,28 @@ AGENT_TOOLS = [
 
     # ── Deterministic media/web ────────────────────────────────────────────
     {
+        "name": "set_volume",
+        "description": (
+            "Control system volume. Use this — DO NOT use key_combo with "
+            "guessed shortcuts like 'cmd+option+down' (which doesn't do "
+            "anything on Mac). "
+            "\nExamples:\n"
+            "  Mute → {\"muted\": true}\n"
+            "  Unmute → {\"muted\": false}\n"
+            "  Set to 30% → {\"level\": 30}\n"
+            "  Silence → {\"level\": 0}\n"
+            "Both fields can be set in one call (e.g. {\"level\": 50, "
+            "\"muted\": false})."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "muted": {"type": "boolean"},
+                "level": {"type": "integer", "minimum": 0, "maximum": 100},
+            },
+        },
+    },
+    {
         "name": "play_spotify_playlist",
         "description": (
             "Play one of the user's OWN Spotify playlists by name. "
@@ -897,6 +919,22 @@ If neither applies and the user says "the file" or "the data" — ASK.
 - If a tool errored — read the error. Do NOT retry with a guess. If the path was wrong, ASK the user. If the script syntax was wrong, FIX the script. If a path doesn't exist, don't search for variants — ask.
 - A search_files result is a list of paths sorted by recency. For "open my recent X", use index 0. Don't pick randomly.
 
+# Skip the extra summary round when you finish in one shot
+For tasks where ONE deterministic tool call obviously completes the work
+(set_volume, play_media, play_spotify_playlist, open_app, notify,
+clipboard_copy, save_memory), include a brief one-line confirmation in
+your text response in the SAME turn as the tool call. e.g.
+
+  text: "Muting now."
+  tool_use: set_volume(muted=true)
+
+That way the loop terminates after the tool runs — no second API round
+just to say "done."
+
+For multi-step work that genuinely needs follow-up rounds (search →
+open, read → write, web_search → analyze), don't pad with a fake summary
+mid-stream — the natural flow handles it.
+
 # Never fake completion
 Your final text response must reflect what tools actually ran. Forbidden:
 - "All set" / "Done" / "I've imported the data" when no write tool ran
@@ -1179,45 +1217,46 @@ def call_agent(
                 "input": block.input,
             })
         elif btype == "server_tool_use":
-            # Native Anthropic server tool call (e.g. web_search). We keep
-            # the block as-is so the next turn sees what was searched.
-            assistant_content.append({
-                "type": "server_tool_use",
-                "id": block.id,
-                "name": block.name,
-                "input": block.input,
-            })
+            # Anthropic-side server tool — we DON'T persist this block.
+            # Web search results have ephemeral `encrypted_content` that
+            # the API rejects on subsequent turns. Instead, inject a
+            # plain-text summary of what was searched so the model can
+            # see in the next turn that the search happened.
+            try:
+                query = (block.input or {}).get("query", "(unknown)")
+                assistant_content.append({
+                    "type": "text",
+                    "text": f"[Searched the web for: \"{query}\"]",
+                })
+            except Exception:
+                pass
         elif btype == "web_search_tool_result":
-            # Results from the server-side search. Persist them so the
-            # model can reference them in follow-up turns.
-            raw_content = block.content
-            # Anthropic returns the content either as a list of result
-            # objects or an error object. Serialize to a list of dicts.
-            if isinstance(raw_content, list):
-                serialized = []
-                for item in raw_content:
-                    serialized.append({
-                        "type": "web_search_result",
-                        "url": getattr(item, "url", ""),
-                        "title": getattr(item, "title", ""),
-                        "encrypted_content": getattr(item, "encrypted_content", ""),
-                        "page_age": getattr(item, "page_age", None),
+            # Persist as a plain-text summary of URLs/titles. Anthropic's
+            # native web_search returns blocks with encrypted_content that
+            # the API rejects when echoed back on later turns (the field
+            # is bound to that single response). Convert to text so future
+            # turns can see citations without the rejection.
+            try:
+                raw_content = block.content
+                if isinstance(raw_content, list):
+                    lines = ["[Web search results]"]
+                    for item in raw_content[:5]:
+                        title = getattr(item, "title", "")
+                        url = getattr(item, "url", "")
+                        lines.append(f"- {title}: {url}")
+                    assistant_content.append({
+                        "type": "text",
+                        "text": "\n".join(lines),
                     })
-                assistant_content.append({
-                    "type": "web_search_tool_result",
-                    "tool_use_id": block.tool_use_id,
-                    "content": serialized,
-                })
-            else:
-                # Error case — serialize as-is
-                assistant_content.append({
-                    "type": "web_search_tool_result",
-                    "tool_use_id": block.tool_use_id,
-                    "content": {
-                        "type": "web_search_tool_result_error",
-                        "error_code": getattr(raw_content, "error_code", "unknown"),
-                    },
-                })
+                else:
+                    # Error result — note it briefly
+                    code = getattr(raw_content, "error_code", "unknown")
+                    assistant_content.append({
+                        "type": "text",
+                        "text": f"[Web search error: {code}]",
+                    })
+            except Exception:
+                pass
         elif btype == "thinking":
             # Don't persist thinking blocks — they bloat the context
             pass

@@ -719,6 +719,13 @@ _panel_input: "object | None" = None       # NSTextField inside the panel
 _panel_send_btn: "object | None" = None    # send button (→)
 _panel_attach_btn: "object | None" = None  # attach button (+)
 _panel_mic_btn: "object | None" = None     # mic button (🎙 / 🔴 while recording)
+
+# v2 agent conversation persistence — keep the same conversation_id across
+# ⌘⌥T summons so tsifl actually remembers what we said. Backend TTL is
+# 30 min, so this matches.
+_v2_conversation_id: "str | None" = None
+_v2_conversation_started_at: float = 0.0
+_V2_CONV_TTL_SECONDS = 25 * 60  # slightly less than the backend's 30min
 _panel_response: "object | None" = None    # NSTextField for inline response below input
 _panel_target: "object | None" = None      # NSObject target for input + buttons
 _panel_esc_monitor: "object | None" = None # NSEvent monitor for Esc key
@@ -2489,6 +2496,20 @@ def _panel_submit(text: str):
     except Exception:
         pass
 
+    # ── Conversation reset (local) ───────────────────────────────────
+    if text.strip().lower() in ("new chat", "new conversation", "reset", "forget context", "clear chat"):
+        global _v2_conversation_id, _v2_conversation_started_at
+        _v2_conversation_id = None
+        _v2_conversation_started_at = 0.0
+        _panel_show_response("🆕 Started a fresh conversation.")
+        if _panel_input is not None:
+            try:
+                _panel_input.setStringValue_("")
+                _panel_input.setPlaceholderString_("Ask tsifl anything…")
+            except Exception:
+                pass
+        return
+
     # ── Routine commands (also no backend needed) ────────────────────
     try:
         from routines import check_routine_intent
@@ -2634,15 +2655,37 @@ def _panel_submit(text: str):
                         if ids:
                             _last_email_results = [{"id": mid} for mid in ids]
 
-            sys.stderr.write(f"[tsifl-helper] V2 agent loop starting: frontmost={context['frontmost_app']!r}\n")
+            # Resume the prior conversation if it's still fresh (< 25min);
+            # otherwise start a new one. This is what makes tsifl actually
+            # remember context across ⌘⌥T presses.
+            global _v2_conversation_id, _v2_conversation_started_at
+            now = time.time()
+            if (_v2_conversation_id and
+                    (now - _v2_conversation_started_at) < _V2_CONV_TTL_SECONDS):
+                resume_id = _v2_conversation_id
+                sys.stderr.write(
+                    f"[tsifl-helper] V2 resuming conversation {resume_id[:8]}… "
+                    f"(age {int(now - _v2_conversation_started_at)}s)\n"
+                )
+            else:
+                resume_id = None
+                sys.stderr.write("[tsifl-helper] V2 starting fresh conversation\n")
+
+            sys.stderr.write(f"[tsifl-helper] V2 agent loop: frontmost={context['frontmost_app']!r}\n")
             try:
                 summary = run_agent_loop(
                     user_message=text,
                     context=context,
                     images=images_to_send or None,
-                    max_steps=8,
+                    max_steps=5,
                     on_step=_on_step,
+                    conversation_id=resume_id,
                 )
+                # Remember the id for next ⌘⌥T
+                returned_id = summary.get("conversation_id")
+                if returned_id:
+                    _v2_conversation_id = returned_id
+                    _v2_conversation_started_at = now
             except Exception as e:
                 import traceback; traceback.print_exc(file=sys.stderr)
                 summary = {"error": str(e), "final_text": f"Agent crashed: {e}",

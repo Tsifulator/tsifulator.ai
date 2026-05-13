@@ -26,12 +26,23 @@ import httpx
 # functions to avoid circular import on module load.
 
 # ── Risk mapping per tool name (matches old behavior) ──────────────────────
+# Tools whose successful execution OBVIOUSLY completes the user's task.
+# If Claude calls one of these and also returns a text confirmation in the
+# same response, we can skip the "summary round" — saves one API call.
+_TERMINAL_TOOLS = {
+    "set_volume", "play_media", "play_spotify_playlist", "open_app",
+    "open_url", "notify", "clipboard_copy", "save_memory", "set_shortcut",
+    "data_export", "send_email", "create_routine",
+}
+
+
 _TOOL_RISK = {
     # GREEN — read-only
     "search_files": "green", "read_file": "green", "open_file": "green",
     "open_app": "green", "open_url": "green", "shell": "green",
     "clipboard_read": "green", "clipboard_copy": "green", "notify": "green",
     "play_media": "green", "play_spotify_playlist": "green",
+    "set_volume": "green",
     "web_open": "green", "fetch_url": "green",
     "check_inbox": "green", "search_email": "green", "read_email": "green",
     "screenshot": "green", "scroll": "green", "wait": "green",
@@ -273,6 +284,14 @@ def _describe_tool_use(name: str, inp: dict) -> str:
         return f"Play '{inp.get('query', '?')}' on {inp.get('platform', '?')}"
     if name == "play_spotify_playlist":
         return f"Play playlist '{inp.get('name', '?')}'"
+    if name == "set_volume":
+        if inp.get("muted") is True:
+            return "Mute"
+        if inp.get("muted") is False:
+            return "Unmute"
+        if "level" in inp:
+            return f"Set volume to {inp['level']}"
+        return "Set volume"
     if name == "web_open":
         return f"Open {inp.get('engine', 'google')} search: '{inp.get('query', '?')}'"
     if name == "fetch_url":
@@ -348,6 +367,7 @@ def run_agent_loop(
     images: Optional[list[dict]] = None,
     max_steps: int = 5,
     on_step=None,
+    conversation_id: Optional[str] = None,
 ) -> dict:
     """Drive the full agent loop until done or max_steps reached.
 
@@ -370,7 +390,6 @@ def run_agent_loop(
       }
     """
     all_executed: list = []
-    conversation_id: Optional[str] = None
     final_text = ""
     last_thinking = ""
     total_cost = 0.0
@@ -378,7 +397,9 @@ def run_agent_loop(
     last_today_total = 0.0
     last_model = ""
 
-    # Round 1: start the conversation
+    # Round 1: start (or resume) the conversation. If the caller passed an
+    # existing conversation_id, the backend appends to that thread; if it's
+    # None, a fresh one is created.
     resp = start_turn(user_message, context, conversation_id, images)
     conversation_id = resp.get("conversation_id")
 
@@ -460,6 +481,23 @@ def run_agent_loop(
         # Done if response said so
         if resp.get("done") and not tool_uses:
             final_text = text
+            break
+
+        # Fast path: if Claude already gave a text summary AND every tool
+        # call was a "terminal" success (set_volume, play_media, etc.),
+        # skip the second API call. The task is obviously complete.
+        all_terminal_ok = (
+            text
+            and tool_uses
+            and all(tu.get("name") in _TERMINAL_TOOLS for tu in tool_uses)
+            and all(a is not None and a.success for a in executed_actions)
+        )
+        if all_terminal_ok:
+            final_text = text
+            sys.stderr.write(
+                f"[agent_v2] fast-path: terminal tools + summary in one round, "
+                f"skipping extra API call\n"
+            )
             break
 
         # Post results, loop

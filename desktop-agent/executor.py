@@ -1948,6 +1948,37 @@ def execute_action(action: Action) -> Action:
                     action.success = False
                     action.error = f"Shortcut save failed: {e}"
 
+        elif action.type == "set_volume":
+            # Deterministic system volume control. Avoids the hallucination
+            # where the agent picks a wrong key_combo for mute.
+            muted = cmd_data.get("muted")
+            level = cmd_data.get("level")
+            scripts_run = []
+            try:
+                if isinstance(level, (int, float)):
+                    clamped = max(0, min(100, int(level)))
+                    ok, r = run_applescript(
+                        f'set volume output volume {clamped}', timeout=3,
+                    )
+                    scripts_run.append(f"volume → {clamped}")
+                    if clamped > 0:
+                        run_applescript("set volume without output muted", timeout=3)
+                if muted is True:
+                    ok, r = run_applescript("set volume with output muted", timeout=3)
+                    scripts_run.append("muted")
+                elif muted is False:
+                    ok, r = run_applescript("set volume without output muted", timeout=3)
+                    scripts_run.append("unmuted")
+                if not scripts_run:
+                    action.success = False
+                    action.result = "set_volume needs `muted` (bool) or `level` (0-100)"
+                else:
+                    action.success = True
+                    action.result = "✅ " + ", ".join(scripts_run)
+            except Exception as e:
+                action.success = False
+                action.error = f"set_volume failed: {e}"
+
         elif action.type == "play_spotify_playlist":
             # Navigate Spotify's sidebar to the user's named playlist and play
             name = cmd_data.get("name", cmd)
