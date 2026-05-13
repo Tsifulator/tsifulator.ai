@@ -365,22 +365,36 @@ AGENT_TOOLS = [
     {
         "name": "play_media",
         "description": (
-            "Play music or a video on a specific platform. Battle-tested per "
-            "app — uses URL schemes + UI scripting + verification. "
-            "FOR 'play X on spotify' OR 'play X' (no platform named) — use "
-            "this tool, not a vision loop. "
-            "FOR 'play X on youtube' — use this with platform='youtube'. "
-            "platform='apple music' is supported but rarely needed. "
-            "Returns the actual track name + artist that started playing — "
-            "if it doesn't match what the user asked for, you can apologize "
-            "and try again."
+            "Play music or a video by SEARCHING the public catalog on a "
+            "platform. Uses URL schemes + UI scripting + verification. "
+            "\nUSE FOR: 'play X' / 'play X on spotify' / 'play X on youtube' "
+            "where X is a public song, artist, album, video title — anything "
+            "another user could find via that platform's search bar.\n"
+            "\nDO NOT USE FOR personalized requests like 'play something from "
+            "my playlists', 'play my Liked Songs', 'play my Daily Mix', "
+            "'play my recents'. You can't see the user's private library, "
+            "so query='chill vibes' will play a random global match — NOT "
+            "what they asked for. For those, ASK which specific playlist/"
+            "song they mean, or use `applescript` to navigate Spotify to "
+            "their library view.\n"
+            "\nReturns the actual track + artist that started playing. If it "
+            "doesn't match, apologize and try a more specific query."
         ),
         "input_schema": {
             "type": "object",
             "required": ["platform", "query"],
             "properties": {
-                "platform": {"type": "string", "enum": ["spotify", "youtube", "apple music"]},
-                "query": {"type": "string", "description": "Song, artist, playlist, or video title."},
+                "platform": {
+                    "type": "string",
+                    "enum": ["spotify", "youtube", "apple music"],
+                },
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Public song, artist, album, or video. Must be "
+                        "something findable via the platform's search bar."
+                    ),
+                },
             },
         },
     },
@@ -817,6 +831,12 @@ User: "send the email"
 
 User: drops an image showing a small table, says "import this"
   → The image is in your context as an image block. READ THE TABLE FROM THE IMAGE. Open the target app. Call applescript to write the rows. Do NOT call read_file or search_files — the data is right there.
+
+User: "play a song from my playlists" / "play something from my library"
+  → You CANNOT enumerate the user's Spotify library — those playlists are private to their account, and play_media only does public Spotify search. Two options:
+  (a) ASK which playlist or song they want, OR
+  (b) Use `applescript` to navigate Spotify to their library: `tell application "Spotify" to activate` then keystroke shortcuts to focus the sidebar.
+  DO NOT call play_media with a guessed query — you'll just trigger a public search for "chill vibes" or similar and play a random track that has nothing to do with their library.
 
 # Tool-choice rules
 - File search → `search_files`. Never `shell` with find/ls/mdfind/locate. search_files uses Spotlight and sorts by most-recently-modified.
