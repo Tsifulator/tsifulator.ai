@@ -22,6 +22,33 @@ client = anthropic.Anthropic(
     timeout=_httpx.Timeout(600.0, connect=10.0),
 )
 
+# ── BYOK (bring-your-own-key) plumbing ─────────────────────────────────────
+# When a request arrives with an X-User-Api-Key header, the route handler
+# sets this contextvar to a temporary Anthropic client using that key. All
+# Anthropic SDK calls in this module route through `get_client()` so they
+# pick up the per-request override automatically — and the caller pays for
+# their own Anthropic usage, not the server.
+import contextvars as _contextvars
+
+_request_client: _contextvars.ContextVar = _contextvars.ContextVar(
+    "request_client", default=None,
+)
+
+
+def get_client():
+    """Return the per-request Anthropic client if set (BYOK), else module default."""
+    override = _request_client.get()
+    return override if override is not None else client
+
+
+def make_user_client(api_key: str):
+    """Build a per-request Anthropic client for a user's BYOK key. Caller
+    sets this on _request_client via .set() and resets it in finally."""
+    return anthropic.Anthropic(
+        api_key=api_key,
+        timeout=_httpx.Timeout(600.0, connect=10.0),
+    )
+
 # ── Hybrid Model Router ──────────────────────────────────────────────────────
 # Routes queries to the optimal model tier based on complexity.
 #   FAST    → Haiku 3.5   — greetings, simple lookups, single formulas
@@ -3843,7 +3870,7 @@ TRANSACTIONS PROJECT SPECIFICS:
         # Use streaming to collect the full response (SDK requires streaming for large max_tokens)
         collected_response = None
         tools_to_use = DESKTOP_TOOLS if is_desktop else TOOLS
-        with client.messages.stream(
+        with get_client().messages.stream(
             model       = selected_model,
             max_tokens  = 16384,
             system      = _system_block(system_prompt),
@@ -4303,7 +4330,7 @@ async def _retry_r_action(
     })
 
     try:
-        with client.messages.stream(
+        with get_client().messages.stream(
             model       = model,
             max_tokens  = 16384,
             system      = _system_block(system_prompt),
@@ -4871,7 +4898,7 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
 
     # Only stream text-only responses (no tool use)
     if skip_tools:
-        with client.messages.stream(
+        with get_client().messages.stream(
             model       = selected_model,
             max_tokens  = 4096,
             system      = _system_block(system_prompt),
@@ -4881,7 +4908,7 @@ CRITICAL REMINDERS — COPY THESE EXACTLY:
                 yield text
     else:
         # For tool-use responses, fall back to non-streaming
-        with client.messages.stream(
+        with get_client().messages.stream(
             model       = selected_model,
             max_tokens  = 16384,
             system      = _system_block(system_prompt),

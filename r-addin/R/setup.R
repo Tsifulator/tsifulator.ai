@@ -1,3 +1,80 @@
+#' Get the user's stored Anthropic API key, if any.
+#'
+#' Stored at `~/.tsifulator_api_key` (created with mode 600 on Unix).
+#' Falls back to the `ANTHROPIC_API_KEY` env var if present.
+#'
+#' @return Character scalar (the key) or NA if not configured.
+#' @export
+get_api_key <- function() {
+  path <- path.expand("~/.tsifulator_api_key")
+  if (file.exists(path)) {
+    key <- tryCatch(trimws(readLines(path, n = 1, warn = FALSE)),
+                    error = function(e) "")
+    if (nzchar(key)) return(key)
+  }
+  env_key <- Sys.getenv("ANTHROPIC_API_KEY", unset = "")
+  if (nzchar(env_key)) return(env_key)
+  NA_character_
+}
+
+
+#' Set the Anthropic API key tsifl will use.
+#'
+#' tsifl is bring-your-own-key (BYOK): every chat goes through your
+#' Anthropic account, not ours. This means you pay Anthropic directly
+#' (~$1-3/M input tokens depending on model), tsifl never sees your
+#' billing, and your data goes only to Anthropic — not to our servers.
+#'
+#' Get a key at https://console.anthropic.com/settings/keys
+#'
+#' @param key Character scalar. If NULL, prompts interactively.
+#' @return Invisibly TRUE on success.
+#' @export
+set_api_key <- function(key = NULL) {
+  path <- path.expand("~/.tsifulator_api_key")
+  if (is.null(key)) {
+    if (!interactive()) {
+      stop("set_api_key() needs to be called interactively, or pass `key=` directly.")
+    }
+    message("\nGet a key at https://console.anthropic.com/settings/keys")
+    message("It starts with 'sk-ant-' and looks like a long random string.\n")
+    key <- readline("Paste your Anthropic API key: ")
+  }
+  key <- trimws(key)
+  if (!nzchar(key)) {
+    message("No key provided. Skipping.")
+    return(invisible(FALSE))
+  }
+  if (!startsWith(key, "sk-ant-")) {
+    warning("This doesn't look like an Anthropic API key (expected to start with 'sk-ant-'). Saving anyway.")
+  }
+  tryCatch({
+    writeLines(key, path)
+    if (.Platform$OS.type == "unix") {
+      Sys.chmod(path, mode = "0600")
+    }
+    message("✓ Saved to ", path)
+  }, error = function(e) {
+    stop("Could not write key file: ", conditionMessage(e))
+  })
+  invisible(TRUE)
+}
+
+
+#' Remove the saved Anthropic API key.
+#' @export
+unset_api_key <- function() {
+  path <- path.expand("~/.tsifulator_api_key")
+  if (file.exists(path)) {
+    try(unlink(path), silent = TRUE)
+    message("✓ Removed ", path)
+  } else {
+    message("No key file to remove.")
+  }
+  invisible(TRUE)
+}
+
+
 #' One-command setup for tsifl
 #'
 #' Gets a new user from zero to running tsifl in their RStudio with a single
@@ -44,6 +121,7 @@ setup <- function(auto_launch = TRUE, install_missing = TRUE, quiet = FALSE) {
     rprofile_ok      = FALSE,
     rprofile_path    = "",
     backend_ok       = FALSE,
+    api_key_set      = FALSE,
     port_cleared     = FALSE,
     launched         = FALSE,
     warnings         = character(0),
@@ -130,6 +208,33 @@ setup <- function(auto_launch = TRUE, install_missing = TRUE, quiet = FALSE) {
                   paste(missing, collapse = ", ")))
     results$warnings <- c(results$warnings, "missing required packages")
   }
+
+  # ── Step 3b: Anthropic API key (BYOK) ──────────────────────────────────────
+  api_key <- get_api_key()
+  if (is.na(api_key)) {
+    if (interactive() && install_missing) {
+      message("")
+      message("tsifl is bring-your-own-key — calls go through YOUR Anthropic account.")
+      message("Get a key at https://console.anthropic.com/settings/keys (free signup,")
+      message("you'll need to add a small credit balance to actually use it).")
+      message("")
+      ans <- tolower(trimws(readline("Set your API key now? [Y/n]: ")))
+      if (ans %in% c("", "y", "yes")) {
+        tryCatch(set_api_key(), error = function(e) {
+          .warn(paste("Could not save key:", conditionMessage(e)))
+          results$warnings <<- c(results$warnings, "api_key not saved")
+        })
+        api_key <- get_api_key()
+      }
+    }
+    if (is.na(api_key)) {
+      .warn("No Anthropic key set — tsifl chat won't work until you run tsifulator::set_api_key()")
+      results$warnings <- c(results$warnings, "no api_key configured")
+    }
+  } else {
+    .ok("Anthropic API key configured")
+  }
+  results$api_key_set <- !is.na(api_key)
 
   # ── Step 4: Kill any stale tsifl on port 7444 ──────────────────────────────
   port_kill_ok <- tryCatch({
@@ -412,17 +517,22 @@ reinstall <- function(source_dir = NULL, quiet = FALSE) {
 
   # 4. Install from source
   if (is.null(source_dir)) {
-    # Try common default locations
+    # Try common locations relative to the user's working tree. No
+    # hardcoded paths \u2014 those only work on the maintainer's machine.
     candidates <- c(
-      "/Users/nicholastsiflikiotis/tsifulator.ai/r-addin",
       file.path(getwd(), "r-addin"),
-      getwd()
+      getwd(),
+      file.path(getwd(), "..", "r-addin"),
+      file.path(dirname(getwd()), "r-addin")
     )
+    candidates <- normalizePath(candidates, mustWork = FALSE)
     source_dir <- candidates[vapply(candidates, function(d) {
       file.exists(file.path(d, "DESCRIPTION"))
     }, logical(1))][1]
     if (is.na(source_dir)) {
-      message("\u2717 Could not find r-addin source directory. Pass source_dir explicitly.")
+      message("\u2717 Could not find r-addin source directory automatically.")
+      message("  Pass source_dir explicitly, e.g.:")
+      message("    tsifulator::reinstall(source_dir = \"~/path/to/r-addin\")")
       return(invisible(NA_character_))
     }
   }
@@ -530,8 +640,9 @@ status <- function() {
   # can find the repo. Helps users notice when devtools::install() silently
   # fails due to a file lock.
   stale_warning <- ""
-  for (cand in c("/Users/nicholastsiflikiotis/tsifulator.ai/r-addin",
-                 file.path(getwd(), "r-addin"))) {
+  for (cand in c(file.path(getwd(), "r-addin"),
+                 getwd(),
+                 file.path(dirname(getwd()), "r-addin"))) {
     desc_file <- file.path(cand, "DESCRIPTION")
     if (file.exists(desc_file)) {
       src_ver <- tryCatch(
@@ -567,6 +678,9 @@ status <- function() {
                   if (port_in_use) "yes" else "no"))
   message(sprintf("  Backend reachable:     %s",
                   if (backend_ok) sprintf("yes (%s)", backend_url) else "no"))
+  api_key_set <- !is.na(get_api_key())
+  message(sprintf("  Anthropic API key:     %s",
+                  if (api_key_set) "configured (BYOK)" else "NOT SET — run set_api_key()"))
   if (nzchar(stale_warning)) {
     message("")
     message(stale_warning)
