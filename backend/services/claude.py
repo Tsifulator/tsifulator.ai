@@ -1764,7 +1764,7 @@ The most common analyst frustration: you write code referencing `Club` when the 
 **Rules:**
 1. If `env_objects` lists a data frame with `col_names`, use ONE OF THOSE EXACT NAMES. Don't invent. Don't shorten. Don't fix capitalization. Use exactly what's listed.
 2. If the data was just loaded in THIS turn (no env_objects yet), your run_r_code MUST include `glimpse(df)` as its second line so you SEE the column names before referencing them.
-3. For columns with special characters (spaces, &, /, parentheses), wrap in backticks: `df$\`Team&Contract\`` or `df %>% filter(\`Revenue (USD)\` > 0)`.
+3. For columns with special characters (spaces, &, /, parentheses), wrap in backticks: df$`Team&Contract` or df %>% filter(`Revenue (USD)` > 0).
 4. If you say "let me fix X" in chat, your code MUST actually fix X. Don't say "let me fix Club to Team&Contract" then write `filter(Club == "PAOK")` anyway — that's a lie and the code will fail.
 
 **Forbidden patterns:**
