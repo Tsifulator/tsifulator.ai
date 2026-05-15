@@ -1694,6 +1694,36 @@ When the user sends a screenshot (exam, homework, data, chart, histogram, boxplo
 - CRITICAL TEST: Before submitting your answer, ask yourself — "Did I read this number from the image, or did I make it up?" If you made it up, STOP and re-examine the image.
 - When writing R code with values from a screenshot, add a comment showing where each value came from: `# From screenshot: mean = 78.9` — this forces you to verify.
 
+### ABSOLUTE RULE: HTMLWIDGETS — selfcontained = FALSE for plotly
+When saving a plotly/leaflet/DT widget to HTML, ALWAYS pass
+`selfcontained = FALSE` to `htmlwidgets::saveWidget()`. With
+`selfcontained = TRUE`, R has to inline every JS dependency into one
+HTML file — for a plotly with 18K rows this takes 2-3+ minutes and
+makes the user think tsifl crashed.
+
+CORRECT:
+```r
+htmlwidgets::saveWidget(fig, tmp_html, selfcontained = FALSE)
+```
+
+INCORRECT (slow):
+```r
+htmlwidgets::saveWidget(fig, tmp_html, selfcontained = TRUE)
+htmlwidgets::saveWidget(fig, tmp_html)   # default is TRUE — bad
+```
+
+`selfcontained = FALSE` writes a small HTML plus a sibling
+`*_files/` directory of assets — opens just as fast in the browser
+and saves in <1s instead of minutes.
+
+ALSO: for large datasets (>5,000 rows), consider SAMPLING or
+FILTERING in R before passing to plot_ly:
+```r
+plot_data <- df %>% dplyr::sample_n(min(5000, n()))
+```
+A 3D scatter with 18,000 points is unreadable anyway — sampling to
+2-5K loses no information visually and renders 10× faster.
+
 ### ABSOLUTE RULE: ALWAYS LOAD LIBRARIES YOU USE
 Every run_r_code action must START with `suppressMessages()` library calls for
 EVERY package it references. Don't assume anything is loaded. The user's

@@ -2155,7 +2155,30 @@ run_tsifl_server <- function(port = 7444) {
           # forced to read the R console to find the answer.
           if (r_code_executed) {
             tryCatch({
-              Sys.sleep(5)
+              # Poll the done marker rather than a fixed sleep. Some code
+              # (large plotly saveWidget, big joins, web fetches) takes
+              # 30s+. The previous fixed 5s + 3×2s wait misclassified those
+              # as "no output" and prematurely fell through to interpretation.
+              # Now we poll up to 60s, surface a heartbeat every 15s so
+              # the user knows we're alive.
+              done_file <- tsifulator:::.tsifl_tmp("done.marker")
+              t0 <- Sys.time()
+              heartbeat_at <- 15
+              while (TRUE) {
+                Sys.sleep(0.5)
+                elapsed <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+                if (file.exists(done_file)) break
+                if (elapsed >= 60) break
+                if (elapsed >= heartbeat_at) {
+                  add_message("action", paste0(
+                    "Still running… (", round(elapsed), "s elapsed)  ",
+                    "Large plots / saveWidget(selfcontained=TRUE) can take 1-3 min."
+                  ))
+                  heartbeat_at <- heartbeat_at + 30
+                }
+              }
+              # Small grace period for the listener to flush sink() output
+              Sys.sleep(0.5)
               r_output <- ""
               for (.retry in 1:3) {
                 if (file.exists(tsifulator:::.tsifl_tmp("last_output.txt"))) {
@@ -2165,7 +2188,7 @@ run_tsifl_server <- function(port = 7444) {
                   )
                   if (nchar(trimws(r_output)) > 5) break
                 }
-                Sys.sleep(2)
+                Sys.sleep(1)
               }
 
               if (nchar(trimws(r_output)) > 5) {
