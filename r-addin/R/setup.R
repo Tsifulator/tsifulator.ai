@@ -57,6 +57,31 @@ set_api_key <- function(key = NULL) {
   }, error = function(e) {
     stop("Could not write key file: ", conditionMessage(e))
   })
+
+  # Auto-launch the tsifl panel if we're in RStudio and nothing's running
+  # on port 7444. Saves users from having to remember a second command
+  # after setting the key — the most common point of friction in setup.
+  in_rs <- tryCatch(
+    requireNamespace("rstudioapi", quietly = TRUE) &&
+      rstudioapi::isAvailable(),
+    error = function(e) FALSE
+  )
+  if (interactive() && in_rs) {
+    port_busy <- tryCatch({
+      con <- suppressWarnings(socketConnection(
+        host = "127.0.0.1", port = 7444,
+        open = "r+", blocking = TRUE, timeout = 1
+      ))
+      close(con); TRUE
+    }, error = function(e) FALSE)
+    if (!port_busy) {
+      message("Starting tsifl panel...")
+      try(tsifulator_addin(), silent = TRUE)
+    } else {
+      message("tsifl is already running — your new key will be used on the next message.")
+    }
+  }
+
   invisible(TRUE)
 }
 

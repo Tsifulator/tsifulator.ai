@@ -1226,6 +1226,23 @@ run_tsifl_server <- function(port = 7444) {
         Shiny.setInputValue('send_message', msg.msg, {priority: 'event'});
       });
 
+      // Force scroll-to-bottom on new chat message. The chat container is
+      // a flex column inside the chat tab — without this the user's just-
+      // sent message can land below the visible viewport, making it look
+      // like the panel didn't react to send.
+      Shiny.addCustomMessageHandler('scroll_chat_bottom', function(msg) {
+        // Use requestAnimationFrame so the DOM update from Shiny finishes
+        // before we measure the scroll height.
+        requestAnimationFrame(function() {
+          var sel = document.querySelector('#chat_messages');
+          var container = sel ? sel.closest('.tab-pane') || sel.parentElement : null;
+          if (container) container.scrollTop = container.scrollHeight;
+          if (sel) sel.scrollTop = sel.scrollHeight;
+          // Also try the body of the iframe in case nesting is weird
+          document.documentElement.scrollTop = document.documentElement.scrollHeight;
+        });
+      });
+
       // ── Tab switching: Chat | Plot ─────────────────────────────────
       window.tsiflShowTab = function(name) {
         var chatTab    = document.getElementById('chat_tab');
@@ -1723,6 +1740,13 @@ run_tsifl_server <- function(port = 7444) {
         entry$plot <- plot
       }
       messages(c(current, list(entry)))
+      # Nudge the front-end to scroll the new entry into view. Without
+      # this, the user's just-sent message can render below the visible
+      # area and look like nothing happened.
+      tryCatch(
+        session$sendCustomMessage("scroll_chat_bottom", list()),
+        error = function(e) NULL
+      )
     }
 
     # ── Environment snapshot (background job → main session IPC) ───────────
