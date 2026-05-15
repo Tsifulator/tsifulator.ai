@@ -57,14 +57,31 @@
     try(unlink(f), silent = TRUE)
   }
 
-  # Helper: prune plots dir to most recent N files
+  # Helper: prune plots dir to most recent N files.
+  # NEVER prunes pinned plots — those are listed in pinned.json (a JSON
+  # array of basenames, written by the Shiny UI when the user clicks the
+  # pin icon on a chip). Pinned plots stay forever and are loaded by the
+  # plot_files reactive first.
   .prune_plots <- function(keep = 20) {
     tryCatch({
-      all_files <- list.files(plots_dir, full.names = TRUE)
-      if (length(all_files) <= keep) return(invisible())
+      pinned_path <- file.path(plots_dir, "pinned.json")
+      pinned <- character(0)
+      if (file.exists(pinned_path)) {
+        pinned <- tryCatch(
+          jsonlite::fromJSON(pinned_path),
+          error = function(e) character(0)
+        )
+        if (!is.character(pinned)) pinned <- character(0)
+      }
+      all_files <- list.files(plots_dir, full.names = TRUE,
+                              pattern = "\\.(html|png)$")
+      if (length(all_files) == 0) return(invisible())
       info <- file.info(all_files)
       info <- info[order(info$mtime, decreasing = TRUE), , drop = FALSE]
-      old <- rownames(info)[(keep + 1):nrow(info)]
+      # Drop pinned files from the prune candidates entirely
+      candidates <- rownames(info)[!(basename(rownames(info)) %in% pinned)]
+      if (length(candidates) <= keep) return(invisible())
+      old <- candidates[(keep + 1):length(candidates)]
       try(unlink(old), silent = TRUE)
     }, error = function(e) {})
   }

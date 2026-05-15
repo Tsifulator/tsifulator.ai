@@ -433,6 +433,34 @@ run_tsifl_server <- function(port = 7444) {
       background: #0F172A;
       border-color: #0F172A;
     }
+    /* Pinned chips: subtle amber tint to signal 'this won't age out' */
+    .plot_chip.pinned {
+      border-color: #FBBF24;
+      background: #FFFBEB;
+    }
+    .plot_chip.pinned:hover {
+      background: #FEF3C7;
+    }
+    .plot_chip.pinned.selected {
+      color: #FFFFFF;
+      background: #0F172A;
+      border-color: #FBBF24;
+    }
+    .plot_chip_pin {
+      display: inline-block;
+      margin-right: 5px;
+      opacity: 0.45;
+      transition: opacity 0.12s ease;
+      cursor: pointer;
+      font-size: 11px;
+      user-select: none;
+    }
+    .plot_chip:hover .plot_chip_pin { opacity: 0.9; }
+    .plot_chip_pin.pinned { opacity: 1; }
+    .plot_chip_pin:hover { transform: scale(1.15); }
+    .plot_chip_label {
+      vertical-align: middle;
+    }
     #plot_list_empty {
       display: inline-block;
       padding: 2px 4px 10px 4px;
@@ -1500,6 +1528,50 @@ run_tsifl_server <- function(port = 7444) {
 
     selected_plot <- shiny::reactiveVal(NULL)
 
+    # ── Pinned-plot state ─────────────────────────────────────────────────
+    # User can pin a plot (📌 button on the chip) to mark it as "keep
+    # forever, easily viewable." Pinned plots:
+    #   1. Are excluded from .prune_plots() so they never age out
+    #   2. Render in the chip strip BEFORE the recent ones
+    #   3. Get a filled-pin icon to distinguish them visually
+    # Storage: a JSON array of file basenames at <plots_dir>/pinned.json.
+    .tsifl_pinned_path <- function() {
+      file.path(tsifulator:::.tsifl_tmp("plots"), "pinned.json")
+    }
+    .tsifl_load_pinned <- function() {
+      p <- .tsifl_pinned_path()
+      if (!file.exists(p)) return(character(0))
+      tryCatch({
+        v <- jsonlite::fromJSON(p)
+        if (is.character(v)) v else character(0)
+      }, error = function(e) character(0))
+    }
+    .tsifl_save_pinned <- function(basenames) {
+      p <- .tsifl_pinned_path()
+      tryCatch(
+        writeLines(jsonlite::toJSON(unique(basenames), auto_unbox = FALSE), p),
+        error = function(e) NULL
+      )
+    }
+    pinned_set <- shiny::reactiveVal(.tsifl_load_pinned())
+
+    # Handler: chip pin/unpin click. The JS onclick sends the basename.
+    shiny::observeEvent(input$plot_pin_toggle, {
+      bn <- as.character(input$plot_pin_toggle)
+      if (!nzchar(bn)) return()
+      current <- .tsifl_load_pinned()
+      if (bn %in% current) {
+        current <- setdiff(current, bn)
+      } else {
+        current <- c(bn, current)
+      }
+      .tsifl_save_pinned(current)
+      pinned_set(current)
+      # Force the chip strip to re-render with the new pin state
+      session$sendCustomMessage("plot_count_update",
+                                list(count = length(shiny::isolate(plot_files()))))
+    }, ignoreInit = TRUE)
+
     # Push plot count to JS so the badge on the Plot tab updates as new
     # plots come in (without forcing the user to switch away from chat).
     # unname() is important: pf carries chip labels as names, and a
@@ -1533,9 +1605,17 @@ run_tsifl_server <- function(port = 7444) {
       pf <- plot_files()
       paths  <- unname(as.character(pf))
       labels <- names(pf)
+      pinned_now <- pinned_set()
       if (is.null(labels) || length(labels) != length(paths)) {
         labels <- paste0("Plot ", seq_along(paths))
       }
+      # Pinned plots come first in the strip, then the recent ones.
+      # Within each group we keep the existing order (already mtime-desc).
+      is_pinned_vec <- basename(paths) %in% pinned_now
+      ord <- c(which(is_pinned_vec), which(!is_pinned_vec))
+      paths  <- paths[ord]
+      labels <- labels[ord]
+      is_pinned_vec <- is_pinned_vec[ord]
       # Keep isolate() here — having the render depend on selected_plot
       # caused chips to re-render mid-click and the click handler got
       # lost (v0.7.8 regression). Highlight is handled client-side via
@@ -1552,11 +1632,30 @@ run_tsifl_server <- function(port = 7444) {
       }
       chips <- lapply(seq_along(paths), function(i) {
         is_sel <- identical(paths[i], sel)
+        is_pin <- isTRUE(is_pinned_vec[i])
+        # Each chip has two clickable parts: the label (loads the plot)
+        # and a small pin span (toggles pin via plot_pin_toggle input).
+        # event.stopPropagation() on the pin keeps the chip click from
+        # also firing.
+        pin_label <- if (is_pin) "📍" else "📌"
+        bn_js <- gsub("'", "\\\\'", basename(paths[i]), fixed = TRUE)
+        pin_span <- shiny::tags$span(
+          class = paste("plot_chip_pin", if (is_pin) "pinned" else "unpinned"),
+          title = if (is_pin) "Unpin (will age out)" else "Pin (keep forever)",
+          onclick = sprintf(
+            "event.stopPropagation();Shiny.setInputValue('plot_pin_toggle','%s',{priority:'event'});return false;",
+            bn_js
+          ),
+          pin_label
+        )
         shiny::tags$button(
           type = "button",
-          class = paste("plot_chip", if (is_sel) "selected" else ""),
+          class = paste("plot_chip",
+                        if (is_sel) "selected" else "",
+                        if (is_pin) "pinned" else ""),
           onclick = sprintf(
             paste0(
+              "if(event.target.classList.contains('plot_chip_pin'))return false;",
               "var root=this.parentNode;",
               "for(var c=0;c<root.children.length;c++){",
               "  root.children[c].classList.remove('selected');",
@@ -1567,7 +1666,8 @@ run_tsifl_server <- function(port = 7444) {
             ),
             gsub("'", "\\\\'", paths[i], fixed = TRUE)
           ),
-          labels[i]
+          pin_span,
+          shiny::tags$span(class = "plot_chip_label", labels[i])
         )
       })
       do.call(shiny::div, c(list(class = "plot_chip_row"), chips))
