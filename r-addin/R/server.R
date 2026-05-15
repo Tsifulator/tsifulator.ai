@@ -97,33 +97,60 @@ run_tsifl_server <- function(port = 7444) {
   # the delimiter detector handles it.
   .tsifl_detect_unknown_column <- function(r_output) {
     if (!nzchar(r_output)) return(NULL)
-    m <- regmatches(
+    # Collect ALL unique 'object X not found' errors — the model often
+    # tries several near-synonyms (Club, Team, Club Name) in one OR
+    # expression, and we want Claude to see them all so it can rule them
+    # all out instead of guessing another similar one.
+    all_unknown <- unique(unlist(regmatches(
       r_output,
-      regexec("object [\"']([^\"']+)[\"'] not found", r_output, perl = TRUE)
-    )[[1]]
-    if (length(m) < 2) return(NULL)
-    unknown_name <- m[2]
-    # If glimpse output is present, extract the actual column names so we
-    # can offer them to Claude instead of asking the model to guess again.
-    cols <- character(0)
-    # Match `$ <colname> <type>` lines from glimpse() output.
-    # Handle both `$ name <type>` and `$ \`name with spaces\` <type>`.
-    col_lines <- regmatches(
-      r_output,
-      gregexpr("\\$\\s*`?[^`\\n<]+`?\\s*<[a-zA-Z]+>",
+      gregexpr("object [\"']([^\"']+)[\"'] not found",
                r_output, perl = TRUE)
-    )[[1]]
-    if (length(col_lines) > 0) {
-      for (cl in col_lines) {
-        nm <- sub("^\\$\\s*`?", "", cl)
-        nm <- sub("`?\\s*<[a-zA-Z]+>\\s*$", "", nm)
-        nm <- trimws(nm)
-        if (nzchar(nm)) cols <- c(cols, nm)
+    )))
+    if (length(all_unknown) == 0) return(NULL)
+    # Extract the actual names from those matches
+    unknown_names <- character(0)
+    for (m in all_unknown) {
+      mm <- regmatches(m, regexec("object [\"']([^\"']+)[\"']", m, perl = TRUE))[[1]]
+      if (length(mm) >= 2) unknown_names <- c(unknown_names, mm[2])
+    }
+    unknown_names <- unique(unknown_names)
+    if (length(unknown_names) == 0) return(NULL)
+
+    # Parse glimpse() output to get NAME + TYPE + SAMPLE for each column.
+    # glimpse line format (in R's compact form):
+    #   $ `Team&Contract` <chr> "\n\n\n\nFCBarcelona\n2004~...
+    # We capture all three so the retry can show Claude what's actually
+    # IN each column — that's how it figures out 'Club' really lives in
+    # `Team&Contract` (values like 'FCBarcelona', 'Juventus').
+    cols <- character(0)
+    types <- character(0)
+    samples <- character(0)
+    # Per-line matching is more reliable than one big regex
+    output_lines <- strsplit(r_output, "\n", fixed = TRUE)[[1]]
+    for (ln in output_lines) {
+      mm <- regmatches(
+        ln,
+        regexec("^\\$\\s*(`[^`]+`|[A-Za-z._][A-Za-z0-9._]*)\\s*<([a-zA-Z]+)>\\s*(.*)$",
+                ln, perl = TRUE)
+      )[[1]]
+      if (length(mm) >= 4) {
+        nm <- gsub("^`|`$", "", mm[2])   # strip backticks if present
+        tp <- mm[3]
+        sv <- trimws(mm[4])
+        # Truncate sample preview — first ~80 chars is plenty for the model
+        if (nchar(sv) > 80) sv <- paste0(substr(sv, 1, 80), "...")
+        cols <- c(cols, nm)
+        types <- c(types, tp)
+        samples <- c(samples, sv)
       }
     }
-    # Suppress if no columns were found (likely a different kind of error)
     if (length(cols) == 0) return(NULL)
-    list(unknown = unknown_name, available_columns = unique(cols))
+    list(
+      unknown_names = unknown_names,
+      available_columns = cols,
+      column_types = types,
+      column_samples = samples
+    )
   }
 
   # ── Delimiter-mismatch detector ───────────────────────────────────────────
@@ -1980,6 +2007,9 @@ run_tsifl_server <- function(port = 7444) {
 
       # Capture locals so the deferred callback can access them
       local_msg <- msg
+      # Per-turn guard so the unknown-column auto-fix only fires once.
+      # Without this, a stubborn model could loop on the same bad guess.
+      .tsifl_did_column_retry <- FALSE
       local_wants_excel <- grepl("excel|export", msg, ignore.case = TRUE)
 
       # Wait for Shiny to flush UI updates, THEN start the blocking HTTP call
@@ -2303,35 +2333,59 @@ run_tsifl_server <- function(port = 7444) {
                 # ── Self-heal: unknown column ──────────────────────────
                 # Model wrote code referencing a column that doesn't exist
                 # (most common when data has weird names like `Team&Contract`
-                # or `Revenue (USD)`). Extract the real columns from glimpse
-                # output and ask Claude to retry with the right name.
+                # or `Revenue (USD)`). Or the model tried several near-
+                # synonyms (Club, Team, Club Name) and missed all of them.
+                # Fix: send Claude the actual columns + SAMPLE values so it
+                # can match the user's intent by what's IN the column, not
+                # by what the name sounds like.
                 unknown_col <- .tsifl_detect_unknown_column(r_output)
-                if (!is.null(unknown_col)) {
+                # Guard: only retry once per turn — if we keep guessing,
+                # surface to the user instead of looping.
+                if (!is.null(unknown_col) && !isTRUE(.tsifl_did_column_retry)) {
+                  .tsifl_did_column_retry <- TRUE
+                  guessed <- paste(paste0("`", unknown_col$unknown_names, "`"),
+                                   collapse = ", ")
                   add_message(
                     "action",
-                    paste0("Detected unknown column `", unknown_col$unknown,
-                           "` — asking tsifl to retry with the real column names.")
+                    paste0("Detected unknown column(s) ", guessed,
+                           " — sending tsifl the real columns + sample values.")
                   )
-                  # Cap columns list for the prompt (some datasets have 100+)
-                  shown_cols <- utils::head(unknown_col$available_columns, 50)
-                  cols_str <- paste(paste0("`", shown_cols, "`"), collapse = ", ")
-                  if (length(unknown_col$available_columns) > 50) {
-                    cols_str <- paste0(cols_str, "  (… plus ",
-                                       length(unknown_col$available_columns) - 50,
-                                       " more)")
+                  # Build column-with-sample lines. The samples are what
+                  # make the difference: 'Team&Contract <chr> "FCBarcelona..."'
+                  # tells the model where the team/club data actually lives.
+                  n_show <- min(length(unknown_col$available_columns), 50)
+                  col_lines <- character(n_show)
+                  for (i in seq_len(n_show)) {
+                    col_lines[i] <- paste0(
+                      "  `", unknown_col$available_columns[i], "` <",
+                      unknown_col$column_types[i], "> ",
+                      unknown_col$column_samples[i]
+                    )
                   }
+                  more_note <- if (length(unknown_col$available_columns) > n_show) {
+                    paste0("  (… plus ",
+                           length(unknown_col$available_columns) - n_show,
+                           " more columns not shown)\n")
+                  } else ""
                   retry_msg <- paste0(
                     "[UNKNOWN COLUMN DETECTED]\n",
-                    "The previous code referenced column `", unknown_col$unknown,
-                    "` but no such column exists in the loaded data.\n\n",
-                    "The ACTUAL columns are: ", cols_str, "\n\n",
-                    "Re-emit a SINGLE run_r_code that does ONLY the analysis ",
-                    "using the correct column name(s) from the list above. ",
-                    "Do NOT re-read the file. Do NOT re-explain the issue. ",
-                    "Use exact column names (backtick-quote any with spaces or ",
-                    "special characters, e.g. \\`Team&Contract\\`). If the user's ",
-                    "intent maps to multiple candidate columns, pick the most ",
-                    "obvious one.\n\n",
+                    "The previous code tried to reference: ", guessed,
+                    ".\nNONE of those columns exist in the loaded data.\n\n",
+                    "Here are the ACTUAL columns with sample values — ",
+                    "DO NOT match by name alone (the user's word may not ",
+                    "match the column name). Match by VALUE: look at what's ",
+                    "INSIDE each column and pick the one that contains the ",
+                    "kind of data the user is querying for.\n\n",
+                    paste(col_lines, collapse = "\n"), "\n", more_note, "\n",
+                    "Example: the user said 'PAOK' (a football club). Skim ",
+                    "the <chr> columns above for values like 'FCBarcelona', ",
+                    "'Juventus', etc. — that's the column you want.\n\n",
+                    "Re-emit a SINGLE run_r_code with the analysis using the ",
+                    "RIGHT column name. Backtick-quote names with special ",
+                    "characters. Do NOT re-read the file (data is loaded). ",
+                    "Do NOT guess more column names — if no column visibly ",
+                    "contains the values you need, REPLY WITH TEXT asking ",
+                    "the user which column they mean.\n\n",
                     "Original user request: \"", local_msg, "\"\n"
                   )
                   retry_body <- list(
