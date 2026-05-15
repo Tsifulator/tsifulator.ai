@@ -2010,6 +2010,31 @@ run_tsifl_server <- function(port = 7444) {
       # Per-turn guard so the unknown-column auto-fix only fires once.
       # Without this, a stubborn model could loop on the same bad guess.
       .tsifl_did_column_retry <- FALSE
+
+      # ── Per-turn API-call cap ──────────────────────────────────────────
+      # Auto-fix retries + the interpretation phase each cost an API call.
+      # Without a ceiling, a failing prompt could quietly burn 4-5×
+      # credits while the user watches. Default: 2 extra calls on top of
+      # the initial — so worst case is 3 API calls per user message.
+      # Override at the R console: options(tsifulator.max_extra_rounds = N)
+      .tsifl_extra_rounds <- 0
+      .tsifl_max_extra <- as.integer(getOption("tsifulator.max_extra_rounds", 2))
+      # Gate any optional retry/interpretation through this. Returns TRUE
+      # if there's budget left and increments the counter; FALSE means we
+      # surface a clear message and skip the call.
+      .tsifl_can_spend_round <- function(label = "retry") {
+        if (.tsifl_extra_rounds >= .tsifl_max_extra) {
+          add_message("action", paste0(
+            "💵 Hit per-turn round cap (", .tsifl_max_extra,
+            " auto-fixes + interpretation already used) — stopping to ",
+            "save credits. If you want more rounds: ",
+            "options(tsifulator.max_extra_rounds = ", .tsifl_max_extra + 2, ")"
+          ))
+          return(FALSE)
+        }
+        .tsifl_extra_rounds <<- .tsifl_extra_rounds + 1
+        TRUE
+      }
       local_wants_excel <- grepl("excel|export", msg, ignore.case = TRUE)
 
       # Wait for Shiny to flush UI updates, THEN start the blocking HTTP call
@@ -2254,6 +2279,10 @@ run_tsifl_server <- function(port = 7444) {
                         message = retry_msg,
                         context = list(app = "rstudio")
                       )
+                      if (!.tsifl_can_spend_round("delimiter retry")) {
+                        # Out of budget — skip this retry entirely
+                        retry_resp <- NULL
+                      } else {
                       set_status("retrying")
                       retry_resp <- tryCatch({
                         httr2::request(BACKEND_URL) |>
@@ -2269,6 +2298,7 @@ run_tsifl_server <- function(port = 7444) {
                                            }) |>
                           httr2::req_perform()
                       }, error = function(e) NULL)
+                      }  # end of .tsifl_can_spend_round gate (delimiter retry)
 
                       if (!is.null(retry_resp)) {
                         retry_data <- tryCatch(
@@ -2393,6 +2423,9 @@ run_tsifl_server <- function(port = 7444) {
                     message = retry_msg,
                     context = list(app = "rstudio")
                   )
+                  if (!.tsifl_can_spend_round("unknown-column retry")) {
+                    retry_resp <- NULL
+                  } else {
                   set_status("retrying")
                   retry_resp <- tryCatch({
                     httr2::request(BACKEND_URL) |>
@@ -2404,6 +2437,7 @@ run_tsifl_server <- function(port = 7444) {
                       .tsifl_req_retry() |>
                       httr2::req_perform()
                   }, error = function(e) NULL)
+                  }  # end of .tsifl_can_spend_round gate (unknown-column retry)
                   if (!is.null(retry_resp)) {
                     retry_data <- tryCatch(
                       httr2::resp_body_json(retry_resp, simplifyVector = FALSE),
@@ -2479,6 +2513,14 @@ run_tsifl_server <- function(port = 7444) {
                   context = list(app = "rstudio")
                 )
 
+                # Gate the interpretation phase by the per-turn budget.
+                # If we've already burned our extra rounds on retries, skip
+                # the natural-language summary — the user still has the
+                # code in their editor and the plot in the panel, so it's
+                # not a black hole. Just no chat-side interpretation.
+                if (!.tsifl_can_spend_round("interpretation")) {
+                  followup_data <- NULL
+                } else {
                 set_status("interpreting")
                 followup_resp <- httr2::request(BACKEND_URL) |>
                   httr2::req_url_path_append("chat", "") |>
@@ -2490,7 +2532,8 @@ run_tsifl_server <- function(port = 7444) {
                   httr2::req_perform()
 
                 followup_data <- httr2::resp_body_json(followup_resp, simplifyVector = FALSE)
-                if (!is.null(followup_data$reply) && nchar(followup_data$reply) > 5) {
+                }
+                if (!is.null(followup_data) && !is.null(followup_data$reply) && nchar(followup_data$reply) > 5) {
                   # Attach plot preview if the listener saved one
                   plot_attachment <- NULL
                   tryCatch({
