@@ -38,6 +38,56 @@ run_tsifl_server <- function(port = 7444) {
     "dev-user-001"
   }
 
+  # ── Missing-function detector ─────────────────────────────────────────────
+  # Catches the #2 R add-in bug: code uses a function from a non-base
+  # package (glimpse, ggplot, plot_ly, etc.) without loading the package.
+  # We map the function name to its package, run a deterministic library()
+  # load, then ask Claude to re-emit the analysis.
+  .tsifl_function_to_package <- c(
+    # dplyr / tibble
+    glimpse = "dplyr",         mutate = "dplyr",          filter = "dplyr",
+    select = "dplyr",          arrange = "dplyr",         summarise = "dplyr",
+    summarize = "dplyr",       group_by = "dplyr",        ungroup = "dplyr",
+    left_join = "dplyr",       inner_join = "dplyr",      full_join = "dplyr",
+    bind_rows = "dplyr",       bind_cols = "dplyr",       distinct = "dplyr",
+    slice = "dplyr",           tibble = "tibble",         as_tibble = "tibble",
+    # readr
+    read_csv = "readr",        read_csv2 = "readr",       read_delim = "readr",
+    read_tsv = "readr",        write_csv = "readr",       write_tsv = "readr",
+    # tidyr
+    pivot_longer = "tidyr",    pivot_wider = "tidyr",     separate = "tidyr",
+    unite = "tidyr",           drop_na = "tidyr",         replace_na = "tidyr",
+    # ggplot2
+    ggplot = "ggplot2",        geom_point = "ggplot2",    geom_line = "ggplot2",
+    geom_bar = "ggplot2",      geom_col = "ggplot2",      geom_boxplot = "ggplot2",
+    geom_histogram = "ggplot2", geom_smooth = "ggplot2",  aes = "ggplot2",
+    facet_wrap = "ggplot2",    theme_minimal = "ggplot2", labs = "ggplot2",
+    scale_color_manual = "ggplot2", scale_fill_manual = "ggplot2",
+    # plotly
+    plot_ly = "plotly",        ggplotly = "plotly",       layout = "plotly",
+    add_trace = "plotly",      add_markers = "plotly",
+    # other common
+    leaflet = "leaflet",       datatable = "DT",          ymd = "lubridate",
+    mdy = "lubridate",         dmy = "lubridate",         hms = "lubridate",
+    fread = "data.table",      data.table = "data.table"
+  )
+
+  .tsifl_detect_missing_function <- function(r_output) {
+    if (!nzchar(r_output)) return(NULL)
+    m <- regmatches(
+      r_output,
+      regexec("could not find function [\"']([^\"']+)[\"']",
+              r_output, perl = TRUE)
+    )[[1]]
+    if (length(m) < 2) return(NULL)
+    fn_name <- m[2]
+    pkg <- .tsifl_function_to_package[fn_name]
+    if (is.na(pkg) || !nzchar(pkg)) {
+      return(list(fn = fn_name, package = NA_character_))
+    }
+    list(fn = fn_name, package = unname(pkg))
+  }
+
   # ── Delimiter-mismatch detector ───────────────────────────────────────────
   # Catches the #1 R add-in bug: user loaded a semicolon/tab-delimited CSV
   # with read_csv (default comma), so everything ends up in a single column
@@ -2016,6 +2066,41 @@ run_tsifl_server <- function(port = 7444) {
                 # path from the previous code, re-load with read_delim()
                 # locally, then ask the model to re-run the original
                 # ANALYSIS on the now-correct data frame.
+                # ── Self-heal: missing library ─────────────────────────
+                # Auto-load the package and re-run, without bothering Claude.
+                missing_fn <- .tsifl_detect_missing_function(r_output)
+                if (!is.null(missing_fn) && !is.na(missing_fn$package)) {
+                  add_message(
+                    "action",
+                    paste0("Loading missing package `", missing_fn$package,
+                           "` (needed for `", missing_fn$fn, "()`) and retrying.")
+                  )
+                  fix_code <- paste0(
+                    '# tsifl auto-fix: load missing package + retry analysis\n',
+                    'suppressMessages(library(', missing_fn$package, '))\n',
+                    '# Re-run the previous analysis\n',
+                    r_codes, '\n'
+                  )
+                  fix_pending <- tsifulator:::.tsifl_tmp("pending_code.R")
+                  fix_done <- tsifulator:::.tsifl_tmp("done.marker")
+                  try(unlink(fix_done), silent = TRUE)
+                  try(writeLines(fix_code, fix_pending), silent = TRUE)
+                  for (.fx in 1:32) {
+                    Sys.sleep(0.25)
+                    if (file.exists(fix_done)) break
+                  }
+                  Sys.sleep(0.5)
+                  r_output <- tryCatch(
+                    paste(readLines(tsifulator:::.tsifl_tmp("last_output.txt"),
+                                    warn = FALSE), collapse = "\n"),
+                    error = function(e) r_output
+                  )
+                  r_codes <- paste0(
+                    r_codes, "\n\n# --- auto-fix: loaded ", missing_fn$package,
+                    " ---\n", fix_code
+                  )
+                }
+
                 delim_bug <- .tsifl_detect_delimiter_bug(r_output, r_codes)
                 if (!is.null(delim_bug)) {
                   # Pull the file path the user-supplied code used. Look for

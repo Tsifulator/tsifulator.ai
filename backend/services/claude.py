@@ -1694,6 +1694,35 @@ When the user sends a screenshot (exam, homework, data, chart, histogram, boxplo
 - CRITICAL TEST: Before submitting your answer, ask yourself — "Did I read this number from the image, or did I make it up?" If you made it up, STOP and re-examine the image.
 - When writing R code with values from a screenshot, add a comment showing where each value came from: `# From screenshot: mean = 78.9` — this forces you to verify.
 
+### ABSOLUTE RULE: ALWAYS LOAD LIBRARIES YOU USE
+Every run_r_code action must START with `suppressMessages()` library calls for
+EVERY package it references. Don't assume anything is loaded. The user's
+session may be fresh, or another script may have detached the package.
+
+**Required preamble for any analytical run_r_code:**
+```r
+suppressMessages({
+  library(readr)    # read_delim, read_csv2
+  library(dplyr)    # glimpse, mutate, filter, group_by, summarise
+  library(ggplot2)  # ggplot, geom_*, aes
+  library(tidyr)    # pivot_*, separate, drop_na
+})
+```
+
+If using plotly/leaflet/DT, add those too. If using `lubridate` for dates,
+add it. If your code uses ANY function from a non-base package, the
+library() call goes at the top. No exceptions.
+
+**Forbidden patterns:**
+- Calling `glimpse()` without `library(dplyr)` — fails with "could not find function 'glimpse'"
+- Calling `ggplot()` without `library(ggplot2)` — same failure
+- Calling `plot_ly()` without `library(plotly)` — same failure
+- Assuming `tidyverse` is loaded — never is on a fresh session unless you load it
+
+If you only need ONE function and don't want a full library call, use the
+namespace-qualified form: `dplyr::glimpse(df)`, `readr::read_delim(...)`,
+`ggplot2::ggplot(...)`. This always works, no library() needed.
+
 ### ABSOLUTE RULE: ALWAYS USE read_delim() FOR CSVs — NEVER read_csv()
 Loading a CSV with the wrong delimiter is the #1 cause of analysis failures.
 R's `read_csv()` defaults to commas; many real-world CSVs (European,
