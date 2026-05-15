@@ -88,6 +88,44 @@ run_tsifl_server <- function(port = 7444) {
     list(fn = fn_name, package = unname(pkg))
   }
 
+  # ── Unknown-column detector ───────────────────────────────────────────────
+  # Catches the #3 R add-in bug: data loaded fine, but the model emitted
+  # code referencing a column name that doesn't exist (e.g. `Club` when
+  # the actual column is `Team&Contract`, or `revenue` when it's
+  # `Revenue (USD)`). Distinguished from the delimiter bug by checking
+  # that the data loaded with MULTIPLE columns — if it's just 1 col,
+  # the delimiter detector handles it.
+  .tsifl_detect_unknown_column <- function(r_output) {
+    if (!nzchar(r_output)) return(NULL)
+    m <- regmatches(
+      r_output,
+      regexec("object [\"']([^\"']+)[\"'] not found", r_output, perl = TRUE)
+    )[[1]]
+    if (length(m) < 2) return(NULL)
+    unknown_name <- m[2]
+    # If glimpse output is present, extract the actual column names so we
+    # can offer them to Claude instead of asking the model to guess again.
+    cols <- character(0)
+    # Match `$ <colname> <type>` lines from glimpse() output.
+    # Handle both `$ name <type>` and `$ \`name with spaces\` <type>`.
+    col_lines <- regmatches(
+      r_output,
+      gregexpr("\\$\\s*`?[^`\\n<]+`?\\s*<[a-zA-Z]+>",
+               r_output, perl = TRUE)
+    )[[1]]
+    if (length(col_lines) > 0) {
+      for (cl in col_lines) {
+        nm <- sub("^\\$\\s*`?", "", cl)
+        nm <- sub("`?\\s*<[a-zA-Z]+>\\s*$", "", nm)
+        nm <- trimws(nm)
+        if (nzchar(nm)) cols <- c(cols, nm)
+      }
+    }
+    # Suppress if no columns were found (likely a different kind of error)
+    if (length(cols) == 0) return(NULL)
+    list(unknown = unknown_name, available_columns = unique(cols))
+  }
+
   # ── Delimiter-mismatch detector ───────────────────────────────────────────
   # Catches the #1 R add-in bug: user loaded a semicolon/tab-delimited CSV
   # with read_csv (default comma), so everything ends up in a single column
@@ -2259,6 +2297,103 @@ run_tsifl_server <- function(port = 7444) {
                       "action",
                       "Detected delimiter mismatch but couldn't find the file path in the previous code — please paste the path explicitly."
                     )
+                  }
+                }
+
+                # ── Self-heal: unknown column ──────────────────────────
+                # Model wrote code referencing a column that doesn't exist
+                # (most common when data has weird names like `Team&Contract`
+                # or `Revenue (USD)`). Extract the real columns from glimpse
+                # output and ask Claude to retry with the right name.
+                unknown_col <- .tsifl_detect_unknown_column(r_output)
+                if (!is.null(unknown_col)) {
+                  add_message(
+                    "action",
+                    paste0("Detected unknown column `", unknown_col$unknown,
+                           "` — asking tsifl to retry with the real column names.")
+                  )
+                  # Cap columns list for the prompt (some datasets have 100+)
+                  shown_cols <- utils::head(unknown_col$available_columns, 50)
+                  cols_str <- paste(paste0("`", shown_cols, "`"), collapse = ", ")
+                  if (length(unknown_col$available_columns) > 50) {
+                    cols_str <- paste0(cols_str, "  (… plus ",
+                                       length(unknown_col$available_columns) - 50,
+                                       " more)")
+                  }
+                  retry_msg <- paste0(
+                    "[UNKNOWN COLUMN DETECTED]\n",
+                    "The previous code referenced column `", unknown_col$unknown,
+                    "` but no such column exists in the loaded data.\n\n",
+                    "The ACTUAL columns are: ", cols_str, "\n\n",
+                    "Re-emit a SINGLE run_r_code that does ONLY the analysis ",
+                    "using the correct column name(s) from the list above. ",
+                    "Do NOT re-read the file. Do NOT re-explain the issue. ",
+                    "Use exact column names (backtick-quote any with spaces or ",
+                    "special characters, e.g. \\`Team&Contract\\`). If the user's ",
+                    "intent maps to multiple candidate columns, pick the most ",
+                    "obvious one.\n\n",
+                    "Original user request: \"", local_msg, "\"\n"
+                  )
+                  retry_body <- list(
+                    user_id = USER_ID,
+                    message = retry_msg,
+                    context = list(app = "rstudio")
+                  )
+                  set_status("retrying")
+                  retry_resp <- tryCatch({
+                    httr2::request(BACKEND_URL) |>
+                      httr2::req_url_path_append("chat", "") |>
+                      httr2::req_headers(!!!.tsifl_headers()) |>
+                      httr2::req_body_json(retry_body) |>
+                      httr2::req_options(ssl_verifypeer = 0) |>
+                      httr2::req_timeout(60) |>
+                      .tsifl_req_retry() |>
+                      httr2::req_perform()
+                  }, error = function(e) NULL)
+                  if (!is.null(retry_resp)) {
+                    retry_data <- tryCatch(
+                      httr2::resp_body_json(retry_resp, simplifyVector = FALSE),
+                      error = function(e) NULL
+                    )
+                    if (!is.null(retry_data)) {
+                      retry_actions <- list()
+                      if (!is.null(retry_data$actions) && length(retry_data$actions) > 0) {
+                        for (a in retry_data$actions) {
+                          if (is.list(a) && !is.null(a$type)) {
+                            retry_actions <- c(retry_actions, list(a))
+                          }
+                        }
+                      }
+                      if (length(retry_actions) == 0 &&
+                          !is.null(retry_data$action) && is.list(retry_data$action) &&
+                          !is.null(retry_data$action$type) &&
+                          !identical(retry_data$action$type, "none")) {
+                        retry_actions <- list(retry_data$action)
+                      }
+                      if (!is.null(retry_data$reply) && nchar(trimws(retry_data$reply)) > 0) {
+                        add_message("assistant", retry_data$reply)
+                      }
+                      for (action in retry_actions) {
+                        tryCatch({
+                          execute_r_action(action, add_message, r_context,
+                                           user_wants_excel = local_wants_excel)
+                        }, error = function(e) {
+                          add_message("action", paste0("Retry error: ", e$message))
+                        })
+                      }
+                      Sys.sleep(4)
+                      r_output <- tryCatch(
+                        paste(readLines(tsifulator:::.tsifl_tmp("last_output.txt"),
+                                        warn = FALSE), collapse = "\n"),
+                        error = function(e) r_output
+                      )
+                      r_codes <- paste0(
+                        r_codes, "\n\n# --- retry with correct column name ---\n",
+                        paste(sapply(retry_actions, function(a) {
+                          if (identical(a$type, "run_r_code")) a$payload$code else ""
+                        }), collapse = "\n")
+                      )
+                    }
                   }
                 }
 
