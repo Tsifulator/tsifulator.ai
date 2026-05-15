@@ -2543,8 +2543,53 @@ run_tsifl_server <- function(port = 7444) {
             }, error = function(x) {})
           }
           cat("[tsifl] Backend error:", detail, "\n")
-          add_message("assistant",
-            paste0("Could not reach backend.\n", detail))
+          # Translate common backend / API errors into actionable messages
+          # so the user knows what to do, not just what broke.
+          friendly <- (function(d) {
+            d_low <- tolower(d)
+            if (grepl("credit balance is too low|insufficient.*credit|insufficient.*quota", d_low)) {
+              user_has_key <- !is.na(get_api_key())
+              if (user_has_key) {
+                return(paste0(
+                  "Your Anthropic API key has no credits left.\n",
+                  "Top up at https://console.anthropic.com/settings/billing and try again.\n",
+                  "(Your key is configured — once it has credits, tsifl will just work.)"
+                ))
+              }
+              return(paste0(
+                "⚠ tsifl needs YOUR Anthropic API key to work.\n\n",
+                "tsifl is bring-your-own-key — every chat uses your account, not ours.\n",
+                "Right now you don't have a key set, so requests are bouncing.\n\n",
+                "Two steps to fix (takes 60 seconds):\n",
+                "  1. Get a key at https://console.anthropic.com/settings/keys\n",
+                "  2. In your R console run:  tsifulator::set_api_key()\n",
+                "     (paste the key when it asks)\n\n",
+                "After that, hit send again."
+              ))
+            }
+            if (grepl("rate.*limit|too many requests|429", d_low)) {
+              return(paste0(
+                "Anthropic is rate-limiting your key. Wait ~30 seconds and try again.\n",
+                "Original: ", substr(d, 1, 200)
+              ))
+            }
+            if (grepl("invalid.*api.*key|authentication", d_low)) {
+              return(paste0(
+                "Your Anthropic API key is invalid or revoked.\n",
+                "Re-set it with:  tsifulator::set_api_key()"
+              ))
+            }
+            if (grepl("502|503|504|application failed to respond|timed out", d_low)) {
+              return(paste0(
+                "Backend is restarting or briefly unavailable. Try again in 30 seconds.\n",
+                "If it keeps failing, check https://focused-solace-production-6839.up.railway.app/health"
+              ))
+            }
+            # Fallback: surface the original but trim it
+            paste0("Could not reach backend.\n",
+                   if (nchar(d) > 400) paste0(substr(d, 1, 400), " …") else d)
+          })(detail)
+          add_message("assistant", friendly)
           set_status("error", "Disconnected")
         })
         }, delay = 0.05)
