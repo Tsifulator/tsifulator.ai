@@ -90,6 +90,28 @@
             TRUE
           }, error = function(e) FALSE)
 
+          # Auto-load the common analysis packages BEFORE running user code.
+          # Eliminates the entire "could not find function 'glimpse'" class
+          # of failures regardless of what code the model emits. Each
+          # library() is wrapped so a missing package doesn't abort —
+          # users without one of these installed just don't get it loaded.
+          # Suppressed messages so the load chatter doesn't clutter output.
+          .tsifl_autoload <- c(
+            "dplyr", "tidyr", "readr", "tibble",
+            "ggplot2", "scales", "lubridate",
+            "plotly", "DT"
+          )
+          suppressMessages(suppressWarnings({
+            for (.pkg in .tsifl_autoload) {
+              tryCatch(
+                requireNamespace(.pkg, quietly = TRUE) &&
+                  base::library(.pkg, character.only = TRUE,
+                                quietly = TRUE, warn.conflicts = FALSE),
+                error = function(e) NULL
+              )
+            }
+          }))
+
           # Detect plot-producing code and open a png device around execution
           plot_keywords <- c("plot(", "ggplot(", "boxplot(", "hist(",
                              "barplot(", "geom_", "abline(", "curve(",
