@@ -2166,19 +2166,36 @@ run_tsifl_server <- function(port = 7444) {
         later::later(function() {
 
         tryCatch({
-          resp <- httr2::request(BACKEND_URL) |>
-            httr2::req_url_path_append("chat", "") |>
-            httr2::req_headers(!!!.tsifl_headers()) |>
-            httr2::req_body_json(body) |>
-            httr2::req_options(ssl_verifypeer = 0) |>
-            # 180s — allows room for the server-side retry loop (up to 2
-            # extra API calls at ~20-30s each) without dropping the client.
-            httr2::req_timeout(180) |>
-            .tsifl_req_retry() |>
-            httr2::req_perform()
+          # Dev mode: route to local Ollama instead of the hosted backend
+          # if options(tsifulator.brain = "ollama") is set. Zero API
+          # credits burned. Skips the retry chain + interpretation phase
+          # since those are designed for the hosted Anthropic path.
+          if (tsifulator:::.tsifl_using_ollama()) {
+            set_status("generating")
+            add_message("action",
+              paste0("🟢 Using local Ollama (",
+                     getOption("tsifulator.ollama_model", "llama3.1:8b"),
+                     ") — no credits."))
+            data <- tsifulator:::.tsifl_call_ollama(
+              user_msg = local_msg,
+              r_context = r_context,
+              images = if (length(images) > 0) images else list()
+            )
+          } else {
+            resp <- httr2::request(BACKEND_URL) |>
+              httr2::req_url_path_append("chat", "") |>
+              httr2::req_headers(!!!.tsifl_headers()) |>
+              httr2::req_body_json(body) |>
+              httr2::req_options(ssl_verifypeer = 0) |>
+              # 180s — allows room for the server-side retry loop (up to 2
+              # extra API calls at ~20-30s each) without dropping the client.
+              httr2::req_timeout(180) |>
+              .tsifl_req_retry() |>
+              httr2::req_perform()
 
-          set_status("generating")
-          data <- httr2::resp_body_json(resp, simplifyVector = FALSE)
+            set_status("generating")
+            data <- httr2::resp_body_json(resp, simplifyVector = FALSE)
+          }
           has_reply   <- !is.null(data$reply) && nchar(trimws(data$reply)) > 0
           # Peek at actions presence without full parsing (detailed extraction below)
           has_actions <- (!is.null(data$actions) && length(data$actions) > 0) ||
@@ -2253,7 +2270,12 @@ run_tsifl_server <- function(port = 7444) {
           # Threshold lowered from 50 → 5 chars: even tiny outputs like a single
           # coefficient ("0.7611") deserve a chat-side summary so the user isn't
           # forced to read the R console to find the answer.
-          if (r_code_executed) {
+          # Skip the entire post-execution analysis pipeline on Ollama
+          # dev mode — those phases (delimiter detector, missing-library
+          # auto-fix, unknown-column retry, Phase 2 interpretation) are
+          # designed for the hosted Anthropic flow. On Ollama you just
+          # want the code to run; if it errors, you re-prompt manually.
+          if (r_code_executed && !tsifulator:::.tsifl_using_ollama()) {
             tryCatch({
               # Poll the done marker rather than a fixed sleep. Some code
               # (large plotly saveWidget, big joins, web fetches) takes

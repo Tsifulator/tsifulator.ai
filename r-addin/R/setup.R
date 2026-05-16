@@ -703,9 +703,24 @@ status <- function() {
                   if (port_in_use) "yes" else "no"))
   message(sprintf("  Backend reachable:     %s",
                   if (backend_ok) sprintf("yes (%s)", backend_url) else "no"))
+  # Ollama dev mode status
+  ollama_on <- tryCatch(.tsifl_using_ollama(), error = function(e) FALSE)
+  ollama_avail <- tryCatch(.tsifl_ollama_available(), error = function(e) FALSE)
+  ollama_model <- getOption("tsifulator.ollama_model", "llama3.1:8b")
+
   api_key_set <- !is.na(get_api_key())
   message(sprintf("  Anthropic API key:     %s",
                   if (api_key_set) "configured (BYOK)" else "NOT SET — run set_api_key()"))
+  message(sprintf("  Brain (LLM source):    %s",
+                  if (ollama_on) {
+                    sprintf("Ollama dev mode — %s (%s)", ollama_model,
+                            if (ollama_avail) "server reachable" else "SERVER NOT REACHABLE")
+                  } else {
+                    "Anthropic (hosted backend)"
+                  }))
+  if (!ollama_on) {
+    message("                          tip: options(tsifulator.brain = \"ollama\") to use a local model for free dev testing")
+  }
   if (nzchar(stale_warning)) {
     message("")
     message(stale_warning)
