@@ -6,6 +6,47 @@
 #' @keywords internal
 run_tsifl_server <- function(port = 7444) {
 
+  # ── Crash logging (do this FIRST so anything below that crashes lands here)
+  # The Shiny background job dies silently when a reactive or observer
+  # throws — user sees the panel vanish with no clue why. Route every
+  # unhandled error to a file the user can share, and to the job's stderr
+  # so it shows up in the Background Jobs pane.
+  .tsifl_crash_log <- file.path(tempdir(), ".tsifl_crashes.log")
+  options(shiny.error = function() {
+    err <- tryCatch(geterrmessage(), error = function(e) "(unknown)")
+    tb <- tryCatch(
+      paste(capture.output(traceback(max.lines = 30)), collapse = "\n"),
+      error = function(e) "(no traceback)"
+    )
+    stamp <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+    msg <- paste0(
+      "\n──────────── tsifl crash @ ", stamp, " ────────────\n",
+      "Error: ", err, "\n",
+      "Traceback:\n", tb, "\n"
+    )
+    cat(msg, file = .tsifl_crash_log, append = TRUE)
+    cat(msg, file = stderr())
+    # Returning silently means the Shiny session sees a "blank" error in
+    # the UI but the SERVER keeps running. Without this, an observer
+    # error would propagate up and the whole background job would die.
+    invisible(NULL)
+  })
+  # Also catch the rare case where the server function itself errors
+  # outside any reactive context (e.g. during startup).
+  withCallingHandlers(
+    {
+      # Empty body — handlers attached below catch errors from subsequent
+      # statements in this function.
+    },
+    error = function(e) {
+      cat(sprintf(
+        "\n──────────── tsifl startup error @ %s ────────────\n%s\n",
+        format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+        conditionMessage(e)
+      ), file = .tsifl_crash_log, append = TRUE)
+    }
+  )
+
   # ── IPC Warmup ─────────────────────────────────────────────────────────────
   # When this background job starts, its rstudioapi IPC pipe to the main
   # RStudio IDE isn't registered until the first sendToConsole call. That
@@ -595,6 +636,36 @@ run_tsifl_server <- function(port = 7444) {
     #send_btn:hover { background: #0A4E94; }
     #send_btn:active { background: #083D7A; transform: scale(0.98); }
 
+    /* Code action bar — small chips under the input. Hidden until tsifl
+       has generated at least one block of R code. */
+    #code_actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 6px;
+      flex-wrap: wrap;
+    }
+    #code_actions button {
+      flex: 1 1 auto;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.2px;
+      color: #475569;
+      background: #F8FAFC;
+      border: 1px solid #E2E8F0;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.12s ease;
+      white-space: nowrap;
+    }
+    #code_actions button:hover {
+      color: #0F172A;
+      border-color: #94A3B8;
+      background: #FFFFFF;
+    }
+    #code_actions button:active { transform: scale(0.97); }
+
     #image_preview_bar {
       display: none;
       flex-wrap: wrap;
@@ -789,7 +860,22 @@ run_tsifl_server <- function(port = 7444) {
             onclick = "if(window._tsiflSend){window._tsiflSend();}",
             "Send")
         ),
-        shiny::div(id = "status_bar", class = "idle", shiny::HTML('<span class="status-dot"></span><span id="status_text"></span>'))
+        shiny::div(id = "status_bar", class = "idle", shiny::HTML('<span class="status-dot"></span><span id="status_text"></span>')),
+        # ── Code actions bar ───────────────────────────────────────────
+        # Hidden by default; reveals once tsifl generates any code in
+        # this session. Two actions on the last generated code:
+        #   - Append: drop it into the currently-active editor doc
+        #   - Rmd: wrap it in a knittable .Rmd and open in editor
+        shiny::div(id = "code_actions", style = "display:none;",
+          shiny::tags$button(id = "append_active_btn",
+            title = "Add the last generated code to the script you're editing",
+            onclick = "Shiny.setInputValue('code_action', 'append_active', {priority: 'event'});",
+            "Append to active script"),
+          shiny::tags$button(id = "convert_rmd_btn",
+            title = "Wrap the last generated code in a knittable .Rmd and open it",
+            onclick = "Shiny.setInputValue('code_action', 'convert_rmd', {priority: 'event'});",
+            "Convert to Rmd")
+        )
       )
     ),
 
@@ -1271,6 +1357,19 @@ run_tsifl_server <- function(port = 7444) {
         });
       });
 
+      // Reveal the code-action bar once tsifl has produced code in this
+      // session. msg.show === true means we have code to act on; false
+      // hides it (e.g. on session reset).
+      Shiny.addCustomMessageHandler('code_actions_visible', function(msg) {
+        var bar = document.getElementById('code_actions');
+        if (!bar) return;
+        bar.style.display = (msg && msg.show === true) ? 'flex' : 'none';
+        if (msg && msg.label) {
+          var btn = document.getElementById('append_active_btn');
+          if (btn) btn.title = msg.label;
+        }
+      });
+
       // ── Tab switching: Chat | Plot ─────────────────────────────────
       window.tsiflShowTab = function(name) {
         var chatTab    = document.getElementById('chat_tab');
@@ -1527,6 +1626,123 @@ run_tsifl_server <- function(port = 7444) {
     )
 
     selected_plot <- shiny::reactiveVal(NULL)
+
+    # ── Last generated code (for "Append to active" / "Convert to Rmd") ──
+    # Tracks the most recent R code tsifl produced. Updated inside
+    # execute_r_action whenever run_r_code fires. The "code_actions" bar
+    # below the chat input only shows once this has a value.
+    last_generated_code <- shiny::reactiveVal(NULL)
+
+    # When the user clicks one of the action buttons, this fires.
+    shiny::observeEvent(input$code_action, {
+      action <- as.character(input$code_action)
+      code <- shiny::isolate(last_generated_code())
+      if (is.null(code) || !nzchar(code)) {
+        add_message("action",
+          "No generated code to act on yet — ask tsifl for something first.")
+        return()
+      }
+
+      if (identical(action, "append_active")) {
+        # Reuse the same path the executor takes for target='active'.
+        # Write to a temp file then source a small rstudioapi insertText
+        # script in the MAIN R session via sendToConsole.
+        code_file <- tsifulator:::.tsifl_tmp("insert_code.R")
+        tryCatch(writeLines(code, code_file), error = function(e) NULL)
+        insert_script <- paste0(
+          'local({\n',
+          '  code <- paste(readLines("', code_file, '"), collapse = "\\n")\n',
+          '  tryCatch({\n',
+          '    ctx <- rstudioapi::getActiveDocumentContext()\n',
+          '    last_line <- length(ctx$contents)\n',
+          '    last_col  <- nchar(ctx$contents[last_line])\n',
+          '    rstudioapi::insertText(\n',
+          '      location = c(last_line, last_col + 1),\n',
+          '      text = paste0("\\n\\n# tsifl — Generated Code\\n", code, "\\n"),\n',
+          '      id = ctx$id\n',
+          '    )\n',
+          '  }, error = function(e) {\n',
+          '    rstudioapi::documentNew(\n',
+          '      text = paste0("# tsifl — Generated Code\\n\\n", code, "\\n"),\n',
+          '      type = "r"\n',
+          '    )\n',
+          '  })\n',
+          '})\n'
+        )
+        script_file <- tsifulator:::.tsifl_tmp("append_script.R")
+        tryCatch(writeLines(insert_script, script_file), error = function(e) NULL)
+        tryCatch(
+          rstudioapi::sendToConsole(
+            paste0('invisible(source("', script_file, '", local = TRUE))'),
+            execute = TRUE, echo = FALSE, focus = FALSE
+          ),
+          error = function(e) NULL
+        )
+        add_message("action",
+          "✅ Appended the last generated code to your active editor document.")
+        return()
+      }
+
+      if (identical(action, "convert_rmd")) {
+        # Wrap the code in a knittable .Rmd template + open it in RStudio.
+        # Lands in ~/Documents/tsifl-<timestamp>.Rmd by default; the user
+        # can save-as elsewhere from there.
+        ts <- format(Sys.time(), "%Y%m%d_%H%M%S")
+        out_path <- path.expand(file.path("~", "Documents",
+                                          paste0("tsifl-", ts, ".Rmd")))
+        rmd_body <- paste(
+          "---",
+          paste0("title: \"tsifl analysis ", format(Sys.time(), "%b %d %Y"), "\""),
+          "output:",
+          "  html_document:",
+          "    toc: true",
+          "    toc_float: true",
+          "    theme: flatly",
+          "    code_folding: show",
+          "---",
+          "",
+          "```{r setup, include=FALSE}",
+          "knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)",
+          "```",
+          "",
+          "## Generated by tsifl",
+          "",
+          "```{r analysis}",
+          code,
+          "```",
+          "",
+          sep = "\n"
+        )
+        # Make sure the parent dir exists (some users don't have Documents)
+        tryCatch(
+          dir.create(dirname(out_path), showWarnings = FALSE, recursive = TRUE),
+          error = function(e) NULL
+        )
+        ok <- tryCatch({
+          writeLines(rmd_body, out_path)
+          TRUE
+        }, error = function(e) FALSE)
+        if (!ok) {
+          add_message("action",
+            paste0("⚠️ Could not write ", out_path,
+                   " — check directory permissions."))
+          return()
+        }
+        # Open it in the editor via rstudioapi::navigateToFile (bridged
+        # through the main R session, same as our other editor commands).
+        nav_cmd <- paste0(
+          'try(rstudioapi::navigateToFile("', out_path, '"), silent = TRUE)'
+        )
+        tryCatch(
+          rstudioapi::sendToConsole(nav_cmd, execute = TRUE, echo = FALSE, focus = FALSE),
+          error = function(e) NULL
+        )
+        add_message("action",
+          paste0("✅ Wrote knittable Rmd: ", out_path,
+                 " — opened in your editor. Hit Knit to render."))
+        return()
+      }
+    }, ignoreInit = TRUE)
 
     # ── Pinned-plot state ─────────────────────────────────────────────────
     # User can pin a plot (📌 button on the chip) to mark it as "keep
@@ -2069,6 +2285,14 @@ run_tsifl_server <- function(port = 7444) {
 
 
     shiny::observeEvent(input$send_message, {
+      # Top-level guard: previously any uncaught error inside this
+      # observer would kill the background job (panel vanishes for the
+      # user with no clue why). The shiny.error handler at the top of
+      # run_tsifl_server() catches most reactive errors, but observers
+      # can still die in ways that disconnect the session. Belt &
+      # suspenders: wrap the whole body so the chat surfaces the error
+      # instead of going dark.
+      tryCatch({
       raw <- input$send_message
       if (is.null(raw) || nchar(raw) == 0) return()
 
@@ -2806,6 +3030,24 @@ run_tsifl_server <- function(port = 7444) {
         })
         }, delay = 0.05)
       }, once = TRUE)
+      }, error = function(e) {
+        # Outer guard: anything not caught by the inner deferred-callback
+        # tryCatch ends up here. Log + tell the user instead of letting
+        # the background job die silently.
+        stamp <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+        cat(sprintf(
+          "\n──────────── tsifl send_message observer crash @ %s ────────────\n%s\n",
+          stamp, conditionMessage(e)
+        ), file = .tsifl_crash_log, append = TRUE)
+        tryCatch({
+          add_message("assistant",
+            paste0("⚠️ Internal error caught — panel is still alive.\n",
+                   "Detail: ", conditionMessage(e), "\n",
+                   "Full traceback logged to ", .tsifl_crash_log,
+                   ".\nTry your prompt again — if it keeps failing share that file."))
+          set_status("error", "Recovered from crash")
+        }, error = function(e2) NULL)
+      })
     })
 
     # ── Action executor ──────────────────────────────────────────────────────
@@ -2815,6 +3057,17 @@ run_tsifl_server <- function(port = 7444) {
 
       if (type == "run_r_code") {
         code <- payload$code
+
+        # Remember this code as "the last generated code" so the action
+        # bar buttons (Append to active / Convert to Rmd) operate on it.
+        # Also reveal the bar if it was hidden.
+        if (!is.null(code) && nzchar(code)) {
+          tryCatch({
+            last_generated_code(code)
+            session$sendCustomMessage("code_actions_visible",
+                                     list(show = TRUE))
+          }, error = function(e) NULL)
+        }
 
         # target controls where the code VISIBLY lands in the editor.
         # Values:
