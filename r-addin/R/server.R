@@ -6,6 +6,23 @@
 #' @keywords internal
 run_tsifl_server <- function(port = 7444) {
 
+  # ── Disable cli progress bars BEFORE httr2 ever runs ─────────────────────
+  # httr2::req_perform() uses the cli package for progress reporting. In a
+  # Shiny session context, cli auto-delegates to `shiny::Progress$new()` —
+  # which only works inside a reactive domain. Our HTTP calls fire from
+  # later::later deferred callbacks, which run OUTSIDE the reactive domain,
+  # so shiny::Progress$new() errors with "Can only use Progress$new() inside
+  # a Shiny app" and that error bubbles up to the user as a "Could not
+  # reach backend" message. Suppressing cli's progress globally for this
+  # background-job session fixes it permanently.
+  options(
+    cli.progress_show_after = Inf,   # never reach the "show progress" delay
+    cli.progress_handlers = "cli",    # if anything ignores the above, force
+                                      # cli's own text handler (no shiny)
+    cli.progress_handlers_only = "cli"
+  )
+  Sys.setenv(CLI_NO_PROGRESS = "true")  # belt-and-suspenders for cli's own internal check
+
   # ── Crash logging (do this FIRST so anything below that crashes lands here)
   # The Shiny background job dies silently when a reactive or observer
   # throws — user sees the panel vanish with no clue why. Route every
