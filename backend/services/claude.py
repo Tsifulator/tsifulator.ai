@@ -213,18 +213,22 @@ def _select_model(message: str, context: dict, has_attachments: bool = False) ->
     msg = message.strip()
     app = context.get("app", "")
 
-    # Explicit override — used by the regression suite (--cheap) and by any
-    # path that wants a specific tier regardless of heuristics. Accepts:
+    # Explicit override — used by the regression suite (--cheap), the R
+    # add-in's brain picker (preferred_model), and any other caller that
+    # wants a specific tier regardless of heuristics. Accepts:
     #   "haiku" / "fast"       → MODEL_FAST
     #   "sonnet" / "standard"  → MODEL_STANDARD
     #   "opus" / "heavy"       → MODEL_HEAVY
     #   full model ID (e.g. "claude-sonnet-4-20250514") → used as-is
-    forced = (context or {}).get("force_model")
+    #   "ollama" / unknown    → falls through (R-side already routed it
+    #                           to the local server before reaching here)
+    forced = (context or {}).get("force_model") or (context or {}).get("preferred_model")
     if isinstance(forced, str) and forced.strip():
         key = forced.strip().lower()
-        if key in ("haiku", "fast"):     return MODEL_FAST
+        if key in ("haiku", "fast"):      return MODEL_FAST
         if key in ("sonnet", "standard"): return MODEL_STANDARD
-        if key in ("opus", "heavy"):     return MODEL_HEAVY
+        if key in ("opus", "heavy"):      return MODEL_HEAVY
+        if key == "ollama":               return MODEL_STANDARD  # safety net only
         # Treat anything else as a literal model ID — caller takes responsibility
         return forced.strip()
 
@@ -1785,45 +1789,17 @@ analysis on the bad parse.
 - `df %>% filter(revenue > 0)` without first confirming `revenue` exists in glimpse output
 - Any analysis code on a freshly-loaded file that doesn't START with read_delim + glimpse
 
-### ABSOLUTE RULE: USE THE OPEN EDITOR DOC WHEN THE USER REFERS TO "THIS DOC"
-The user is in RStudio. They have an editor document open. Its full content arrives in `open_editor.active_preview`, and its name (saved or unsaved-tab-like `Untitled120`) arrives in `open_editor.active_file`.
+### ABSOLUTE RULE: USE THE OPEN EDITOR DOC, NOT THE FILESYSTEM
+When the user refers to "this doc/file/script/code", or names an `Untitled<N>` tab — the source code is in the `ACTIVE EDITOR DOCUMENT` section at the top of this prompt. NEVER `list.files()` / `file.exists()` for unsaved tabs (Untitled120 etc.) — they have NO path on disk. If `ACTIVE EDITOR DOCUMENT` is empty, ASK the user which file rather than searching `~/Downloads`, `~/Desktop`, `~/Documents` blindly.
 
-When the user says any of:
-- "convert this document to Rmd"
-- "summarize this file"
-- "what does this script do"
-- "improve the code in front of me"
-- "Untitled<N>" / "Untitled<N>.R" (an unsaved RStudio tab name)
-- "the file I have open" / "this code" / "what's open"
-
-→ READ THE CODE FROM `open_editor.active_preview`. That IS the file. DO NOT search the filesystem with `list.files()` or `file.exists()` for it — unsaved RStudio tabs (Untitled120, Untitled121, etc.) have NO file path on disk; they only exist as buffered text in the IDE.
-
-The contents you need are already in your context. If `active_preview` is empty, then there's no doc open and you should ask. Don't go phantom-hunting for `Untitled120.csv` or similar — that file doesn't exist.
-
-**Right behavior for "convert Untitled120 to Rmd":**
-1. Take `open_editor.active_preview` as the source code
-2. Wrap it in an Rmd template (YAML header + ```{r}``` chunk(s))
-3. Write the .Rmd via run_r_code: `writeLines(rmd_body, "~/Documents/Untitled120-converted.Rmd")` then `rstudioapi::navigateToFile(...)`
-4. Your reply text summarizes what the code does AND mentions the new file
-
-**Wrong behavior:** searching `~/Downloads/`, `~/Desktop/`, `~/Documents/` for `Untitled120.csv`. Never do that for an Untitled tab.
-
-### FIRST THING: Check env_objects
-Before generating ANY R code, check the env_objects field in context. This tells you what data and variables the user has loaded. ALWAYS use the exact names from env_objects, not what the user typed.
+To convert the open doc to Rmd: take its content from the context block, wrap in YAML + ```{r}``` chunks, write via `writeLines()` to `~/Documents/<name>.Rmd`, then `rstudioapi::navigateToFile()`.
 
 ### ABSOLUTE RULE: NEVER GUESS COLUMN NAMES
-The most common analyst frustration: you write code referencing `Club` when the column is actually `Team&Contract`, or `Revenue` when it's `Revenue (USD)`. The user says "filter PAOK players" and you assume there's a clean `Club` column. There usually isn't.
+Every loaded data frame's columns are listed under `LOADED R OBJECTS` at the top of this prompt. Use those names VERBATIM — don't fix capitalization, don't shorten, don't invent. For names with special chars (space, `&`, `/`, parens), backtick-quote: `` df$`Team&Contract` ``.
 
-**Rules:**
-1. If `env_objects` lists a data frame with `col_names`, use ONE OF THOSE EXACT NAMES. Don't invent. Don't shorten. Don't fix capitalization. Use exactly what's listed.
-2. If the data was just loaded in THIS turn (no env_objects yet), your run_r_code MUST include `glimpse(df)` as its second line so you SEE the column names before referencing them.
-3. For columns with special characters (spaces, &, /, parentheses), wrap in backticks: df$`Team&Contract` or df %>% filter(`Revenue (USD)` > 0).
-4. If you say "let me fix X" in chat, your code MUST actually fix X. Don't say "let me fix Club to Team&Contract" then write `filter(Club == "PAOK")` anyway — that's a lie and the code will fail.
+If you say "let me fix Club → Team&Contract" then your code MUST use `Team&Contract`. Saying it and then writing `filter(Club == "PAOK")` is a lie that fails.
 
-**Forbidden patterns:**
-- `df %>% filter(Club == "X")` when env_objects shows no `Club` column
-- Saying "the club info is in `Team&Contract`" and then writing code that uses `Club`
-- Assuming any natural-language word ("club", "revenue", "score") is the exact column name
+If a df was loaded THIS turn (not yet in `LOADED R OBJECTS`), your run_r_code MUST `glimpse(df)` before referencing any column.
 
 ### ASK BEFORE PLACING SUBSTANTIVE CODE
 For non-trivial code (>5 lines, defines functions, or produces a multi-step analysis), the user's preference for *where the code lands* matters. Three options:
@@ -2125,6 +2101,24 @@ The ONLY acceptable uses of R code in your reply text are:
 For anything the user asked you to compute, analyze, or plot, emit an
 actual run_r_code tool call. Nothing else.
 
+**Especially common failure to AVOID — building Rmd files.**
+When the user asks "convert this to a consulting report" / "make an Rmd"
+/ "generate a writeup" / "render a knittable file":
+ - WRONG: paste the Rmd content into your reply as ```{r setup} ... ```
+   chunks, hoping the user copies it into a file. They won't. They asked
+   you to do it. Pasting Rmd content as chat text leaves the user with
+   nothing on disk and a wall of pseudo-code to scroll through.
+ - RIGHT: ONE run_r_code action that BUILDS the Rmd content as an R
+   string (using `paste0()` or a raw string `r"(...)"`), calls
+   `writeLines(content, "~/Documents/<name>.Rmd")`, then opens it with
+   `rstudioapi::navigateToFile(...)`. Your reply text is ONE sentence:
+   "Wrote ~/Documents/Temperature_Report.Rmd — open it and click Knit."
+
+This applies to ANY multi-line code task. The principle is simple:
+**code that should execute goes in the tool call, full stop**. If you
+catch yourself starting a ```r block in the reply, STOP and put it in a
+run_r_code action instead.
+
 ### NEVER NARRATE RESULTS OR DESCRIBE WHAT CODE WOULD DO — HARD RULE
 If you did NOT emit a run_r_code action this turn, you MUST NOT describe:
  - What a plot "shows" or "displays" (e.g. "the bar chart shows UAE at 81.2 kg")
@@ -2357,9 +2351,8 @@ When the user asks you to answer questions (especially homework/assignments):
 - NEVER generate code that only explores the data when the user wants answers. Go straight to the analysis.
 
 ### CRITICAL: Fuzzy Matching & Object Resolution
-The user's R environment objects are listed in context under "env_objects" with their names, classes, dimensions, and column names.
-- ALWAYS check env_objects to find the ACTUAL object names before generating code.
-- If the user mentions a name that DOESN'T exactly match any env_object, do FUZZY MATCHING:
+The user's R environment objects are listed at the top of this prompt under `LOADED R OBJECTS`.
+- If the user mentions a name that DOESN'T exactly match any loaded object, do FUZZY MATCHING:
   - Case-insensitive: "loandata" → match "LoanData" or "loanData"
   - Partial match: "loan" → could mean "loan_data" or "LoanData"
   - Typo tolerance: "hbs2" → probably means "hsb2"
@@ -2393,9 +2386,7 @@ The user's R environment objects are listed in context under "env_objects" with 
   3. Replace "DataName" with the actual dataset name the user mentioned. Use readr::read_csv() if readr is loaded.
   4. CRITICAL: After the auto-import block, IMMEDIATELY include the actual analysis/plot code IN THE SAME run_r_code action. NEVER generate import-only code. NEVER split import and analysis into separate steps. The user asked for a graph/analysis — deliver it in ONE code block that imports AND does the work. Example: if user says "boxplot of loandata", your SINGLE code block must: import loandata → then create the boxplot. No stopping after the import.
 - If the user references a dataset name that looks like it could be from a loaded package (e.g., "mtcars", "iris", "gifted"), try data(datasetname) first.
-- The "col_names" field in env_objects shows the first 10 column names — use these to understand what data the user has.
-- If the user says "the data I have open" or "my data", look at env_objects to find data.frames and tibbles.
-- If there's ONLY ONE data.frame/tibble in the environment, assume that's what the user means by "my data".
+- If there's ONLY ONE data.frame/tibble in `LOADED R OBJECTS`, assume that's what the user means by "my data" / "the data I have open".
 
 ### Package Loading Patterns
 When a package IS needed (not in loaded list):
@@ -3037,6 +3028,182 @@ DESKTOP_TOOLS = [
 # Only includes the sections relevant to the active app.
 # This saves ~12K tokens for Excel vs sending the full 17K prompt.
 
+def _build_rstudio_live_context(context: dict) -> str:
+    """Build a loud, structured context block for RStudio sessions.
+
+    This block sits at the TOP of the rstudio system prompt. It surfaces
+    everything the user can see in their IDE right now — the open editor
+    document, loaded R objects with columns + previews, loaded packages,
+    working directory, and any client-side intent hints. The goal is to
+    make the model READ THIS FIRST and stop hallucinating phantom files
+    or invented column names — those bugs were the #1 source of bad
+    responses, and they almost always trace back to the model not noticing
+    something that was technically in the context but buried.
+
+    Loud > clever. Lots of UPPER CASE, plain headings, code fences for
+    the editor content so the model treats it as source code rather than
+    prose to summarise.
+    """
+    if not isinstance(context, dict):
+        return ""
+
+    # ── Active editor doc ──────────────────────────────────────────────
+    open_editor = context.get("open_editor", {})
+    if isinstance(open_editor, list):
+        open_editor = open_editor[0] if open_editor and isinstance(open_editor[0], dict) else {}
+    if not isinstance(open_editor, dict):
+        open_editor = {}
+    active_file = open_editor.get("active_file") or ""
+    active_path = open_editor.get("active_file_path") or ""
+    active_preview = open_editor.get("active_preview") or ""
+
+    editor_block = ""
+    if active_preview:
+        # Truncate very long files but keep the front (where YAML / setup
+        # chunks live) and signal that we cut.
+        MAX_PREVIEW_CHARS = 12000
+        preview_lines = active_preview.splitlines()
+        if len(active_preview) > MAX_PREVIEW_CHARS:
+            truncated = active_preview[:MAX_PREVIEW_CHARS]
+            # Cut on a line boundary so the fence isn't mid-statement
+            cut = truncated.rfind("\n")
+            if cut > 0:
+                truncated = truncated[:cut]
+            preview_to_show = truncated + f"\n# ...(truncated; full doc is {len(preview_lines)} lines, {len(active_preview)} chars)"
+        else:
+            preview_to_show = active_preview
+
+        if not active_file:
+            active_file = "(Untitled tab)"
+        path_note = active_path if active_path else "UNSAVED TAB — no path on disk yet"
+        # Heuristic: detect language for the fence label
+        fence_lang = "r"
+        low_file = active_file.lower()
+        if low_file.endswith(".rmd") or low_file.endswith(".qmd"):
+            fence_lang = "markdown"
+        elif low_file.endswith(".py"):
+            fence_lang = "python"
+        elif low_file.endswith(".sql"):
+            fence_lang = "sql"
+
+        editor_block = (
+            "### ACTIVE EDITOR DOCUMENT\n"
+            f"Filename: `{active_file}`\n"
+            f"Path: {path_note}\n"
+            f"Lines: {len(preview_lines)}\n"
+            f"Full content (this IS the file — do NOT search disk for it):\n"
+            f"```{fence_lang}\n{preview_to_show}\n```\n"
+        )
+    else:
+        editor_block = (
+            "### ACTIVE EDITOR DOCUMENT\n"
+            "(no editor document open right now — if the user says \"this file\" or "
+            "\"this doc\", ask them to clarify rather than guess)\n"
+        )
+
+    # ── Loaded R objects ───────────────────────────────────────────────
+    env_objects = context.get("env_objects", []) or []
+    if not isinstance(env_objects, list):
+        env_objects = []
+    env_lines = []
+    for o in env_objects:
+        if not isinstance(o, dict):
+            continue
+        name = o.get("name") or "?"
+        cls = o.get("class") or "?"
+        dim = o.get("dim") or ""
+        col_names = (o.get("col_names") or "").strip()
+        preview = (o.get("preview") or "").strip()
+        line = f"- `{name}` ({cls})"
+        if dim:
+            line += f" [{dim}]"
+        if col_names:
+            # Cap column list per object so a 200-column df doesn't blow out the prompt
+            if len(col_names) > 400:
+                col_names = col_names[:400] + " …(more)"
+            line += f"\n    columns: {col_names}"
+        if preview:
+            if len(preview) > 200:
+                preview = preview[:200] + "…"
+            line += f"\n    preview: {preview}"
+        env_lines.append(line)
+
+    if env_lines:
+        env_block = "### LOADED R OBJECTS (.GlobalEnv)\n" + "\n".join(env_lines) + "\n"
+    else:
+        env_block = (
+            "### LOADED R OBJECTS (.GlobalEnv)\n"
+            "(nothing loaded — if the user references an existing object, they probably "
+            "need to load data first; ask which file or path)\n"
+        )
+
+    # ── Loaded packages ────────────────────────────────────────────────
+    loaded_pkgs = (context.get("loaded_pkgs") or "").strip()
+    pkgs_block = ""
+    if loaded_pkgs:
+        # Keep just the names (often comma-separated already)
+        pkgs_block = f"### LOADED PACKAGES\n{loaded_pkgs}\n"
+
+    # ── Working directory ──────────────────────────────────────────────
+    wd = (context.get("working_dir") or "").strip()
+    wd_block = f"### WORKING DIRECTORY\n{wd}\n" if wd else ""
+
+    # ── Per-message hints from the client preprocessor (Phase 2) ───────
+    # The R add-in inspects the user's message before sending and tags
+    # the context with intent hints — e.g. "refers_to_active_doc",
+    # "refers_to_env_data:mydf". When present, surface them prominently
+    # so the model doesn't have to re-derive intent from the raw message.
+    hints = context.get("_hints") or context.get("hints") or []
+    hint_block = ""
+    if isinstance(hints, dict):
+        # Allow dict-form too: {refers_to_active_doc: True, ...}
+        hint_items = []
+        for k, v in hints.items():
+            if v is True:
+                hint_items.append(str(k))
+            elif v not in (False, None, "", []):
+                hint_items.append(f"{k}: {v}")
+        hints = hint_items
+    if isinstance(hints, list) and hints:
+        hint_block = (
+            "### CLIENT INTENT HINTS (preprocessed from the user's message)\n"
+            + "\n".join(f"- {h}" for h in hints if h)
+            + "\nThese are STRONG signals about what the user is referring to. "
+            "Honor them before second-guessing.\n"
+        )
+
+    body = "\n".join([b for b in (editor_block, env_block, pkgs_block, wd_block, hint_block) if b])
+    return (
+        "## YOU CAN SEE RIGHT NOW — LIVE RSTUDIO CONTEXT (READ THIS FIRST)\n"
+        "Everything below is the user's RStudio session AS OF THIS MESSAGE. "
+        "Treat it as ground truth. Do NOT search the filesystem, do NOT call "
+        "`ls()`, `list.files()`, or `file.exists()` for things already listed here.\n\n"
+        + body
+        + "\n### HARD RULE: TRUST `ACTIVE EDITOR DOCUMENT` — DO NOT RE-READ IT\n"
+        "If `ACTIVE EDITOR DOCUMENT` has content above, **that IS what's in the editor RIGHT NOW**. "
+        "Do NOT say \"I don't see any script content\" — you literally do, it's directly above. "
+        "Do NOT verify by running `readLines()`, `file.exists()`, `list.files()`, or any "
+        "rstudioapi call. The content is already in your context. Read it, answer the user.\n\n"
+        "If you need to refer to the script in your reply, quote from the content above. "
+        "If you need the script's PATH and `Path:` says \"UNSAVED TAB\", the file has no disk "
+        "path — say so and offer to save it; do NOT search the filesystem.\n\n"
+        "Only when `ACTIVE EDITOR DOCUMENT` shows \"(no editor document open right now)\" "
+        "should you ASK the user to open or paste their script. Otherwise: trust + answer.\n\n"
+        "**Forbidden first sentences when the editor block has content:**\n"
+        "- \"I don't see any script content...\"\n"
+        "- \"Your editor appears to be empty...\"\n"
+        "- \"Let me check what's in your editor...\"\n"
+        "- \"Could you try clicking in your script editor tab...\"\n"
+        "These are ALWAYS WRONG when content is visible above. The content IS there.\n\n"
+        "**Also forbidden:** invented rstudioapi function names. The following do NOT exist: "
+        "`rstudioapi::documentContents()`, `rstudioapi::readDocument()`, "
+        "`rstudioapi::getDocumentContent()`, `rstudioapi::getEditorContent()`. Even the real "
+        "calls (`getSourceEditorContext`, `getActiveDocumentContext`) return EMPTY from "
+        "tsifl's listener process. NEVER fall back to them in run_r_code.\n"
+        "---\n"
+    )
+
+
 def _build_system_prompt(app: str, message: str = "", context: dict = None) -> str:
     """Build an app-specific system prompt to minimize token usage."""
     # Base section: personality, output rules, action rules (always included)
@@ -3105,6 +3272,14 @@ def _build_system_prompt(app: str, message: str = "", context: dict = None) -> s
     if app == "browser":
         app_sections += _section("## BROWSER ACTIONS", "## POWERPOINT PROFESSIONAL TEMPLATES")
     if app == "rstudio":
+        # Loud, structured view of what the user actually has in their IDE
+        # right now (editor doc, env objects, packages, intent hints). Put
+        # it BEFORE the rules so the model reads context first and rules
+        # second — bugs we hit traced almost entirely back to "model didn't
+        # notice X was already in the context."
+        live_ctx = _build_rstudio_live_context(context or {})
+        if live_ctx:
+            app_sections += live_ctx + "\n"
         app_sections += _section("## RSTUDIO — COMPREHENSIVE R GUIDE", "## OTHER APPS")
     if app == "notes":
         app_sections += _section("## NOTES ACTIONS", "## CROSS-APP NAVIGATION")
@@ -4118,10 +4293,16 @@ TRANSACTIONS PROJECT SPECIFICS:
     active_preview = open_editor.get("active_preview") or ""
     preview_lower = active_preview.lower()
     has_rmd_file = active_file.endswith(".rmd") or active_file.endswith(".qmd")
-    has_rmd_content = "```{r" in preview_lower and ("exercise" in preview_lower or "---" in active_preview[:10])
-    is_rmd_with_exercises = (has_rmd_file or has_rmd_content) and (
-        "exercise" in preview_lower or "```{r" in preview_lower
+    # The fill_rmd_chunks path only makes sense when the Rmd actually has
+    # numbered exercise headers (`#### Exercise 1`, `## Exercise 2`, etc.).
+    # Without this check, any tsifl-generated Rmd with a setup chunk got
+    # mistaken for a homework template — the model emitted an empty
+    # fill_rmd_chunks action and the user saw "Filled 0 exercises".
+    _exercise_header_re = re.compile(
+        r'^#{2,4}\s+Exercise\s+\d+', re.MULTILINE | re.IGNORECASE
     )
+    has_real_exercise_headers = bool(_exercise_header_re.search(active_preview))
+    is_rmd_with_exercises = (has_rmd_file or "```{r" in preview_lower) and has_real_exercise_headers
 
     if is_rmd_with_exercises:
         actions = result.get("actions", [])
@@ -4265,7 +4446,14 @@ _R_ANALYSIS_INTENT_RE = re.compile(
     r"average|avg|compute|calculate|find|tell me|show me|"
     r"top |bottom |highest|lowest|heaviest|lightest|tallest|shortest|"
     r"compare|comparison|distribution|trend|"
-    r"analy[sz]e|analysis|test |hypothesis|confidence interval|ci)\b",
+    r"analy[sz]e|analysis|test |hypothesis|confidence interval|ci|"
+    # Document-generation intents — convert/build/knit/render also need a
+    # real run_r_code action that performs writeLines + navigateToFile,
+    # NOT a code dump in chat.
+    r"convert|build|generate|create|render|knit|knittable|"
+    r"rmd|r markdown|notebook|"
+    r"report|writeup|write[- ]up|deliverable|presentation|"
+    r"consulting|executive summary)\b",
     re.IGNORECASE,
 )
 
@@ -4373,6 +4561,30 @@ def _extract_r_error(message: str) -> str:
     return m.group(0) if m else ""
 
 
+_CODE_FENCE_RE = re.compile(
+    r"```(?:r|\{r[^}]*\}|rmd|markdown)?\s*\n(.*?)```",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _reply_has_substantial_code_in_text(reply: str) -> tuple[bool, int]:
+    """Detect "wrote code as markdown instead of using the tool" failure mode.
+
+    Returns (is_substantial, total_code_chars). True when the reply contains
+    fenced code blocks adding up to >200 chars of R/Rmd content — that's
+    almost always the model abandoning the tool path and dumping code into
+    chat where it can't execute.
+
+    A single one-line example (e.g. "use `mean(x, na.rm=TRUE)`") is fine and
+    won't trigger this. We require enough volume to be sure the model meant
+    "run this" not "FYI here's a snippet"."""
+    if not reply:
+        return False, 0
+    matches = _CODE_FENCE_RE.findall(reply)
+    total = sum(len(m.strip()) for m in matches)
+    return total > 200, total
+
+
 def _validate_r_actions(result: dict, message: str) -> tuple[bool, str]:
     """Check if the actions satisfy the user's intent.
 
@@ -4381,6 +4593,26 @@ def _validate_r_actions(result: dict, message: str) -> tuple[bool, str]:
     actions = result.get("actions") or []
     r_actions = [a for a in actions if a.get("type") == "run_r_code"]
     reply = (result.get("reply") or "").strip()
+
+    # Case 0 (most common regression): reply DUMPED code as markdown fences
+    # but emitted no run_r_code action. The model wrote ```r ... ``` blocks
+    # into chat instead of using the tool. Code in chat does NOT execute —
+    # the user sees a wall of green-tinted text and nothing happens.
+    has_code_dump, code_chars = _reply_has_substantial_code_in_text(reply)
+    if has_code_dump and not r_actions:
+        return False, (
+            f"You wrote {code_chars} characters of R/Rmd code as markdown "
+            "fenced blocks in your reply, but emitted NO run_r_code action. "
+            "Code in chat does NOT execute — it's display-only text. The "
+            "user sees nothing happen. RE-EMIT THE SAME WORK as ONE "
+            "run_r_code action: take all the code you wrote in fences, "
+            "concatenate it into a single block, and put it in the "
+            "run_r_code action's payload.code. If your task is to write "
+            "an Rmd file, build the Rmd content as an R string and use "
+            "writeLines() + rstudioapi::navigateToFile() — all inside the "
+            "ONE run_r_code action. Your reply text should be ONE sentence "
+            "naming what the action did, NOT a paste of the code."
+        )
 
     # Case D (checked FIRST — most specific): Phase 2 interpretation has an
     # R error in the input AND didn't emit a retry. User gets left stuck.
