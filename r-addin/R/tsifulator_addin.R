@@ -163,15 +163,22 @@
           tryCatch({
             # source() requires a file or connection — write code to a temp
             # file so we can source it. Also gives nicer error messages.
+            # Force UTF-8 on both write and read: the model frequently emits
+            # non-ASCII characters (degree signs, smart quotes, em-dashes,
+            # accented column names from real datasets). Without explicit
+            # UTF-8 encoding, R uses the system locale, which on macOS often
+            # mis-parses multi-byte sequences and throws "unexpected ','"
+            # syntax errors mid-string.
             tmp_src <- tempfile(pattern = "tsifl_", fileext = ".R")
-            writeLines(code, tmp_src)
+            writeLines(enc2utf8(code), tmp_src, useBytes = TRUE)
             on.exit(try(unlink(tmp_src), silent = TRUE), add = TRUE)
             source(
               tmp_src,
               local = .GlobalEnv,
               echo = FALSE,
               print.eval = TRUE,  # auto-print top-level values (renders plots)
-              max.deparse.length = 500
+              max.deparse.length = 500,
+              encoding = "UTF-8"
             )
           }, error = function(e) cat("Error:", conditionMessage(e), "\n"),
              finally = {
@@ -360,16 +367,97 @@
   # Kick off the polling loop
   later::later(poll_fn, delay = 0.5)
 
-  # ── Environment capture watcher ──────────────────────────────────────────
-  # The background Shiny job needs to know what data frames / packages the
-  # user has loaded in their main R session's .GlobalEnv (so the model
-  # doesn't hallucinate code against nonexistent objects). Prior to 0.3.0
-  # this watcher was installed via rstudioapi::sendToConsole — but we moved
-  # away from that API because it's unreliable. Install it here in the main
-  # session directly, so env snapshots always flow regardless of IPC state.
-  env_snapshot_file <- .tsifl_tmp("env_snapshot.rds")
+  # ── Environment + editor capture watcher ────────────────────────────────
+  # The background Shiny job needs to know:
+  #   (1) what data frames / packages the user has loaded in .GlobalEnv,
+  #   (2) what file is currently open in the editor (active doc contents,
+  #       path, id) — so the model can answer "what does this script do"
+  #       without trying to call fake rstudioapi functions.
+  # Both run in MAIN here (not via sendToConsole — that IPC is fragile from
+  # background jobs and frequently times out silently). We write two files:
+  #   /tmp/.tsifl_env_snapshot.rds    (env + pkgs + editor; legacy combined)
+  #   /tmp/.tsifl_editor_snapshot.rds (editor only; faster path the Shiny
+  #                                    side reads on every Send)
+  env_snapshot_file    <- .tsifl_tmp("env_snapshot.rds")
+  editor_snapshot_file <- .tsifl_tmp("editor_snapshot.rds")
+  editor_log_file      <- .tsifl_tmp("editor_capture.log")
+
+  # Capture editor doc from MAIN. rstudioapi calls work natively here, so we
+  # get real contents — unlike from a background job where they return empty.
+  capture_editor <- function() {
+    tryCatch({
+      ctx <- NULL
+      if (requireNamespace("rstudioapi", quietly = TRUE) &&
+          rstudioapi::isAvailable()) {
+        # getSourceEditorContext returns the topmost source editor, sticky
+        # to last-focused source pane even when focus is on the chat panel.
+        ctx <- tryCatch(
+          rstudioapi::getSourceEditorContext(),
+          error = function(e) NULL
+        )
+        # Fallback: active document context (returns whatever has focus —
+        # could be Console, but worth trying if SourceEditor is empty).
+        if (is.null(ctx) || length(ctx$contents) == 0 ||
+            (length(ctx$contents) == 1 && !nzchar(ctx$contents))) {
+          ctx <- tryCatch(
+            rstudioapi::getActiveDocumentContext(),
+            error = function(e) NULL
+          )
+        }
+      }
+      # Resolve path more aggressively: getSourceEditorContext sometimes
+      # returns path="" for saved docs that were opened via navigateToFile
+      # rather than the file menu. documentPath(id) fills that gap.
+      resolved_path <- ""
+      if (!is.null(ctx)) {
+        resolved_path <- if (is.null(ctx$path)) "" else as.character(ctx$path)
+        if (!nzchar(resolved_path) && !is.null(ctx$id) && nzchar(ctx$id)) {
+          resolved_path <- tryCatch(
+            as.character(rstudioapi::documentPath(ctx$id)),
+            error = function(e) ""
+          )
+          if (is.null(resolved_path) || is.na(resolved_path)) resolved_path <- ""
+        }
+      }
+      payload <- if (!is.null(ctx)) {
+        list(
+          id       = if (is.null(ctx$id))   "" else as.character(ctx$id),
+          path     = resolved_path,
+          contents = if (is.null(ctx$contents)) "" else paste(ctx$contents, collapse = "\n"),
+          ts       = Sys.time()
+        )
+      } else {
+        list(id = "", path = "", contents = "", ts = Sys.time(), err = "no_ctx")
+      }
+      saveRDS(payload, editor_snapshot_file)
+
+      # Debug log so we can diagnose "model can't see script" complaints
+      tryCatch({
+        cat(
+          format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+          " path=", payload$path,
+          " id=", payload$id,
+          " chars=", nchar(payload$contents),
+          " err=", (if (is.null(payload$err)) "<none>" else payload$err),
+          "\n", sep = "", file = editor_log_file, append = TRUE
+        )
+      }, error = function(e) NULL)
+
+      payload
+    }, error = function(e) {
+      tryCatch({
+        saveRDS(
+          list(id = "", path = "", contents = "", ts = Sys.time(),
+               err = conditionMessage(e)),
+          editor_snapshot_file
+        )
+      }, error = function(e2) NULL)
+      list(id = "", path = "", contents = "", err = conditionMessage(e))
+    })
+  }
 
   capture_env <- function() {
+    editor_info <- capture_editor()
     tryCatch({
       nms <- setdiff(
         ls(.GlobalEnv),
@@ -396,14 +484,14 @@
       })
       pkgs <- gsub("^package:", "", grep("^package:", search(), value = TRUE))
       saveRDS(
-        list(env = info, pkgs = pkgs, ts = Sys.time()),
+        list(env = info, pkgs = pkgs, editor = editor_info, ts = Sys.time()),
         env_snapshot_file
       )
     }, error = function(e) {
       tryCatch(
         saveRDS(
           list(
-            env = list(), pkgs = character(0),
+            env = list(), pkgs = character(0), editor = editor_info,
             ts = Sys.time(), err = conditionMessage(e)
           ),
           env_snapshot_file
@@ -411,12 +499,21 @@
         error = function(e2) {}
       )
     })
-    # Reschedule every 3 seconds
+    # Reschedule env capture every 3 seconds — env state changes slowly
     later::later(capture_env, delay = 3)
   }
 
-  # Fire an immediate capture and start the recurring loop
+  # Faster dedicated editor cycle — every 1 second. Editor state changes
+  # whenever the user types or switches tabs, and we want the snapshot
+  # fresh for the next Send without depending on the slower env cycle.
+  fast_editor_cycle <- function() {
+    capture_editor()
+    later::later(fast_editor_cycle, delay = 1)
+  }
+
+  # Fire an immediate capture and start both recurring loops
   capture_env()
+  fast_editor_cycle()
 
   options(tsifulator.listener_installed = TRUE)
   invisible(TRUE)

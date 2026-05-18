@@ -225,6 +225,308 @@ run_tsifl_server <- function(port = 7444) {
     } else NULL
   }
 
+  # ── Hallucination detector ────────────────────────────────────────────────
+  # Catches the worst-case credit burner: the model emits a function name
+  # that doesn't exist (`rstudioapi::documentContents()`, `dplyr::filter_at_v2`,
+  # made-up package::fn pairs, etc.). Retrying that goes nowhere — the next
+  # round just guesses ANOTHER fake name. Detect it once, surface a friendly
+  # error, and STOP spending credits on this turn.
+  #
+  # We're conservative — only flag clear hallucination signals:
+  #   1. `'X' is not an exported object from 'namespace:Y'` — the model
+  #      explicitly named a package and a function inside it that doesn't
+  #      exist. Always a hallucination.
+  #   2. `could not find function "X"` where X is camelCase + ≥8 chars
+  #      and NOT in `.tsifl_function_to_package`. Real missing-library
+  #      functions like `glimpse` or `ggplot` are recognised by the
+  #      mapping → those still go through the auto-load retry. Names
+  #      like `documentContents`, `readDocument`, `fetchEditorState` are
+  #      almost always invented.
+  .tsifl_detect_hallucination <- function(r_output) {
+    if (!is.character(r_output) || !nzchar(r_output)) return(NULL)
+    # Pattern 1: pkg::fakefn — definitive hallucination
+    m1 <- regmatches(
+      r_output,
+      regexec("['\"]([^'\"]+)['\"] is not an exported object from ['\"]namespace:([^'\"]+)['\"]",
+              r_output, perl = TRUE)
+    )[[1]]
+    if (length(m1) >= 3) {
+      return(list(
+        type = "fake_namespace_fn",
+        bad_call = paste0(m1[3], "::", m1[2], "()"),
+        fn = m1[2],
+        pkg = m1[3]
+      ))
+    }
+    # Pattern 2: could not find function — only if it looks fake.
+    m2 <- regmatches(
+      r_output,
+      regexec("could not find function [\"']([^\"']+)[\"']",
+              r_output, perl = TRUE)
+    )[[1]]
+    if (length(m2) >= 2) {
+      fn <- m2[2]
+      # Known-mappable function → let .tsifl_detect_missing_function handle it
+      if (fn %in% names(.tsifl_function_to_package)) return(NULL)
+      # Heuristic: camelCase ≥ 8 chars with no dot/underscore → likely invented
+      # (e.g. documentContents, fetchActiveEditor, readDocumentBuffer)
+      if (nchar(fn) >= 8 &&
+          grepl("^[a-z]", fn) && grepl("[A-Z]", fn) &&
+          !grepl("[._]", fn, fixed = FALSE)) {
+        return(list(
+          type = "fake_unscoped_fn",
+          bad_call = paste0(fn, "()"),
+          fn = fn,
+          pkg = NA_character_
+        ))
+      }
+    }
+    NULL
+  }
+
+  # ── Auto-routing: should Ollama escalate to a stronger brain? ─────────────
+  # The brain pill is the user's PREFERRED tier, not a hard force. When the
+  # user picks Ollama (free / subscription) but asks something that's clearly
+  # beyond Ollama's pay-grade (image attachments, debug-class reasoning, very
+  # long context, deep analysis), silently route to Sonnet for that turn so
+  # they don't have to manually pill-switch on every hard question.
+  #
+  # Conservative — only escalates on STRONG signals. The whole point of the
+  # Ollama pill is to save credits; we don't want to leak to Sonnet on trivial
+  # stuff. Returns a one-line reason string (used in the chat note) when
+  # escalation should fire, or NULL to stick with the user's pick.
+  .tsifl_should_escalate_from_ollama <- function(user_msg, r_context, images) {
+    if (!is.character(user_msg) || !nzchar(user_msg)) return(NULL)
+    # 1) Vision — Ollama text models can't read images. Always escalate.
+    if (is.list(images) && length(images) > 0) {
+      return("Ollama can't see image attachments")
+    }
+    msg_lc <- tolower(user_msg)
+    # 2) Heavy-task keywords — debugging, deep analysis, consulting reports.
+    heavy_keywords <- c(
+      "debug", "debugging", "why is this", "why does this", "why did",
+      "fix this error", "fix the error", "fix the bug",
+      "explain why", "walk me through", "step by step", "step-by-step",
+      "interpret the results", "interpret these results",
+      "consulting", "writeup", "write-up", "executive summary",
+      "deep analysis", "comprehensive", "diagnose",
+      "model selection", "model comparison", "model fit",
+      "what's wrong with", "what is wrong with",
+      "refactor", "optimize this", "review this"
+    )
+    if (any(vapply(heavy_keywords,
+                   function(p) grepl(p, msg_lc, fixed = TRUE),
+                   logical(1)))) {
+      return("complex / debugging task")
+    }
+    # 3) Long message = likely complex request.
+    if (nchar(user_msg) > 400) {
+      return("long request (likely complex)")
+    }
+    # 4) Big active-editor doc — Ollama's 8K context can't fit a long script
+    #    plus history plus a useful response.
+    oe <- r_context$open_editor
+    preview <- if (is.list(oe) && is.character(oe$active_preview))
+      oe$active_preview else ""
+    if (nchar(preview) > 6000) {
+      return("active editor doc is large (>6K chars)")
+    }
+    # 5) Many env objects = complex environment that needs careful reasoning.
+    env <- r_context$env_objects
+    if (is.list(env) && length(env) > 10) {
+      return("many objects loaded (complex environment)")
+    }
+    NULL
+  }
+
+  # ── Client-side intent preprocessor ───────────────────────────────────────
+  # Scan the user message + r_context and tag the request with high-signal
+  # intent hints BEFORE shipping to the backend. The backend surfaces these
+  # in the system prompt under "CLIENT INTENT HINTS", so the model doesn't
+  # have to re-derive what the user is referring to from a vague message
+  # like "make this red" or "convert this to Rmd".
+  #
+  # The hints we emit are deliberately small and concrete — "the message
+  # refers to the active editor doc", "the message mentions env_object X",
+  # "the data has 1 column and a `;` in its name (delimiter bug — re-read
+  # with read_delim)". Anything more abstract should live in the system
+  # prompt, not here.
+  #
+  # Returns a character vector of human-readable hint strings. The backend
+  # treats it as a list of bullet points.
+  .tsifl_extract_hints <- function(user_msg, r_context) {
+    hints <- character(0)
+    if (!is.character(user_msg) || !nzchar(user_msg)) return(hints)
+    msg_lc <- tolower(user_msg)
+
+    # ── 1. Does the message refer to the active editor doc? ──────────
+    # We're conservative — match high-signal phrases, not random uses of
+    # "this". The cost of a false positive is small (model just gets a
+    # gentle nudge); the cost of a false negative is the phantom-file
+    # search we kept hitting ("Untitled120.csv" etc).
+    doc_phrases <- c(
+      "this doc", "this document", "this file", "this script",
+      "this code", "this notebook", "this rmd", "this r markdown",
+      "the file i have open", "the file open", "what's open",
+      "what is open", "the script i have", "the code i have",
+      "open file", "current file", "current script", "current document",
+      "in front of me", "active editor", "active file",
+      "convert this", "fix this", "improve this", "explain this",
+      "what does this do", "summarize this", "make it red",
+      "clean this up", "refactor this"
+    )
+    refers_active_doc <- any(vapply(doc_phrases, function(p) grepl(p, msg_lc, fixed = TRUE), logical(1)))
+    # Untitled<N> tab references
+    if (!refers_active_doc && grepl("untitled\\s*\\d+", msg_lc, perl = TRUE)) {
+      refers_active_doc <- TRUE
+    }
+    open_editor <- r_context$open_editor
+    .preview_str <- if (is.list(open_editor) && is.character(open_editor$active_preview)) open_editor$active_preview else ""
+    has_active_preview <- nzchar(.preview_str)
+    if (refers_active_doc) {
+      if (has_active_preview) {
+        active_name <- if (is.list(open_editor) && is.character(open_editor$active_file) &&
+                           nzchar(open_editor$active_file)) open_editor$active_file else "(unsaved tab)"
+        hints <- c(hints, paste0(
+          "refers_to_active_doc — the user is talking about the editor ",
+          "document shown above (`", active_name, "`). Read its content ",
+          "from ACTIVE EDITOR DOCUMENT, do NOT search the filesystem."
+        ))
+      } else {
+        hints <- c(hints, paste0(
+          "refers_to_active_doc — but no active editor preview was captured. ",
+          "Ask the user which file they mean instead of guessing."
+        ))
+      }
+    }
+
+    # ── 2. Does the message mention any object in .GlobalEnv? ────────
+    env_objs <- r_context$env_objects
+    if (is.list(env_objs) && length(env_objs) > 0) {
+      mentioned <- character(0)
+      for (o in env_objs) {
+        nm <- o$name
+        if (!is.character(nm) || !nzchar(nm)) next
+        # Word-boundary match (case-insensitive). Skip very short names
+        # (≤2 chars) to avoid false hits on prepositions etc.
+        if (nchar(nm) < 3) next
+        pat <- paste0("(^|[^A-Za-z0-9_\\.])", tolower(nm), "([^A-Za-z0-9_\\.]|$)")
+        if (grepl(pat, msg_lc, perl = TRUE)) {
+          mentioned <- c(mentioned, nm)
+        }
+      }
+      if (length(mentioned) > 0) {
+        hints <- c(hints, paste0(
+          "refers_to_env_data — user named these objects already in ",
+          ".GlobalEnv: ", paste0("`", mentioned, "`", collapse = ", "),
+          ". Use them directly; do NOT re-load from disk."
+        ))
+      }
+    }
+
+    # ── 3. Does the message mention "the plot/chart/figure/graph"? ────
+    plot_phrases <- c(
+      "the plot", "this plot", "that plot", "the chart", "this chart",
+      "the figure", "this figure", "the graph", "this graph",
+      "make it red", "change the color", "change the colour",
+      "axis label", "y-axis", "x-axis", "title of the plot",
+      "the visualization", "this visualization"
+    )
+    if (any(vapply(plot_phrases, function(p) grepl(p, msg_lc, fixed = TRUE), logical(1)))) {
+      hints <- c(hints, paste0(
+        "refers_to_last_plot — user is iterating on the previous chart. ",
+        "Modify the most recent plot code rather than starting fresh; ",
+        "preserve data/columns and only change the requested aesthetic."
+      ))
+    }
+
+    # ── 4. Does the message ask for an Rmd / knit / report? ───────────
+    if (grepl("\\b(rmd|r markdown|knit|knittable|notebook)\\b", msg_lc, perl = TRUE)) {
+      hints <- c(hints, "wants_rmd — output should be a .Rmd file (or fill_rmd_chunks if a template is open).")
+    }
+    if (grepl("\\b(report|writeup|write-up|consulting|deliverable|executive summary)\\b", msg_lc, perl = TRUE)) {
+      hints <- c(hints, "wants_consulting_report — produce a structured analyst report (exec summary, findings, recommendations), not just code.")
+    }
+
+    # ── 5. Append vs new tab? ─────────────────────────────────────────
+    if (grepl("\\b(append|same script|same file|to my script|to my file)\\b", msg_lc, perl = TRUE)) {
+      hints <- c(hints, "wants_append — code should target the active editor (run_r_code.payload.target = \"active\").")
+    } else if (grepl("\\bnew script|new tab|new file\\b", msg_lc, perl = TRUE)) {
+      hints <- c(hints, "wants_new_tab — code should go into a NEW script tab (target = \"new\").")
+    }
+
+    # ── 6. Rmd-with-exercises template open ──────────────────────────
+    if (has_active_preview) {
+      ap <- .preview_str
+      af <- if (is.list(open_editor) && is.character(open_editor$active_file)) tolower(open_editor$active_file) else ""
+      is_rmd <- grepl("\\.rmd$|\\.qmd$", af, perl = TRUE) ||
+        grepl("```\\{r", ap, fixed = TRUE)
+      has_exercises <- grepl("####\\s*Exercise\\s+\\d+", ap, perl = TRUE)
+      if (is_rmd && has_exercises) {
+        hints <- c(hints, paste0(
+          "rmd_template_open — the active file is an Rmd with empty ",
+          "`#### Exercise N` chunks. If the user is asking to fill it in, ",
+          "use the fill_rmd_chunks action, NOT run_r_code or edit_file."
+        ))
+      }
+    }
+
+    # ── 6.5. Named-tab mismatch (Untitled<N> that isn't active) ──────
+    # rstudioapi can only read the ACTIVE source editor. If the user
+    # mentions a specific tab by name (Untitled123) and it doesn't match
+    # the active doc, the model can't see it — flag this loudly so the
+    # backend tells the user to click that tab first instead of going
+    # phantom-hunting on disk.
+    untitled_in_msg <- regmatches(
+      msg_lc,
+      regexpr("untitled\\s*\\d+(\\.r|\\.rmd)?", msg_lc, perl = TRUE)
+    )
+    if (length(untitled_in_msg) > 0 && nzchar(untitled_in_msg)) {
+      named_tab <- gsub("\\s+", "", untitled_in_msg)  # "untitled123"
+      active_file_lc <- if (is.list(open_editor) && is.character(open_editor$active_file))
+        tolower(open_editor$active_file) else ""
+      # The named tab matches the active doc if its number appears in the
+      # active filename (handles "Untitled123" vs "Untitled (DF8CAA28)" id-form
+      # vs "Untitled123.R" extension variants).
+      named_num <- regmatches(named_tab, regexpr("\\d+", named_tab))
+      matches_active <- length(named_num) > 0 && nzchar(named_num) &&
+        grepl(named_num, active_file_lc, fixed = TRUE)
+      if (!matches_active) {
+        hints <- c(hints, paste0(
+          "named_tab_mismatch - user named `", named_tab,
+          "` but the active editor tab is `",
+          if (nzchar(active_file_lc)) active_file_lc else "(none)",
+          "`. rstudioapi can ONLY read the active tab. ",
+          "TELL THE USER: \"I can only see the tab that's currently active. ",
+          "Click on `", named_tab, "` to make it active, then ask again.\" ",
+          "Do NOT try to read it via R code — it's an unsaved tab with no disk path."
+        ))
+      }
+    }
+
+    # ── 7. Delimiter-bug pre-flag from env preview ───────────────────
+    # If a recently-loaded df has Columns: 1 and a `;` in the name, the
+    # user is almost certainly going to ask for analysis next — flag it
+    # so the model re-reads with read_delim() instead of running code on
+    # the broken parse.
+    if (is.list(env_objs)) {
+      for (o in env_objs) {
+        dim_str <- if (is.character(o$dim)) o$dim else ""
+        cols    <- if (is.character(o$col_names)) o$col_names else ""
+        if (grepl("x\\s*1$", dim_str, perl = TRUE) && grepl(";|\\t", cols)) {
+          hints <- c(hints, paste0(
+            "delimiter_bug_suspected — `", o$name, "` loaded as 1 column ",
+            "with a separator (`;`/tab) inside its only name. Re-read with ",
+            "`readr::read_delim()` before any analysis."
+          ))
+          break
+        }
+      }
+    }
+
+    hints
+  }
+
   # ── BYOK header helper ─────────────────────────────────────────────────────
   # Every backend chat request passes through this — it adds the user's
   # Anthropic key as a header when configured. The backend reads
@@ -300,6 +602,27 @@ run_tsifl_server <- function(port = 7444) {
       font-weight: 500;
       border: none;
     }
+
+    /* Brain picker pill — cycles model on click */
+    .brain-pill {
+      font-size: 11px;
+      color: #0D5EAF;
+      background: #EAF2FB;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-weight: 600;
+      border: 1px solid #D6E4F5;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.12s ease;
+    }
+    .brain-pill:hover { background: #D9E7F7; }
+    .brain-pill.ollama { color: #157347; background: #E4F4EA; border-color: #BFE3CB; }
+    .brain-pill.ollama:hover { background: #D2EBDB; }
+    .brain-pill.opus { color: #6B3FA0; background: #F0E8FB; border-color: #D9C8EF; }
+    .brain-pill.opus:hover { background: #E4D6F4; }
+    .brain-pill.haiku { color: #7A5A00; background: #FBF3DC; border-color: #ECDDAE; }
+    .brain-pill.haiku:hover { background: #F4E7BC; }
 
     /* ── Tab bar — understated, Bloomberg/Linear-ish ───────────── */
     #tsifl_tabs {
@@ -522,7 +845,10 @@ run_tsifl_server <- function(port = 7444) {
       flex: 1;
       overflow-y: auto;
       padding: 16px 14px;
-      padding-bottom: 140px;
+      /* JS adjusts this on load based on actual input_area height — but
+         keep a generous fallback so older browsers without ResizeObserver
+         don't clip the last few messages behind the fixed input area. */
+      padding-bottom: 260px;
       display: flex;
       flex-direction: column;
       gap: 6px;
@@ -820,6 +1146,12 @@ run_tsifl_server <- function(port = 7444) {
     shiny::div(id = "header",
       shiny::span(id = "logo", "\u26a1 tsifl"),
       shiny::div(style = "display:flex;align-items:center;gap:6px;",
+        # Brain picker \u2014 click to cycle through: sonnet \u2192 haiku \u2192 opus \u2192 ollama
+        shiny::tags$button(id = "brain_picker",
+          title = "Click to switch model (Sonnet \u2192 Haiku \u2192 Opus \u2192 Ollama)",
+          class = "brain-pill",
+          onclick = "tsiflCycleBrain();",
+          "Sonnet"),
         shiny::uiOutput("tasks_label")
       )
     ),
@@ -1357,6 +1689,31 @@ run_tsifl_server <- function(port = 7444) {
         });
       });
 
+      // Resize chat padding so the bottom of the chat never hides behind
+      // the fixed input area. The input area grows when the user attaches
+      // images, when code_actions reveal, or when the textarea wraps to
+      // multiple rows — so we observe its size and update padding live.
+      function tsiflResizeChatPadding() {
+        var ia = document.getElementById('input_area');
+        var ch = document.getElementById('chat_history');
+        if (!ia || !ch) return;
+        // 16px of breathing room above the input area
+        var px = (ia.offsetHeight + 16) + 'px';
+        ch.style.paddingBottom = px;
+      }
+      // Run once after first paint, and whenever the input area changes size
+      setTimeout(tsiflResizeChatPadding, 60);
+      if (typeof ResizeObserver !== 'undefined') {
+        var ia0 = document.getElementById('input_area');
+        if (ia0) {
+          new ResizeObserver(tsiflResizeChatPadding).observe(ia0);
+        }
+      } else {
+        // Older Safari fallback: re-check on window resize + every 2s
+        window.addEventListener('resize', tsiflResizeChatPadding);
+        setInterval(tsiflResizeChatPadding, 2000);
+      }
+
       // Reveal the code-action bar once tsifl has produced code in this
       // session. msg.show === true means we have code to act on; false
       // hides it (e.g. on session reset).
@@ -1406,6 +1763,52 @@ run_tsifl_server <- function(port = 7444) {
         }
       };
 
+      // Server can push a brain selection (e.g. on session start) to keep
+      // the pill in sync with R's reactiveVal.
+      Shiny.addCustomMessageHandler('tsifl_set_brain', function(msg) {
+        if (msg && msg.name) window.tsiflSetBrain(msg.name);
+      });
+
+      // ── Brain picker ─────────────────────────────────────────────────
+      // Click cycles through models. The label + colour class change to
+      // signal which brain is active. We also tell the server via
+      // Shiny.setInputValue so the next request body includes it, AND
+      // persist locally so the choice survives panel reloads.
+      window._tsiflBrainOrder = ['sonnet', 'haiku', 'opus', 'ollama'];
+      window._tsiflBrainLabel = {
+        sonnet: 'Sonnet', haiku: 'Haiku', opus: 'Opus', ollama: 'Ollama'
+      };
+      window.tsiflSetBrain = function(name) {
+        var btn = document.getElementById('brain_picker');
+        if (!btn) return;
+        btn.textContent = window._tsiflBrainLabel[name] || name;
+        btn.classList.remove('sonnet', 'haiku', 'opus', 'ollama');
+        btn.classList.add(name);
+        try { localStorage.setItem('tsifl_brain', name); } catch(e) {}
+        if (typeof Shiny !== 'undefined' && Shiny.setInputValue) {
+          Shiny.setInputValue('brain_choice', name, {priority: 'event'});
+        }
+      };
+      window.tsiflCycleBrain = function() {
+        var btn = document.getElementById('brain_picker');
+        if (!btn) return;
+        var cur = (btn.textContent || 'Sonnet').toLowerCase();
+        var order = window._tsiflBrainOrder;
+        var idx = order.indexOf(cur);
+        var next = order[(idx + 1) % order.length];
+        window.tsiflSetBrain(next);
+      };
+      // Restore last-used brain on load
+      (function() {
+        try {
+          var saved = localStorage.getItem('tsifl_brain');
+          if (saved && window._tsiflBrainLabel[saved]) {
+            // Wait for Shiny to be ready before pushing the value
+            setTimeout(function() { window.tsiflSetBrain(saved); }, 100);
+          }
+        } catch(e) {}
+      })();
+
       // When the selected plot changes (user picked a different timestamp
       // from the dropdown), also trigger a clean reload so plotly remeasures.
       window.addEventListener('message', function(e) {
@@ -1434,6 +1837,61 @@ run_tsifl_server <- function(port = 7444) {
 
     messages    <- shiny::reactiveVal(list())
     tasks_left  <- shiny::reactiveVal(NA)
+
+    # Current brain — drives both the routing decision (ollama vs hosted)
+    # and the preferred_model the backend uses. Default reads the existing
+    # option so an opted-in user stays on Ollama across restarts.
+    .initial_brain <- if (tsifulator:::.tsifl_using_ollama()) "ollama" else
+                      tolower(getOption("tsifulator.model", "sonnet"))
+    if (!(.initial_brain %in% c("sonnet", "haiku", "opus", "ollama"))) .initial_brain <- "sonnet"
+    current_brain <- shiny::reactiveVal(.initial_brain)
+
+    # Sync initial brain selection to the JS pill on session start
+    session$onFlushed(function() {
+      session$sendCustomMessage("tsifl_set_brain", list(name = .initial_brain))
+    }, once = TRUE)
+
+    # Update brain whenever the user clicks the pill. Wrapped in tryCatch
+    # because the observer can fire from session-restore JS too (when
+    # localStorage replays the saved brain) — if the websocket is mid-flush
+    # at the same moment, the add_message write can hit SIGPIPE on a closing
+    # connection. We don't want the whole panel to die from a benign race.
+    shiny::observeEvent(input$brain_choice, {
+      tryCatch({
+        `%||%` <- function(a, b) if (is.null(a)) b else a
+        choice <- tolower(input$brain_choice %||% "sonnet")
+        if (!(choice %in% c("sonnet", "haiku", "opus", "ollama"))) choice <- "sonnet"
+        # Dedupe — if the pill is already on this brain, don't repeat the
+        # switch message. Stops the "Switched to Sonnet" spam on reload
+        # (localStorage replays + server-sent tsifl_set_brain both fire).
+        prev <- tryCatch(current_brain(), error = function(e) "")
+        if (identical(prev, choice)) return(invisible(NULL))
+        current_brain(choice)
+        # Mirror the choice to global options so other code paths (env-watcher,
+        # .tsifl_using_ollama()) stay in sync, and the choice persists for the
+        # next addin launch.
+        if (choice == "ollama") {
+          options(tsifulator.brain = "ollama")
+        } else {
+          options(tsifulator.brain = NULL)
+          options(tsifulator.model = choice)
+        }
+        add_message("action", paste0(
+          "Switched brain to ", tools::toTitleCase(choice),
+          if (choice == "ollama") " (free / subscription)" else
+          if (choice == "haiku")  " (cheapest Anthropic model)" else
+          if (choice == "opus")   " (premium Anthropic - costs more credits)" else
+          " (default - balanced quality and cost)",
+          "."
+        ))
+      }, error = function(e) {
+        stamp <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+        cat(sprintf(
+          "\n──────────── tsifl brain_choice observer crash @ %s ────────────\nMessage: %s\n",
+          stamp, conditionMessage(e)
+        ), file = .tsifl_crash_log, append = TRUE)
+      })
+    }, ignoreInit = TRUE)
 
     # Server-side heartbeat — keeps the session alive even when viewer tab
     # is inactive and JS keepalive stops running
@@ -2075,78 +2533,26 @@ run_tsifl_server <- function(port = 7444) {
 
     ENV_SNAPSHOT_FILE <- tsifulator:::.tsifl_tmp("env_snapshot.rds")
 
-    # The R code that captures the main session's environment.
-    # Written as a standalone script file so `source()` is reliable. The
-    # save path needs to be embedded as a literal string in the script
-    # source — we substitute it via paste0() rather than hardcoding so
-    # the script works regardless of the underlying tempdir.
-    ENV_CAPTURE_SCRIPT <- tsifulator:::.tsifl_tmp("capture_env.R")
-    .snap_path <- gsub("\\\\", "/", ENV_SNAPSHOT_FILE)  # POSIX-style in source code
-    writeLines(c(
-      'tryCatch({',
-      '  nms <- setdiff(ls(.GlobalEnv), c(".tsifl_watcher", ".tsifl_capture"))',
-      '  info <- lapply(nms, function(nm) {',
-      '    obj <- tryCatch(get(nm, envir = .GlobalEnv), error = function(e) NULL)',
-      '    if (is.null(obj)) return(list(name = nm, class = "unknown"))',
-      '    r <- list(name = nm, class = paste(class(obj), collapse = ", "))',
-      '    if (!is.null(dim(obj))) r$dim <- paste(dim(obj), collapse = "x")',
-      '    if (!is.null(names(obj))) r$col_names <- paste(head(names(obj), 10), collapse = ", ")',
-      '    tryCatch({',
-      '      r$preview <- paste(utils::capture.output(utils::str(obj, max.level = 0, give.attr = FALSE))[1], collapse = "")',
-      '    }, error = function(e) {})',
-      '    r',
-      '  })',
-      '  pkgs <- gsub("^package:", "", grep("^package:", search(), value = TRUE))',
-      paste0('  saveRDS(list(env = info, pkgs = pkgs, ts = Sys.time()), "', .snap_path, '")'),
-      '}, error = function(e) {',
-      paste0('  saveRDS(list(env = list(), pkgs = character(0), ts = Sys.time(), err = conditionMessage(e)), "', .snap_path, '")'),
-      '})'
-    ), ENV_CAPTURE_SCRIPT)
+    # The env + editor watcher lives in MAIN session, installed by
+    # .install_tsifl_listener() in tsifulator_addin.R. It writes
+    # env_snapshot.rds and editor_snapshot.rds directly from MAIN every
+    # 3s / 1s respectively — no sendToConsole IPC needed (that channel
+    # is fragile from background jobs and silently times out). Previously
+    # this file tried to install a duplicate sendToConsole-based watcher
+    # here, which would silently fail and leave the model blind. Removed.
 
-    # (A) Install a recurring watcher in the MAIN R session via sendToConsole.
-    #     Uses later::later (always available — it's a shiny dependency).
-    #     The watcher captures the env every 3 seconds automatically.
-    .script_path <- gsub("\\\\", "/", ENV_CAPTURE_SCRIPT)
-    watcher_cmd <- paste0(
-      'local({ ',
-      'if (!exists(".tsifl_watcher", envir = .GlobalEnv)) { ',
-      '  assign(".tsifl_watcher", TRUE, envir = .GlobalEnv); ',
-      '  .tsifl_capture <- function() { ',
-      '    tryCatch(source("', .script_path, '", local = TRUE, echo = FALSE), error = function(e) {}); ',
-      '    later::later(.tsifl_capture, delay = 3) ',
-      '  }; ',
-      '  assign(".tsifl_capture", .tsifl_capture, envir = .GlobalEnv); ',
-      '  .tsifl_capture() ',
-      '} })'
-    )
-    tryCatch(
-      rstudioapi::sendToConsole(watcher_cmd, execute = TRUE, echo = FALSE, focus = FALSE),
-      error = function(e) {
-        # If sendToConsole fails at startup, try again after a short delay
-        later::later(function() {
-          tryCatch(
-            rstudioapi::sendToConsole(watcher_cmd, execute = TRUE, echo = FALSE, focus = FALSE),
-            error = function(e2) {}
-          )
-        }, delay = 2)
-      }
-    )
-
+    # The MAIN-session watcher (.install_tsifl_listener in tsifulator_addin.R)
+    # writes both files directly from the user's main R session — no
+    # sendToConsole IPC needed (that channel is fragile from background jobs
+    # and silently times out). We just read what the watcher already wrote.
+    EDITOR_SNAPSHOT_FILE <- tsifulator:::.tsifl_tmp("editor_snapshot.rds")
 
     get_r_context <- function() {
-      # (B) Fire a one-shot capture as safety net (in case the watcher isn't running)
-      tryCatch(
-        rstudioapi::sendToConsole(
-          paste0(
-            'tryCatch(source("', .script_path,
-            '", local = TRUE, echo = FALSE), error = function(e) {})'
-          ),
-          execute = TRUE, echo = FALSE, focus = FALSE
-        ),
-        error = function(e) {}
-      )
+      # Local %||% so we don't depend on R 4.4+ / shiny re-export
+      `%||%` <- function(a, b) if (is.null(a)) b else a
 
-      # Wait for a fresh snapshot (must be < 10 seconds old)
+      # Wait for a fresh env snapshot (must be < 10 seconds old).
+      # The MAIN-session capture loop refreshes this every 3s.
       snap <- NULL
       for (attempt in 1:6) {
         Sys.sleep(0.5)
@@ -2157,6 +2563,34 @@ run_tsifl_server <- function(port = 7444) {
           snap <- NULL  # Too stale, wait for fresh one
         }
       }
+
+      # Wait for a fresh editor snapshot. The MAIN-session fast loop
+      # refreshes this every 1s, so within 1-2 polls we should be fresh.
+      editor_snap <- NULL
+      for (attempt in 1:6) {
+        Sys.sleep(0.5)
+        editor_snap <- tryCatch(readRDS(EDITOR_SNAPSHOT_FILE), error = function(e) NULL)
+        if (!is.null(editor_snap) && !is.null(editor_snap$ts)) {
+          age <- as.numeric(difftime(Sys.time(), editor_snap$ts, units = "secs"))
+          if (age < 10) break
+          editor_snap <- NULL
+        }
+      }
+      # Debug log: every get_r_context call records what the editor capture
+      # saw. Run `cat /tmp/.tsifl_editor_capture.log` to diagnose if the
+      # model is going blind on a script that's clearly open.
+      tryCatch({
+        log_path <- tsifulator:::.tsifl_tmp("editor_capture.log")
+        cat(
+          format(Sys.time(), "%Y-%m-%d %H:%M:%S"), " get_r_context: ",
+          if (is.null(editor_snap)) "snap=NULL" else paste0(
+            "path=", (editor_snap$path %||% ""),
+            " chars=", nchar(editor_snap$contents %||% ""),
+            " err=", (editor_snap$err %||% "<none>")
+          ), "\n",
+          sep = "", file = log_path, append = TRUE
+        )
+      }, error = function(e) NULL)
 
       env_objs <- list()
       pkgs <- character(0)
@@ -2172,31 +2606,61 @@ run_tsifl_server <- function(port = 7444) {
         }, error = function(e) character(0))
       }
 
-      # Get active editor tab from RStudio IDE
+      # Get active editor tab. PREFER the dedicated editor_snap (captured
+      # in MAIN session via sendToConsole) — rstudioapi calls from *this*
+      # background job return empty contents because background jobs have
+      # no attached IDE editor. The env snapshot's editor field is a
+      # secondary source, and a final local rstudioapi call is the last
+      # resort (mostly for non-RStudio hosts).
       open_tabs <- tryCatch({
-        ctx <- rstudioapi::getActiveDocumentContext()
         doc_info <- list()
 
-        # Try multiple methods to get the file path
-        doc_path <- ctx$path
-        if (!nzchar(doc_path)) {
-          # Fallback: try documentPath for the active document
-          doc_path <- tryCatch(rstudioapi::documentPath(ctx$id), error = function(e) "")
-          if (is.null(doc_path)) doc_path <- ""
+        # Try dedicated editor snapshot first (fresh, written every send)
+        candidate <- if (!is.null(editor_snap) && nzchar(editor_snap$contents %||% "")) editor_snap else NULL
+        # Fall back to the env snapshot's editor field
+        if (is.null(candidate) && !is.null(snap) && !is.null(snap$editor) &&
+            nzchar(snap$editor$contents %||% "")) {
+          candidate <- snap$editor
         }
 
-        if (nzchar(doc_path)) {
-          doc_info$active_file <- basename(doc_path)
-          doc_info$active_file_path <- doc_path
+        if (!is.null(candidate)) {
+          doc_path <- candidate$path %||% ""
+          contents <- candidate$contents %||% ""
+          if (nzchar(doc_path)) {
+            doc_info$active_file <- basename(doc_path)
+            doc_info$active_file_path <- doc_path
+          }
+          if (nzchar(contents)) {
+            doc_info$active_preview <- contents
+            if (is.null(doc_info$active_file)) {
+              first_line <- strsplit(contents, "\n", fixed = TRUE)[[1]][1]
+              cl <- tolower(contents)
+              if (!is.na(first_line) && grepl("^---", first_line) &&
+                  (grepl("exercise", cl) || grepl("```\\{r", cl))) {
+                doc_info$active_file <- "document.Rmd"
+              } else {
+                eid <- candidate$id %||% ""
+                doc_info$active_file <- if (nzchar(eid)) paste0("Untitled (", substr(eid, 1, 8), ")") else "Untitled tab"
+              }
+            }
+          }
         }
-        if (length(ctx$contents) > 0) {
-          doc_info$active_preview <- paste(ctx$contents, collapse = "\n")
-          # If we still don't have a filename, detect Rmd from content
-          if (is.null(doc_info$active_file)) {
-            content_str <- tolower(doc_info$active_preview)
-            # If it has YAML header + exercise chunks, it's an Rmd
-            if (grepl("^---", ctx$contents[1]) && (grepl("exercise", content_str) || grepl("```\\{r", content_str))) {
-              doc_info$active_file <- "document.Rmd"
+
+        # Last-resort local call (mostly for non-RStudio test harnesses)
+        if (length(doc_info) == 0) {
+          ctx <- tryCatch(rstudioapi::getActiveDocumentContext(), error = function(e) NULL)
+          if (!is.null(ctx)) {
+            doc_path <- if (is.null(ctx$path)) "" else ctx$path
+            if (!nzchar(doc_path)) {
+              doc_path <- tryCatch(rstudioapi::documentPath(ctx$id), error = function(e) "")
+              if (is.null(doc_path)) doc_path <- ""
+            }
+            if (nzchar(doc_path)) {
+              doc_info$active_file <- basename(doc_path)
+              doc_info$active_file_path <- doc_path
+            }
+            if (length(ctx$contents) > 0) {
+              doc_info$active_preview <- paste(ctx$contents, collapse = "\n")
             }
           }
         }
@@ -2343,6 +2807,22 @@ run_tsifl_server <- function(port = 7444) {
       # Capture context NOW (inside reactive context), before deferring
       r_context <- get_r_context()
 
+      # ── Client-side intent hints ───────────────────────────────────────
+      # Scan the user message for ambiguity markers ("this doc", env-object
+      # names, "the plot", etc.) and attach a `_hints` field on r_context.
+      # The backend renders these prominently in the system prompt, so the
+      # model doesn't have to re-derive intent from a vague one-liner.
+      r_context$`_hints` <- tryCatch(
+        .tsifl_extract_hints(msg, r_context),
+        error = function(e) character(0)
+      )
+
+      # Attach the user's brain choice (sonnet/haiku/opus/ollama). The
+      # backend reads context.preferred_model and overrides its default
+      # selection. Ollama branches earlier and never reaches the backend.
+      brain_now <- tryCatch(current_brain(), error = function(e) "sonnet")
+      r_context$preferred_model <- brain_now
+
       # Build request body now (inside reactive context)
       body <- list(
         user_id = USER_ID,
@@ -2390,16 +2870,47 @@ run_tsifl_server <- function(port = 7444) {
         later::later(function() {
 
         tryCatch({
-          # Dev mode: route to local Ollama instead of the hosted backend
-          # if options(tsifulator.brain = "ollama") is set. Zero API
-          # credits burned. Skips the retry chain + interpretation phase
-          # since those are designed for the hosted Anthropic path.
-          if (tsifulator:::.tsifl_using_ollama()) {
+          # ── Auto-routing: Ollama brain + complex task -> Sonnet ──────
+          # The brain pill is a preferred tier, not a hard force. If the
+          # user is on Ollama but the task is clearly out of Ollama's
+          # league (vision, debug-class reasoning, long context, etc.),
+          # silently escalate to Sonnet for this turn. The user keeps
+          # their Ollama default for the next message.
+          .escalate_reason <- if (tsifulator:::.tsifl_using_ollama())
+            tsifulator:::.tsifl_should_escalate_from_ollama(
+              local_msg, r_context, images
+            ) else NULL
+          .route_to_ollama <- tsifulator:::.tsifl_using_ollama() &&
+                              is.null(.escalate_reason)
+
+          if (!is.null(.escalate_reason)) {
+            # Force this turn's preferred_model to sonnet in the request
+            # body so the backend uses a real model. Do NOT change
+            # current_brain() — the user's pill stays on Ollama.
+            r_context$preferred_model <- "sonnet"
+            body$context <- r_context
+            add_message("action", paste0(
+              "Auto-routed to Sonnet for this turn (", .escalate_reason,
+              "). Pill stays on Ollama for next message."
+            ))
+          }
+
+          if (.route_to_ollama) {
             set_status("generating")
-            add_message("action",
-              paste0("🟢 Using local Ollama (",
-                     getOption("tsifulator.ollama_model", "llama3.1:8b"),
-                     ") — no credits."))
+            # Distinguish Cloud (subscription, unlimited) vs local server in
+            # the status badge so the user knows where their compute went.
+            .has_cloud_key <- tryCatch(
+              !is.na(tsifulator::get_ollama_key()) &&
+                nzchar(tsifulator::get_ollama_key()),
+              error = function(e) FALSE
+            )
+            .ollama_default <- if (.has_cloud_key) "gpt-oss:120b" else "llama3.1:8b"
+            .ollama_model_now <- getOption("tsifulator.ollama_model", .ollama_default)
+            add_message("action", paste0(
+              if (.has_cloud_key) "Using Ollama Cloud (" else "Using local Ollama (",
+              .ollama_model_now,
+              if (.has_cloud_key) ") - subscription, unlimited." else ") - no credits."
+            ))
             data <- tsifulator:::.tsifl_call_ollama(
               user_msg = local_msg,
               r_context = r_context,
@@ -2499,7 +3010,12 @@ run_tsifl_server <- function(port = 7444) {
           # auto-fix, unknown-column retry, Phase 2 interpretation) are
           # designed for the hosted Anthropic flow. On Ollama you just
           # want the code to run; if it errors, you re-prompt manually.
-          if (r_code_executed && !tsifulator:::.tsifl_using_ollama()) {
+          # Run the full post-exec pipeline (delimiter detector, missing-lib
+          # auto-fix, unknown-column retry, interpretation phase) unless THIS
+          # turn was actually served by Ollama. If we escalated to Sonnet,
+          # .route_to_ollama is FALSE and we want the full pipeline even
+          # though the brain pill is still on Ollama.
+          if (r_code_executed && !.route_to_ollama) {
             tryCatch({
               # Poll the done marker rather than a fixed sleep. Some code
               # (large plotly saveWidget, big joins, web fetches) takes
@@ -2542,6 +3058,30 @@ run_tsifl_server <- function(port = 7444) {
                   if (identical(a$type, "run_r_code")) a$payload$code else NULL
                 })
                 r_codes <- paste(Filter(Negate(is.null), r_codes), collapse = "\n")
+
+                # ── Hallucination short-circuit ────────────────────────
+                # If the error is "model invented a function name" — STOP.
+                # Retrying just burns credits on more invented names.
+                hallucination <- .tsifl_detect_hallucination(r_output)
+                if (!is.null(hallucination)) {
+                  add_message("action", paste0(
+                    "Stopped — tsifl tried `", hallucination$bad_call,
+                    "` but that function doesn't exist. ",
+                    "Skipping retries + interpretation to save credits. ",
+                    "Try rephrasing, switching brain (gear icon), or ",
+                    "options(tsifulator.brain = \"ollama\") for the free local model."
+                  ))
+                  # Surface the raw R error so the user can debug
+                  add_message("assistant", paste0(
+                    "**Run failed — likely model hallucination.**\n\n",
+                    "Last R error:\n```\n",
+                    substr(r_output, 1, 600),
+                    if (nchar(r_output) > 600) "\n..." else "",
+                    "\n```"
+                  ))
+                  set_status("done")
+                  return(NULL)   # exit the deferred callback cleanly
+                }
 
                 # ── Self-heal: delimiter mismatch ───────────────────────
                 # The previous code hit the wrong-delimiter bug (Columns:1,
@@ -2906,6 +3446,36 @@ run_tsifl_server <- function(port = 7444) {
                   context = list(app = "rstudio")
                 )
 
+                # ── Skip Phase 2 when Phase 1 already nailed it ─────
+                # For DESCRIPTIVE questions ("what does this script do",
+                # "explain this code", "summarize this dataset"), Phase 1
+                # often gives a complete prose answer AND emits a stub
+                # run_r_code (cat/readLines) just to satisfy the schema.
+                # Phase 2 then re-paraphrases the same answer, producing
+                # a duplicate paragraph + a wasted API call. Skip Phase 2
+                # in that case — Phase 1 has already done the work.
+                msg_lc_p2 <- tolower(local_msg)
+                descriptive_q <- any(vapply(c(
+                  "what does", "what is this", "tell me about",
+                  "explain this", "explain the", "describe this", "describe the",
+                  "summarize this", "summarize the", "summarise this",
+                  "what's in", "what is in", "what is on",
+                  "walk me through", "what's the script", "what does the script",
+                  "what's the code", "what does the code"
+                ), function(p) grepl(p, msg_lc_p2, fixed = TRUE), logical(1)))
+                # Heuristic: Phase 1 reply is substantial (>250 chars) AND
+                # R output has no analytical markers (no `Estimate`, no
+                # `p-value`, no `R-squared`, no `Coefficients:`, no plot
+                # rendering). Then Phase 2 has nothing new to say.
+                p1_long <- nchar(phase1_reply) > 250
+                analytical_output <- grepl(
+                  "Estimate|Pr\\(>|R-squared|R\\^2|Coefficients:|Residuals:|t value|F-statistic|p-value|chi-squared|Df Sum Sq|Mean Sq|95% CI|conf\\.",
+                  r_output, perl = TRUE
+                )
+                if (descriptive_q && p1_long && !analytical_output) {
+                  followup_data <- NULL
+                  # Don't even spend the budget round — pure save.
+                } else
                 # Gate the interpretation phase by the per-turn budget.
                 # If we've already burned our extra rounds on retries, skip
                 # the natural-language summary — the user still has the
@@ -3035,9 +3605,22 @@ run_tsifl_server <- function(port = 7444) {
         # tryCatch ends up here. Log + tell the user instead of letting
         # the background job die silently.
         stamp <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+        # Capture a real call stack + error call so the log is actionable,
+        # not just "ignoring SIGPIPE signal" with no context.
+        calls_txt <- tryCatch({
+          calls <- sys.calls()
+          paste(vapply(calls, function(c) {
+            paste(deparse(c, control = c("keepNA", "niceNames"), nlines = 2),
+                  collapse = " ")
+          }, character(1)), collapse = "\n  ")
+        }, error = function(.e) "(could not capture sys.calls)")
+        err_call_txt <- tryCatch(
+          paste(deparse(e$call, nlines = 3), collapse = " "),
+          error = function(.e) "(no e$call)"
+        )
         cat(sprintf(
-          "\n──────────── tsifl send_message observer crash @ %s ────────────\n%s\n",
-          stamp, conditionMessage(e)
+          "\n──────────── tsifl send_message observer crash @ %s ────────────\nMessage: %s\nError call: %s\nStack:\n  %s\n",
+          stamp, conditionMessage(e), err_call_txt, calls_txt
         ), file = .tsifl_crash_log, append = TRUE)
         tryCatch({
           add_message("assistant",
@@ -3157,7 +3740,10 @@ run_tsifl_server <- function(port = 7444) {
 
         send_err <- ""
         sent <- tryCatch({
-          writeLines(code_to_run, pending_file)
+          # Force UTF-8 bytes — without this, non-ASCII chars from the model
+          # (degree signs, smart quotes, em-dashes, accented column names)
+          # get re-encoded via the locale and the listener mis-parses them.
+          writeLines(enc2utf8(code_to_run), pending_file, useBytes = TRUE)
           TRUE
         }, error = function(e) {
           send_err <<- paste("Could not write bridge file:", conditionMessage(e))

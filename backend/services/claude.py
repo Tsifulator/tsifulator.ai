@@ -4594,10 +4594,14 @@ def _validate_r_actions(result: dict, message: str) -> tuple[bool, str]:
     r_actions = [a for a in actions if a.get("type") == "run_r_code"]
     reply = (result.get("reply") or "").strip()
 
-    # Case 0 (most common regression): reply DUMPED code as markdown fences
-    # but emitted no run_r_code action. The model wrote ```r ... ``` blocks
-    # into chat instead of using the tool. Code in chat does NOT execute —
-    # the user sees a wall of green-tinted text and nothing happens.
+    # Case 0 (most common regression): reply DUMPED code as markdown fences.
+    # Two sub-cases:
+    #   (a) No run_r_code at all — pure code-in-chat failure. Retry with
+    #       a forceful prompt to re-emit as a tool call.
+    #   (b) run_r_code EXISTS but reply ALSO has a code dump — that's the
+    #       Rmd-builder pattern where the model emits the tool call AND
+    #       pastes the same code as Rmd chunks in chat. Wasteful + ugly.
+    #       Don't retry (the action will run), but strip the chat dump.
     has_code_dump, code_chars = _reply_has_substantial_code_in_text(reply)
     if has_code_dump and not r_actions:
         return False, (
@@ -4613,6 +4617,19 @@ def _validate_r_actions(result: dict, message: str) -> tuple[bool, str]:
             "ONE run_r_code action. Your reply text should be ONE sentence "
             "naming what the action did, NOT a paste of the code."
         )
+    # Sub-case (b): code dump WITH run_r_code present. Don't retry — the
+    # action will execute. But we need to strip the dump from the reply so
+    # the user isn't reading a paste of the same code they're about to run.
+    # Mutate result in place — this is a post-process, not a retry.
+    if has_code_dump and r_actions:
+        cleaned = _CODE_FENCE_RE.sub("", reply).strip()
+        # Collapse multiple blank lines left by the strip
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        # If stripping leaves nothing meaningful, fall back to a generic
+        # one-liner so the user still sees acknowledgement of the action.
+        if len(cleaned) < 40:
+            cleaned = "Running the requested R code — see the action below."
+        result["reply"] = cleaned
 
     # Case D (checked FIRST — most specific): Phase 2 interpretation has an
     # R error in the input AND didn't emit a retry. User gets left stuck.
