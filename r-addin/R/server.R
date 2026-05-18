@@ -2773,7 +2773,12 @@ run_tsifl_server <- function(port = 7444) {
         msg <- trimws(raw)
       }
       if (nchar(msg) == 0) return()
-      cat("[tsifl] send_message received:", length(images), "images\n")
+      # SIGPIPE-safe diagnostic — background-job stdout pipe can close
+      # mid-session (user closes "Background Jobs" panel), and a bare
+      # cat() to a closed pipe raises a SIGPIPE that our outer tryCatch
+      # interprets as a crash. Wrap so it never bubbles up.
+      try(cat("[tsifl] send_message received:", length(images), "images\n"),
+          silent = TRUE)
 
       # Mirror data-file attachments to LOCAL /tmp/ so the R code the
       # model generates (which runs on this Mac) can actually read them.
@@ -2794,9 +2799,10 @@ run_tsifl_server <- function(port = 7444) {
           raw_bytes <- base64enc::base64decode(img$data)
           writeBin(raw_bytes, local_path)
         }, error = function(e) {
-          cat("[tsifl] warning: could not mirror ", fname,
-              " to ", local_path, ": ", conditionMessage(e), "\n",
-              sep = "")
+          # SIGPIPE-safe — see send_message diagnostic above
+          try(cat("[tsifl] warning: could not mirror ", fname,
+                  " to ", local_path, ": ", conditionMessage(e), "\n",
+                  sep = ""), silent = TRUE)
         })
       }
 
@@ -3548,7 +3554,7 @@ run_tsifl_server <- function(port = 7444) {
               }
             }, error = function(x) {})
           }
-          cat("[tsifl] Backend error:", detail, "\n")
+          try(cat("[tsifl] Backend error:", detail, "\n"), silent = TRUE)
           # Translate common backend / API errors into actionable messages
           # so the user knows what to do, not just what broke.
           friendly <- (function(d) {
@@ -3604,9 +3610,23 @@ run_tsifl_server <- function(port = 7444) {
         # Outer guard: anything not caught by the inner deferred-callback
         # tryCatch ends up here. Log + tell the user instead of letting
         # the background job die silently.
+        msg <- tryCatch(conditionMessage(e), error = function(.e) "(no msg)")
+
+        # SIGPIPE is benign — happens when the background-job stdout pipe
+        # closes (user shrinks the Background Jobs panel, RStudio re-laying
+        # out, etc.). R prints "ignoring SIGPIPE signal" and the operation
+        # silently no-ops. We don't need to scare the user with an
+        # "Internal error" chat bubble for this; just swallow it.
+        if (grepl("SIGPIPE", msg, ignore.case = TRUE)) {
+          try(cat(sprintf(
+            "\n[%s] tsifl: swallowed SIGPIPE (background-job pipe was closed) - non-fatal\n",
+            format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+          ), file = .tsifl_crash_log, append = TRUE), silent = TRUE)
+          return(invisible(NULL))
+        }
+
         stamp <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
-        # Capture a real call stack + error call so the log is actionable,
-        # not just "ignoring SIGPIPE signal" with no context.
+        # Capture a real call stack + error call so the log is actionable.
         calls_txt <- tryCatch({
           calls <- sys.calls()
           paste(vapply(calls, function(c) {
@@ -3618,14 +3638,14 @@ run_tsifl_server <- function(port = 7444) {
           paste(deparse(e$call, nlines = 3), collapse = " "),
           error = function(.e) "(no e$call)"
         )
-        cat(sprintf(
+        try(cat(sprintf(
           "\n──────────── tsifl send_message observer crash @ %s ────────────\nMessage: %s\nError call: %s\nStack:\n  %s\n",
-          stamp, conditionMessage(e), err_call_txt, calls_txt
-        ), file = .tsifl_crash_log, append = TRUE)
+          stamp, msg, err_call_txt, calls_txt
+        ), file = .tsifl_crash_log, append = TRUE), silent = TRUE)
         tryCatch({
           add_message("assistant",
             paste0("⚠️ Internal error caught — panel is still alive.\n",
-                   "Detail: ", conditionMessage(e), "\n",
+                   "Detail: ", msg, "\n",
                    "Full traceback logged to ", .tsifl_crash_log,
                    ".\nTry your prompt again — if it keeps failing share that file."))
           set_status("error", "Recovered from crash")

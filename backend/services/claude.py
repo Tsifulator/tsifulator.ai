@@ -4566,23 +4566,64 @@ _CODE_FENCE_RE = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 
+# A line that looks like R code rather than prose. We match:
+#   - function calls:  `foo()`, `library(foo)`, `cat("x")`
+#   - assignments:     `x <- ...`, `x = ...` (with R-ish RHS)
+#   - pipes:           lines ending in `%>%` or `|>`
+#   - obvious R idioms: `ls()`, `head(df)`, `## chunk-name`, `#` comments
+#                       prefixing an R-ish line
+#   - knitr chunk markers without backticks (`{r setup}`)
+# We're conservative — short lines + lines that look like English don't match.
+_R_LINE_RE = re.compile(
+    r"^\s*("
+    r"library\([^\)]+\)"                       # library(foo)
+    r"|require\([^\)]+\)"
+    r"|suppressMessages\("                     # suppressMessages({...
+    r"|source\([^\)]+\)"
+    r"|setwd\([^\)]+\)"
+    r"|ls\(\)"
+    r"|list\.files\("
+    r"|read[_.][a-z]+\("                       # read.csv, read_delim, ...
+    r"|write[_.][a-z]+\("                      # write.csv, writeLines, ...
+    r"|[A-Za-z_][A-Za-z0-9_.]*\s*<-\s*[^#]+"   # x <- something
+    r"|[A-Za-z_][A-Za-z0-9_.]*\s*\([^\)]*\)\s*(?:%>%|\|>)?\s*$"  # foo(x) or foo(x) %>%
+    r"|\{r[\s,a-z=0-9._-]*\}"                  # {r setup, include=FALSE}
+    r"|#\s*[A-Z][^.!?]{3,}$"                   # `# Comment-like header`
+    r")",
+    re.IGNORECASE,
+)
+
 
 def _reply_has_substantial_code_in_text(reply: str) -> tuple[bool, int]:
-    """Detect "wrote code as markdown instead of using the tool" failure mode.
+    """Detect "wrote code as text instead of using the tool" failure mode.
 
-    Returns (is_substantial, total_code_chars). True when the reply contains
-    fenced code blocks adding up to >200 chars of R/Rmd content — that's
-    almost always the model abandoning the tool path and dumping code into
-    chat where it can't execute.
+    Returns (is_substantial, total_code_chars). Two patterns count:
+      (a) FENCED — markdown code blocks (```r ... ```, ```{r} ... ```)
+      (b) UNFENCED — model dropped R lines into the reply as plain text
+          (no backticks), e.g. `ls()` and `list.files("~/Downloads", ...)`
+          on consecutive lines. This is what happens when the model treats
+          the chat as a notebook cell.
 
-    A single one-line example (e.g. "use `mean(x, na.rm=TRUE)`") is fine and
-    won't trigger this. We require enough volume to be sure the model meant
-    "run this" not "FYI here's a snippet"."""
+    A single one-line example (e.g. "use `mean(x, na.rm=TRUE)`") is fine
+    and won't trigger this. We require enough volume to be sure the model
+    meant "run this" not "FYI here's a snippet"."""
     if not reply:
         return False, 0
-    matches = _CODE_FENCE_RE.findall(reply)
-    total = sum(len(m.strip()) for m in matches)
-    return total > 200, total
+    # Pattern (a): fenced
+    fenced_total = sum(len(m.strip()) for m in _CODE_FENCE_RE.findall(reply))
+    if fenced_total > 200:
+        return True, fenced_total
+    # Pattern (b): unfenced R-line scan. Strip any fenced blocks first so we
+    # don't double-count them.
+    stripped = _CODE_FENCE_RE.sub("", reply)
+    lines = stripped.splitlines()
+    r_lines = [ln for ln in lines if _R_LINE_RE.match(ln)]
+    # Need a meaningful cluster of R lines — random one-offs in prose don't
+    # count. 4+ R-looking lines is the threshold for "this is a code dump".
+    if len(r_lines) >= 4:
+        unfenced_chars = sum(len(ln) for ln in r_lines)
+        return True, fenced_total + unfenced_chars
+    return False, fenced_total
 
 
 def _validate_r_actions(result: dict, message: str) -> tuple[bool, str]:
